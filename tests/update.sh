@@ -214,6 +214,20 @@ expect_claude_import_restored() {
 }
 scenario "U5(B8): CLAUDE.md の @AGENTS.md 欠落を update が足し、プロジェクトの記述は残す" break_claude_import expect_claude_import_restored
 
+# U5b. CLAUDE.md が導入時のまま（プロジェクトは何も書いていない）なら、新しい雛形に入れ替わる
+break_claude_stub_outdated() {
+  printf '@AGENTS.md\n\n<!-- 旧い雛形 -->\n' >"$PROJ/CLAUDE.md"
+  local h; h="$(cd "$PROJ" && git hash-object --no-filters CLAUDE.md)" || return 1
+  sed -i "s|\(\"path\":\"CLAUDE.md\".*\"sha256\":\"\)[^\"]*|\1$h|" "$PROJ/.harness/manifest.json"
+}
+expect_claude_stub_updated() {
+  run_update
+  expect_code 0
+  expect_file_lacks "CLAUDE.md" '旧い雛形'
+  expect_file_eq_payload "CLAUDE.md" "harness/adapters/claude/CLAUDE.md.template"
+}
+scenario "U5b: 導入時のままの CLAUDE.md は新しい雛形に入れ替わる" break_claude_stub_outdated expect_claude_stub_updated
+
 # U6. B8: .claude/skills の drift（.agents/skills が正本）
 break_claude_skill_drift() { echo '手で足した行' >>"$PROJ/.claude/skills/harness/SKILL.md"; }
 expect_claude_skill_synced() {

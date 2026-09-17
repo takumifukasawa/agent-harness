@@ -365,12 +365,20 @@ apply_plan() { # agents mode(init|update)
       # （managed だが上書きはしない。テンプレを被せると既存の記述が消えるため。決定 0002）。
       if [ ! -f "$abs" ]; then
         mkdir -p "$(dirname "$abs")"; cp "$tmp" "$abs"; n_new=$((n_new + 1)); info "  +     $dest"
-      elif ! grep -q '^@AGENTS\.md' "$abs"; then
-        backup_file "$backup" "$dest"
-        { echo "@AGENTS.md"; echo; cat "$abs"; } >"$tmp.new" && mv "$tmp.new" "$abs"
-        n_up=$((n_up + 1)); info "  merge $dest (@AGENTS.md の import を足した。プロジェクトの記述は残す)"
       else
-        n_keep=$((n_keep + 1))
+        curhash="$(hash_of "$abs")"
+        if [ "$curhash" = "$newhash" ]; then
+          n_keep=$((n_keep + 1))
+        elif [ "$curhash" = "${OLD_HASH[$dest]:-}" ]; then
+          # 導入時のまま = プロジェクトは何も書いていない。新しい雛形に入れ替える
+          backup_file "$backup" "$dest"; cp "$tmp" "$abs"; n_up=$((n_up + 1)); info "  update $dest"
+        elif ! grep -q '^@AGENTS\.md' "$abs"; then
+          backup_file "$backup" "$dest"
+          { echo "@AGENTS.md"; echo; cat "$abs"; } >"$tmp.new" && mv "$tmp.new" "$abs"
+          n_up=$((n_up + 1)); info "  merge $dest (@AGENTS.md の import を足した。プロジェクトの記述は残す)"
+        else
+          n_keep=$((n_keep + 1))   # プロジェクトが書いた内容がある。import はある。触らない
+        fi
       fi
       ENTRIES+=("$dest"$'\t'"$src"$'\t'"$own"$'\t'"$(hash_of "$abs")"$'\t'"$srchash")
     else
@@ -623,7 +631,9 @@ cmd_upstream() {
         info "WARN: $p に秘密情報らしき語がある。共有物になるので確認する"
       fi
       if [ "$o" = "merge" ]; then
-        awk -v b="$BEGIN_RE" -v e="$END_RE" 'index($0,b)==1{q=1} q{print} q&&index($0,e)==1{q=0}' "$ROOT/$p" >"$src/harness/$s"
+        # 正本には必ずブロック 1 つ。ここだけは先頭のブロックで打ち切る（万一重複していても
+        # 壊れた正本を配らない。重複は harness update が 1 対に畳む）。
+        awk -v b="$BEGIN_RE" -v e="$END_RE" 'index($0,b)==1{q=1} q{print} q&&index($0,e)==1{exit}' "$ROOT/$p" >"$src/harness/$s"
       else
         cp "$ROOT/$p" "$src/harness/$s"
       fi
