@@ -8,6 +8,7 @@
 #   harness upstream <path>...
 #   harness check  [--fast]
 #   harness gc     [--days N] [--strict]  # docs の腐敗検知
+#   harness doctor                        # 環境と導入状態の診断
 #   harness self-install [--dir <dir>]   # `harness` を PATH に置く（Windows は harness.cmd も）
 #   harness version
 #
@@ -592,6 +593,18 @@ cmd_gc() {
   exec bash "$ROOT/.harness/scripts/gc.sh" "$@"
 }
 
+cmd_doctor() {
+  ROOT="$(project_root)"
+  if [ ! -f "$ROOT/.harness/scripts/doctor.sh" ]; then
+    # 未導入は「診断自体ができない環境不備」= exit 2（doctor.sh 側の判定と合わせる）
+    echo "harness doctor: 導入コピーが無い（$ROOT/.harness/scripts/doctor.sh が見つからない）" >&2
+    echo "  直し方: このディレクトリで harness init を実行する" >&2
+    echo "          例: bash <agent-harness を clone した場所>/bin/harness init --source <同じ場所>" >&2
+    exit 2
+  fi
+  exec bash "$ROOT/.harness/scripts/doctor.sh" "$@"
+}
+
 cmd_version() {
   local r; r="$(self_repo)"
   if [ -n "$r" ]; then echo "harness (repo) $(tr -d '\r\n' <"$r/VERSION")"; else
@@ -626,7 +639,7 @@ cmd_self_install() {
   esac
 }
 
-usage() { sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 # PATH 上の harness から呼ばれ、プロジェクトに同梱コピーがあれば、そちらへ委譲する（版をプロジェクトに固定）
 maybe_delegate() {
@@ -651,6 +664,7 @@ case "${1:-}" in
   upstream) shift; cmd_upstream "$@";;
   check)    shift; cmd_check "$@";;
   gc)       shift; cmd_gc "$@";;
+  doctor)   shift; cmd_doctor "$@";;
   version|--version|-v) cmd_version;;
   ""|help|-h|--help) usage;;
   *) die "unknown command: $1 (harness help)";;
