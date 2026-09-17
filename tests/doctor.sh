@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# tests/doctor.sh — harness doctor のシナリオテスト（このリポジトリ専用。ペイロードではない）
+#
+# 使い方:  bash tests/doctor.sh
+# 終了コード: 全シナリオ pass で 0、1 つでも落ちれば 1。
+#
+# 枠:  scenario "<名前>" <setup関数> <expect関数>
+#   setup 関数 : $WORK（使い捨ての一時ディレクトリ）にプロジェクトを作り、$PROJ を設定する
+#   expect 関数: run_doctor / run_doctor_no_path などを呼び、expect_* で表明する
+# シナリオを足すときは、先に落ちるシナリオを書いてから doctor.sh に診断項目を足す（TDD）。
+set -u
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BASH_BIN="$(command -v bash)"
+
+passed=0; failed=0
+failed_names=()
+WORK=""; PROJ=""; OUT=""; CODE=0
+errors=()
+
+# ---------------------------------------------------------------- 表明
+expect_code() { # 期待する終了コード
+  [ "$CODE" = "$1" ] || errors+=("終了コード: 期待 $1 / 実際 $CODE")
+}
+expect_out() { # 出力にこの正規表現があること
+  printf '%s\n' "$OUT" | grep -qE "$1" || errors+=("出力に /$1/ が無い")
+}
+expect_not_out() { # 出力にこの正規表現が無いこと
+  if printf '%s\n' "$OUT" | grep -qE "$1"; then errors+=("出力に /$1/ があってはいけない"); fi
+}
+
+# ---------------------------------------------------------------- 実行
+run_doctor() { # 導入済みプロジェクトで CLI 経由の doctor を回す
+  OUT="$(cd "$PROJ" && bash .harness/bin/harness doctor 2>&1)"; CODE=$?
+}
+run_doctor_in() { # <dir> [args...] 任意のディレクトリで、このリポジトリの bin/harness から doctor を回す
+  local dir="$1"; shift
+  OUT="$(cd "$dir" && bash "$REPO/bin/harness" doctor "$@" 2>&1)"; CODE=$?
+}
+run_doctor_without_path() { # PATH を潰して doctor.sh を直接回す（git 不在の再現）
+  OUT="$(cd "$PROJ" && PATH=/nonexistent "$BASH_BIN" .harness/scripts/doctor.sh 2>&1)"; CODE=$?
+}
+
+# ---------------------------------------------------------------- setup 部品
+setup_empty() { # 未導入（git リポジトリですらない）ディレクトリ
+  PROJ="$WORK/empty"; mkdir -p "$PROJ"
+}
+setup_init() { # 使い捨てプロジェクトを作って harness init する
+  PROJ="$WORK/p"; mkdir -p "$PROJ"
+  (
+    cd "$PROJ" &&
+    git init -q . &&
+    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init &&
+    bash "$REPO/bin/harness" init --source "$REPO"
+  ) >/dev/null 2>&1 || { errors+=("setup: harness init に失敗した"); return 1; }
+}
+
+# ---------------------------------------------------------------- 枠
+scenario() { # <名前> <setup関数> <expect関数>
+  local name="$1" setup="$2" expect="$3"
+  errors=(); PROJ=""; OUT=""; CODE=0
+  WORK="$(mktemp -d)" || { echo "tests/doctor.sh: mktemp -d に失敗した"; exit 2; }
+  if "$setup"; then "$expect"; fi
+  rm -rf "$WORK"
+  if [ "${#errors[@]}" -eq 0 ]; then
+    printf 'PASS  %s\n' "$name"; passed=$((passed + 1))
+  else
+    printf 'FAIL  %s\n' "$name"
+    printf '        - %s\n' "${errors[@]}"
+    printf '      直近の出力:\n'
+    printf '%s\n' "$OUT" | sed 's/^/        | /'
+    failed=$((failed + 1)); failed_names+=("$name")
+  fi
+}
+
+# ================================================================ シナリオ
+
+# D1. 導入直後の doctor は FAIL 0 で exit 0。各行は「OK|WARN|FAIL  項目  →  直し方」形式、最後に集計行。
+expect_fresh_install() {
+  run_doctor
+  expect_code 0
+  expect_out '^(OK|WARN|FAIL) '
+  expect_out '^harness doctor: OK=[0-9]+ WARN=[0-9]+ FAIL=0$'
+  expect_not_out '^FAIL '
+  # WARN / FAIL 行には直し方（→）が付く
+  if printf '%s\n' "$OUT" | grep -E '^(WARN|FAIL) ' | grep -qv '→'; then
+    errors+=("直し方（→）の無い WARN / FAIL 行がある")
+  fi
+}
+scenario "D1: init 直後の doctor は FAIL 0 / exit 0" setup_init expect_fresh_install
+
+# A1. help に doctor の usage 行がある。
+expect_help_has_doctor() {
+  OUT="$(cd "$PROJ" && bash .harness/bin/harness help 2>&1)"; CODE=$?
+  expect_code 0
+  expect_out 'harness doctor'
+}
+scenario "A1: help に doctor の usage 行がある" setup_init expect_help_has_doctor
+
+# D3 / A3. 未導入ディレクトリでは導入コピーが無い旨と harness init の案内を出して exit 2。
+expect_not_installed() {
+  run_doctor_in "$PROJ"
+  expect_code 2
+  expect_out '導入コピーが無い'
+  expect_out 'harness init'
+}
+scenario "D3: 未導入ディレクトリで exit 2 と harness init の案内" setup_empty expect_not_installed
+
+# B1. git が無ければ FAIL（PATH を潰した sub-shell で再現）。exit は 1。
+# 注: bash の版判定は BASH_VERSINFO[0] で行うが、BASH_VERSINFO は readonly で上書きできないため
+#     「bash < 4」のシナリオはここでは再現しない（実機が bash 3 の環境で doctor を回して確認する）。
+expect_missing_git() {
+  run_doctor_without_path
+  expect_code 1
+  expect_out '^FAIL .*git'
+  expect_out '^harness doctor: OK=[0-9]+ WARN=[0-9]+ FAIL=[1-9][0-9]*$'
+}
+scenario "B1: git 不在なら FAIL / exit 1" setup_init expect_missing_git
+
+# ================================================================ 集計
+echo
+echo "tests/doctor.sh: pass=$passed fail=$failed"
+if [ "$failed" -gt 0 ]; then
+  printf '  失敗: %s\n' "${failed_names[@]}"
+  echo "  doctor の出力（上の「直近の出力」）と harness/scripts/doctor.sh を突き合わせて直す。"
+  echo "  導入コピー（.harness/scripts/doctor.sh）ではなく harness/scripts/doctor.sh を直し、bash bin/harness update で同期する。"
+  exit 1
+fi
