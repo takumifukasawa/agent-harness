@@ -2,7 +2,7 @@
 
 > **主役は「プロジェクトをエージェントにどう進めさせるか」のワークフロー。** それを各プロジェクトに配って更新する仕組みは、ワークフローを支える最小限の配管。
 > 対象エージェント: Claude Code / Codex CLI / 今後の他エージェント。
-> 状態: 0.1.0（2026-09-17）。ワークフローの雛形と配管の CLI は実装済み。ワークフローを実際に回すスキルは未実装（§11）。
+> 状態: 0.2.0（2026-09-17）。ワークフローの雛形・それを回す `task-orchestrate` スキル・配管の CLI は実装済み。dogfood は未実施（§11）。
 
 ---
 
@@ -49,7 +49,7 @@
 | 作業状態 | `.harness/state/*.json`（gitignore） | ○ | ○ |
 | 検査 | `.harness/checks.sh` + `.githooks/` + CI | 加えて `settings.json` hooks（任意） | 任意 |
 | 権限・deny | 固有 | `settings.json` の `permissions.deny` | `config.toml` |
-| サブエージェント | `docs/roles/*.md`（役割文） | `.claude/agents/*.md` を生成 | `.agents/skills/role-*/` として明示呼び出し（未生成、§11） |
+| サブエージェント | `docs/roles/*.md`（役割文） | `.claude/agents/*.md` を生成 | `.agents/skills/role-*/SKILL.md` を生成し `$role-implementer` と明示呼び出し |
 
 各アダプタの README に「確認日」と「確認元」を書く。上の事実は 2026-09-17 に公式 docs で確認した。
 
@@ -136,7 +136,8 @@ TDD を固定する理由: テストが「曖昧さのないゴール」「ハ�
 ### アダプタへの翻訳
 
 - Claude Code: `docs/roles/{implementer,reviewer}.md` から `.claude/agents/*.md` を生成（frontmatter に name / description / model）。統括はメインセッションなので生成しない。
-- Codex: 役割文を `.agents/skills/role-<name>/SKILL.md` として置き、`$role-implementer` と明示呼び出しする。**未生成**（§11）。
+- Codex: 役割文を `.agents/skills/role-<name>/SKILL.md` として生成し、`$role-implementer` と明示呼び出しする。
+- 手順そのものは `task-orchestrate` スキル（両エージェント共通）。実装役の起動手段だけがエージェントで異なり、スキル内で分岐を書いている。
 - パス限定の規律は Codex では cwd 基準なので、統括が該当 `AGENTS.md` を実装役に明示的に渡す（SmartHR の「必要なセッションにだけ動的に読み込む」と同じ）。
 
 ## 6. 学びを環境に戻す（プロジェクト内）
@@ -236,9 +237,9 @@ harness self-install [--dir]      # PATH に置く。Windows は harness.cmd も
 |---|---|
 | ✅ | ① の雛形: `AGENTS.core.md`、`docs-template/`（spec / roles / rules / plans / decisions / learnings / tech-debt / references / architecture）、`state-template/`、`check.sh` と `checks.seed.sh`、`session-catchup` / `session-handoff` |
 | ✅ | ② の配管: CLI 一式、所有権、manifest、Windows 対応、`harness` / `harness-maintain` スキル |
-| ⬜ 1 | **① `task-orchestrate` スキル**: §5 の 3 フェーズを実際に回す手順（state の初期化、実装役の起動と受け渡し、検査、再試行、最終レビューの重複排除と反証）。今はこれが無く、roles の文章があるだけ |
-| ⬜ 2 | **① Codex 用の役割スキル生成**（`.agents/skills/role-*/`）。今は Claude の `.claude/agents/` だけ生成している |
-| ⬜ 3 | **① dogfood**: 自分のプロジェクト 1 つで機能 1 つを §5 で通す。確かめること: 再試行「新しい 1 体」の精度とコスト、Codex でのパス限定規律（cwd か明示渡し）、`checks.sh` に何を登録すると効くか |
+| ✅ | ① `task-orchestrate` スキル（0.2.0）: §5 の 3 フェーズを回す手順。state の初期化、実装役への指示テンプレート、検査、再試行、最終レビューの重複排除と反証 |
+| ✅ | ① Codex 用の役割スキル生成（0.2.0）: `.agents/skills/role-{implementer,reviewer}/` |
+| ⬜ 3 | **① dogfood**: 自分のプロジェクト 1 つで機能 1 つを §5 で通す。確かめること: 再試行「新しい 1 体」の精度とコスト、Codex でのパス限定規律（cwd か明示渡し）、`checks.sh` に何を登録すると効くか、`task-orchestrate` の手順で統括が迷う箇所 |
 | ⬜ 4 | ② `harness gc`（docs の腐敗検知） |
 | ⬜ 5 | ② `.claude/settings.json` の自動マージ |
 | ⬜ 6 | ② GitHub へ push 後、`curl | bash` からの init を実機で確認。macOS / Linux 未確認 |

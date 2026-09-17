@@ -1,7 +1,8 @@
 # roles — 役割定義
 
 長期・大規模タスクは 4 つの役割に分けて進める（SmartHR 型）。ここにある役割文はエージェント非依存の正本。
-Claude Code では `.claude/agents/<role>.md` に、Codex では `.agents/skills/role-<name>/` に翻訳される（`harness init/update` が生成）。
+Claude Code では `.claude/agents/<role>.md` に、Codex では `.agents/skills/role-<name>/SKILL.md` に翻訳される（`harness init/update` が生成。直すのはこのディレクトリの正本）。
+実際に回す手順は `.agents/skills/task-orchestrate/SKILL.md`。
 
 | 役割 | ファイル | 起動単位 |
 |---|---|---|

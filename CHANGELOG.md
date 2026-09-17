@@ -5,6 +5,15 @@ semver: managed ファイルの移動・マーカー形式変更は major、ル�
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-17
+
+ワークフローを実際に回せるようにした版。
+
+- 追加: `task-orchestrate` スキル。準備 → 反復（1 セッション = 1 タスク）→ 最終レビュー を `.harness/state/` の JSON で管理する統括の手順。実装役への指示テンプレート、再試行（新しい 1 体に失敗出力を渡す、3 回で人へ）、レビューの重複排除と反証の 3 縛りを含む。
+- 追加: Codex 用の役割スキル生成。`docs/roles/{implementer,reviewer}.md` から `.agents/skills/role-<name>/SKILL.md` を生成（generated。生成元が変われば再生成）。
+- 変更: `AGENTS.core.md` と `docs/roles/README.md` が `task-orchestrate` を指すように。orchestrator の準備フェーズに「state を雛形からコピー」を明記。
+- プロジェクト側で必要な作業: `harness update` で `task-orchestrate` と `role-*` スキルが入る。追加の手作業なし。
+
 ## [0.1.0] - 2026-09-17
 
 CLI 実装版。`bin/harness`（bash。依存は git と bash だけ）。

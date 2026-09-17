@@ -75,7 +75,7 @@ bin/harness.cmd          # Windows 用シム（PowerShell / cmd → Git Bash）
 harness/                 # プロジェクトに入るペイロード
 ├── AGENTS.core.md       # AGENTS.md の managed ブロック（共通ルール。目次であって百科事典ではない）
 ├── docs-template/       # docs/ の雛形（索引・handoff・architecture・plans・decisions・learnings・tech-debt・references・spec・roles・rules）
-├── skills/              # harness（CLI 実行）/ session-catchup / session-handoff / harness-maintain
+├── skills/              # task-orchestrate（大きなタスクを回す）/ session-catchup / session-handoff / harness（CLI 実行）/ harness-maintain
 ├── scripts/             # check.sh（検査ランナー、LLM 不使用）、session-start.sh
 ├── checks.seed.sh       # プロジェクトが編集する検査一覧の雛形
 ├── state-template/      # progress.json / stages.json（長期タスクの機械可読な状態）

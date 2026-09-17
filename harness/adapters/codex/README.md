@@ -9,6 +9,6 @@
 | `.agents/skills/<name>/SKILL.md` | `$CWD/.agents/skills` から `$REPO_ROOT/.agents/skills` まで探索。個人は `$HOME/.agents/skills` | アダプタ不要。`$skill-name` で明示呼び出しも可（公式 docs: learn.chatgpt.com/docs/build-skills） |
 | `.harness/scripts/*.sh` | hook 相当は任意 | 仕様変動が大きいため v0 では使わない。git hooks と AGENTS.md の文章で代替 |
 | 標準 deny | `config.toml` の sandbox / approval 設定 | 翻訳表は未作成。破壊的 git 操作は `.githooks/` 側でも塞ぐ |
-| `docs/roles/<role>.md` | `.agents/skills/role-<role>/SKILL.md` | 役割文をスキル化し `$role-implementer` のように明示呼び出し。サブエージェント機構の有無に依存しない |
+| `docs/roles/<role>.md` | `.agents/skills/role-<role>/SKILL.md` | `harness init/update` が生成（generated）。`$role-implementer` のように明示呼び出し。統括は `task-orchestrate` の手順で新しいスレッドから呼ぶ |
 
 既知の注意: `~/.agents/skills` の個人スキルが新セッションで検出されない報告がある（community.openai.com）。リポジトリ内 `.agents/skills/` を正にしているのはこのため。
