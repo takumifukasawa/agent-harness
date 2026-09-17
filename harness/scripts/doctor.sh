@@ -28,12 +28,13 @@ if [ ! -f "$ROOT/.harness/manifest.json" ]; then
   exit 2
 fi
 
-n_ok=0; n_warn=0; n_fail=0
+n_ok=0; n_warn=0; n_fail=0; n_info=0
 report() { # severity 項目 [直し方]
   case "$1" in
     OK)   n_ok=$((n_ok + 1));;
     WARN) n_warn=$((n_warn + 1));;
     FAIL) n_fail=$((n_fail + 1));;
+    INFO) n_info=$((n_info + 1));;
   esac
   if [ -n "${3:-}" ]; then
     printf '%-4s  %s  →  %s\n' "$1" "$2" "$3"
@@ -43,6 +44,11 @@ report() { # severity 項目 [直し方]
 }
 
 have() { command -v "$1" >/dev/null 2>&1; }
+
+# ファイルの同一性は内容ハッシュで判定する（Windows でパス表記が C:/ と /c/ と /tmp で混在するため）
+content_eq() { # a b
+  [ -f "$1" ] && [ -f "$2" ] && [ "$(git hash-object "$1" 2>/dev/null)" = "$(git hash-object "$2" 2>/dev/null)" ]
+}
 
 os_name="$(uname -s 2>/dev/null || echo unknown)"
 is_windows=0
@@ -204,6 +210,83 @@ else
       report WARN "AGENTS.md のマーカーの版（v=${agents_ver:-不明}）が manifest の harness_version（${mf_version:-不明}）と食い違う" \
         "harness update を実行して同期する"
     fi
+  fi
+fi
+
+# ---------------------------------------------------------------- B8. Claude アダプタ
+# manifest の agents に claude を含むときだけ実行する。含まないときは CLAUDE.md 等がそもそも
+# 導入されていないので、何も報告しない（誤検知を避ける）。
+case ",$mf_agents," in
+  *,claude,*)
+    if [ -f "$ROOT/CLAUDE.md" ] && grep -q '^@AGENTS\.md' "$ROOT/CLAUDE.md"; then
+      report OK "CLAUDE.md に @AGENTS.md の import がある"
+    else
+      report FAIL "CLAUDE.md に @AGENTS.md の import が無い" \
+        "harness update をやり直すか、CLAUDE.md の先頭付近に @AGENTS.md を足す"
+    fi
+
+    if [ "$manifest_ok" = 1 ]; then
+      skill_mismatch=0
+      while IFS=$'\t' read -r f_path f_src f_own f_sha f_srcsha; do
+        [ -z "$f_path" ] && continue
+        case "$f_path" in .claude/skills/*) ;; *) continue;; esac
+        rel="${f_path#.claude/skills/}"
+        agents_side="$ROOT/.agents/skills/$rel"
+        claude_side="$ROOT/$f_path"
+        [ -f "$agents_side" ] || continue  # 欠落は B4 で報告済み
+        [ -f "$claude_side" ] || continue  # 同上
+        if ! content_eq "$agents_side" "$claude_side"; then
+          skill_mismatch=$((skill_mismatch + 1))
+          report WARN ".claude/skills/$rel が .agents/skills/$rel と内容がずれている" \
+            "harness update で同期する（.claude 側を直接編集していないか確認する）"
+        fi
+      done <<<"$mf_entries"
+      [ "$skill_mismatch" -eq 0 ] && report OK ".claude/skills/* は .agents/skills/* と内容が一致する"
+
+      # .claude/agents/*.md の欠落は B4 が個別に報告する。ここでは集計だけ添える。
+      claude_agents_missing=0
+      while IFS=$'\t' read -r f_path f_src f_own f_sha f_srcsha; do
+        [ -z "$f_path" ] && continue
+        case "$f_path" in .claude/agents/*.md) ;; *) continue;; esac
+        [ -f "$ROOT/$f_path" ] || claude_agents_missing=$((claude_agents_missing + 1))
+      done <<<"$mf_entries"
+      [ "$claude_agents_missing" -eq 0 ] && report OK ".claude/agents/*.md は manifest どおりに揃っている"
+    fi
+  ;;
+esac
+
+# ---------------------------------------------------------------- B9. Codex アダプタ
+# manifest の agents に codex を含むときだけ実行する。
+case ",$mf_agents," in
+  *,codex,*)
+    if [ "$manifest_ok" = 1 ]; then
+      codex_missing=0
+      for f in .agents/skills/role-implementer/SKILL.md .agents/skills/role-reviewer/SKILL.md; do
+        [ -f "$ROOT/$f" ] || codex_missing=$((codex_missing + 1))
+      done
+      if [ "$codex_missing" -eq 0 ]; then
+        report OK "Codex アダプタ（role-implementer / role-reviewer）が揃っている"
+      else
+        report FAIL "Codex アダプタの役割スキルが足りない（role-implementer / role-reviewer）" \
+          "harness update で復元する（復元できなければ harness init をやり直す）"
+      fi
+    fi
+  ;;
+esac
+
+# ---------------------------------------------------------------- B10. 版（source の新版）
+# source がローカルディレクトリのときだけ VERSION を比べる。URL のときはネットワークに触らない。
+if [ "$manifest_ok" = 1 ]; then
+  if [ -n "$mf_source" ] && [ -d "$mf_source" ] && [ -f "$mf_source/VERSION" ]; then
+    src_version="$(tr -d '\r\n' < "$mf_source/VERSION")"
+    if [ -n "$src_version" ] && [ "$src_version" != "$mf_version" ]; then
+      report INFO "source（$mf_source）に新版 $src_version がある（導入済みは $mf_version）" \
+        "bash bin/harness update で追従する（別 ref を使うときは --ref を付ける）"
+    else
+      report OK "source の版は導入済みと同じ（$mf_version）"
+    fi
+  else
+    report OK "source はローカルディレクトリではない、または VERSION が無い（新版チェックはネットワークに触らないため省略）"
   fi
 fi
 
