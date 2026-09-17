@@ -169,6 +169,62 @@ if [ "$manifest_ok" = 1 ]; then
   fi
 fi
 
+# ---------------------------------------------------------------- B6. git hooks
+hooks_path="$(git -C "$ROOT" config --get core.hooksPath 2>/dev/null || true)"
+if [ "$hooks_path" = ".githooks" ] && [ -f "$ROOT/.githooks/pre-commit" ]; then
+  report OK "git hooks（core.hooksPath=.githooks, .githooks/pre-commit あり）"
+else
+  report WARN "git hooks（core.hooksPath が .githooks になっていない、または .githooks/pre-commit が無い。現在値: ${hooks_path:-未設定}）" \
+    "git config core.hooksPath .githooks"
+fi
+
+# ---------------------------------------------------------------- B7. AGENTS.md のマーカーと版
+AGENTS_FILE="$ROOT/AGENTS.md"
+if [ ! -f "$AGENTS_FILE" ]; then
+  report FAIL "AGENTS.md が無い" \
+    "harness update をやり直すか、.harness/backup/ から復元する"
+else
+  begin_count="$(grep -c '<!-- harness:begin' "$AGENTS_FILE" 2>/dev/null || true)"
+  end_count="$(grep -c '<!-- harness:end -->' "$AGENTS_FILE" 2>/dev/null || true)"
+  begin_count="${begin_count:-0}"; end_count="${end_count:-0}"
+  if [ "$begin_count" -eq 0 ] && [ "$end_count" -eq 0 ]; then
+    report FAIL "AGENTS.md に harness の管理ブロックのマーカーが無い（<!-- harness:begin v=X --> / <!-- harness:end -->）" \
+      "harness update をやり直すか、.harness/backup/ から復元する"
+  elif [ "$begin_count" -ne 1 ] || [ "$end_count" -ne 1 ]; then
+    report FAIL "AGENTS.md のマーカーがちょうど 1 組ではない（begin=${begin_count}, end=${end_count}）" \
+      "重複または欠落したマーカーを手で 1 組に整理するか、.harness/backup/ から復元する"
+  else
+    agents_ver="$(sed -n 's/.*<!-- harness:begin v=\([^ ]*\) -->.*/\1/p' "$AGENTS_FILE" | head -1)"
+    if [ "$manifest_ok" != 1 ]; then
+      report WARN "AGENTS.md のマーカー（v=${agents_ver:-不明}）と manifest の harness_version の一致は、manifest が壊れているため確認できない" \
+        "先に manifest（B3）を直してから、もう一度 harness doctor を回す"
+    elif [ -n "$agents_ver" ] && [ "$agents_ver" = "$mf_version" ]; then
+      report OK "AGENTS.md のマーカー（v=$agents_ver, manifest と一致）"
+    else
+      report WARN "AGENTS.md のマーカーの版（v=${agents_ver:-不明}）が manifest の harness_version（${mf_version:-不明}）と食い違う" \
+        "harness update を実行して同期する"
+    fi
+  fi
+fi
+
+# ---------------------------------------------------------------- B11. gitignore
+GITIGNORE="$ROOT/.gitignore"
+gi_missing=""
+for entry in ".harness/state/" ".harness/backup/" ".harness/conflicts/"; do
+  if [ -f "$GITIGNORE" ] && grep -qxF "$entry" "$GITIGNORE"; then
+    :
+  else
+    gi_missing="$gi_missing $entry"
+  fi
+done
+gi_missing="${gi_missing# }"
+if [ -z "$gi_missing" ]; then
+  report OK ".gitignore に .harness/state|backup|conflicts/ がある"
+else
+  report WARN ".gitignore に無いエントリ: $gi_missing" \
+    ".gitignore に「$gi_missing」を追記する"
+fi
+
 # ---------------------------------------------------------------- 集計
 echo
 echo "harness doctor: OK=$n_ok WARN=$n_warn FAIL=$n_fail"
