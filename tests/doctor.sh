@@ -31,6 +31,10 @@
 # 自分の持ち場だけを assert する（往復は 1 回に減るが、scenario 本体の本数・assert の本数は
 # 個別に検証していたときのまま変えていない）。診断を途中で止めうる FAIL（manifest 破損など）
 # は束ねず独立に残す。
+#
+# 同じ理由で、互いに独立して検証できる FAIL（B4 の managed ファイル欠落 / B8 の
+# implementer.md 欠落 / B9 の role-reviewer 欠落。いずれも harness update で復元できる）は
+# ensure_fail_bundle が同様に 1 つのプロジェクトにまとめて壊す。
 set -u
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -130,6 +134,28 @@ ensure_warn_bundle() {
   WARN_BUNDLE_DONE=1
 }
 
+# ------------------------------------------------ 束ね: 独立に検証できる FAIL（欠落 → update で復元）
+# manifest 記載の managed ファイル（state-template/progress.json）/ .claude/agents/implementer.md /
+# .agents/skills/role-reviewer は、どれも「manifest 記載ファイルが無い」という独立の FAIL で、
+# B3 の manifest 破損のように後続の診断をスキップさせるものではない。直し方はどれも harness
+# update 1 回。3 シナリオ分の往復を 1 回にまとめる。
+FAIL_BUNDLE_DONE=0; FAIL_BUNDLE_DIR=""
+FAIL_BUNDLE_OUT_BEFORE=""; FAIL_BUNDLE_CODE_BEFORE=0
+FAIL_BUNDLE_OUT_AFTER=""; FAIL_BUNDLE_CODE_AFTER=0
+ensure_fail_bundle() {
+  [ "$FAIL_BUNDLE_DONE" = 1 ] && return 0
+  ensure_fixture || return 1
+  FAIL_BUNDLE_DIR="$SHARED/fail-bundle"
+  cp -a "$FIXTURE" "$FAIL_BUNDLE_DIR" 2>/dev/null || { errors+=("setup: FAIL 束ねフィクスチャの複製に失敗した"); return 1; }
+  rm -f "$FAIL_BUNDLE_DIR/.harness/state-template/progress.json"
+  rm -f "$FAIL_BUNDLE_DIR/.claude/agents/implementer.md"
+  rm -rf "$FAIL_BUNDLE_DIR/.agents/skills/role-reviewer"
+  FAIL_BUNDLE_OUT_BEFORE="$(cd "$FAIL_BUNDLE_DIR" && bash .harness/bin/harness doctor 2>&1)"; FAIL_BUNDLE_CODE_BEFORE=$?
+  ( cd "$FAIL_BUNDLE_DIR" && bash .harness/bin/harness update ) >/dev/null 2>&1
+  FAIL_BUNDLE_OUT_AFTER="$(cd "$FAIL_BUNDLE_DIR" && bash .harness/bin/harness doctor 2>&1)"; FAIL_BUNDLE_CODE_AFTER=$?
+  FAIL_BUNDLE_DONE=1
+}
+
 # ---------------------------------------------------------------- 枠
 scenario() { # <名前> <setup関数> <expect関数>
   local name="$1" setup="$2" expect="$3"
@@ -157,6 +183,8 @@ scenario() { # <名前> <setup関数> <expect関数>
 # ================================================================ シナリオ
 
 # D1. 導入直後の doctor は FAIL 0 で exit 0。各行は「OK|WARN|FAIL  項目  →  直し方」形式、最後に集計行。
+# フィクスチャの複製（cp -a）が「実際に harness init した直後の状態」とずれていないことも、
+# ここで最初に確かめる（ずれれば FAIL 0 にならず、この最初のシナリオが落ちて気付ける）。
 expect_fresh_install() {
   run_doctor
   expect_code 0
@@ -255,17 +283,15 @@ expect_manifest_empty_files() {
 }
 scenario "B3: files が空なら FAIL" setup_manifest_empty_files expect_manifest_empty_files
 
-# B4. manifest 記載の managed ファイルを削除すると FAIL で一覧に出る。
-setup_missing_managed_file() {
-  setup_init || return 1
-  rm -f "$PROJ/.harness/state-template/progress.json"
-}
+# B4. manifest 記載の managed ファイルを削除すると FAIL で一覧に出る（update で直る）。
+# 束ね: 下の B8（implementer.md 欠落）/ B9（role-reviewer 欠落）と同じプロジェクトにまとめて
+# 壊し、doctor の前後 2 回分の出力を ensure_fail_bundle でキャッシュする。
+setup_missing_managed_file() { ensure_fail_bundle && PROJ="$FAIL_BUNDLE_DIR"; }
 expect_missing_managed_file() {
-  run_doctor
+  OUT="$FAIL_BUNDLE_OUT_BEFORE"; CODE="$FAIL_BUNDLE_CODE_BEFORE"
   expect_code 1
   expect_out '^FAIL .*state-template/progress\.json'
-  apply_fix "bash .harness/bin/harness update"
-  run_doctor
+  OUT="$FAIL_BUNDLE_OUT_AFTER"; CODE="$FAIL_BUNDLE_CODE_AFTER"
   expect_code 0
   expect_not_out '^FAIL .*state-template/progress\.json'
 }
@@ -452,16 +478,13 @@ expect_claude_skill_drift_nogit() {
 scenario "B8: git が使えなくても .claude/skills のずれを検出する" setup_claude_skill_drift_nogit expect_claude_skill_drift_nogit
 
 # B8. .claude/agents/implementer.md を消すと FAIL。
-setup_claude_agent_missing() {
-  setup_init || return 1
-  rm -f "$PROJ/.claude/agents/implementer.md"
-}
+# 束ね: 上の B4（managed ファイル欠落）/ 下の B9（role-reviewer 欠落）と同じ ensure_fail_bundle を読む。
+setup_claude_agent_missing() { ensure_fail_bundle && PROJ="$FAIL_BUNDLE_DIR"; }
 expect_claude_agent_missing() {
-  run_doctor
+  OUT="$FAIL_BUNDLE_OUT_BEFORE"; CODE="$FAIL_BUNDLE_CODE_BEFORE"
   expect_code 1
   expect_out '^FAIL .*implementer\.md'
-  apply_fix "bash .harness/bin/harness update"
-  run_doctor
+  OUT="$FAIL_BUNDLE_OUT_AFTER"; CODE="$FAIL_BUNDLE_CODE_AFTER"
   expect_code 0
   expect_not_out '^FAIL .*implementer\.md'
 }
@@ -488,16 +511,13 @@ expect_no_claude_adapter_check() {
 scenario "B8: agents に claude が無ければ Claude アダプタの診断をしない" setup_init_codex_only expect_no_claude_adapter_check
 
 # B9. .agents/skills/role-reviewer を消すと FAIL。
-setup_role_reviewer_missing() {
-  setup_init || return 1
-  rm -rf "$PROJ/.agents/skills/role-reviewer"
-}
+# 束ね: 上の B4/B8 と同じ ensure_fail_bundle を読む。
+setup_role_reviewer_missing() { ensure_fail_bundle && PROJ="$FAIL_BUNDLE_DIR"; }
 expect_role_reviewer_missing() {
-  run_doctor
+  OUT="$FAIL_BUNDLE_OUT_BEFORE"; CODE="$FAIL_BUNDLE_CODE_BEFORE"
   expect_code 1
   expect_out '^FAIL .*role-reviewer'
-  apply_fix "bash .harness/bin/harness update"
-  run_doctor
+  OUT="$FAIL_BUNDLE_OUT_AFTER"; CODE="$FAIL_BUNDLE_CODE_AFTER"
   expect_code 0
   expect_not_out '^FAIL .*role-reviewer'
 }
