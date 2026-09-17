@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # tests/doctor.sh — harness doctor のシナリオテスト（このリポジトリ専用。ペイロードではない）
 #
-# 使い方:  bash tests/doctor.sh
-# 終了コード: 全シナリオ pass で 0、1 つでも落ちれば 1。
+# 使い方:  bash tests/doctor.sh [<シナリオ名の部分一致>]
+#   引数なし: 全シナリオを実行する。
+#   引数あり: シナリオ名（scenario の第 1 引数）にその文字列を含むものだけ実行する。
+#             例:  bash tests/doctor.sh "B6"        core.hooksPath のシナリオだけ
+#                  bash tests/doctor.sh "gitignore"  gitignore 関連だけ
+# 終了コード: 全シナリオ pass で 0、1 つでも落ちれば 1。フィルタに 1 件も一致しなければ 1。
 #
 # 枠:  scenario "<名前>" <setup関数> <expect関数>
 #   setup 関数 : $WORK（使い捨ての一時ディレクトリ）にプロジェクトを作り、$PROJ を設定する
@@ -18,6 +22,7 @@ set -u
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASH_BIN="$(command -v bash)"
+FILTER="${1:-}"
 
 passed=0; failed=0
 failed_names=()
@@ -70,6 +75,12 @@ setup_init() { # 使い捨てプロジェクトを作って harness init する
 # ---------------------------------------------------------------- 枠
 scenario() { # <名前> <setup関数> <expect関数>
   local name="$1" setup="$2" expect="$3"
+  if [ -n "$FILTER" ]; then
+    case "$name" in
+      *"$FILTER"*) ;;
+      *) return 0;;
+    esac
+  fi
   errors=(); PROJ=""; OUT=""; CODE=0
   WORK="$(mktemp -d)" || { echo "tests/doctor.sh: mktemp -d に失敗した"; exit 2; }
   if "$setup"; then "$expect"; fi
@@ -503,6 +514,10 @@ scenario "回帰: doctor.sh の直し方に「bash bin/harness」(存在しな�
 # ================================================================ 集計
 echo
 echo "tests/doctor.sh: pass=$passed fail=$failed"
+if [ -n "$FILTER" ] && [ $((passed + failed)) -eq 0 ]; then
+  echo "  フィルタ「$FILTER」に一致するシナリオが無かった。"
+  exit 1
+fi
 if [ "$failed" -gt 0 ]; then
   printf '  失敗: %s\n' "${failed_names[@]}"
   echo "  doctor の出力（上の「直近の出力」）と harness/scripts/doctor.sh を突き合わせて直す。"
