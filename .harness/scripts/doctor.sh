@@ -187,7 +187,7 @@ if [ "$manifest_ok" = 1 ]; then
         "seed は導入後にプロジェクトが編集する前提のファイル。必要なら harness の docs-template/ から取り直すか手で作る"
     else
       report FAIL "$f_own ファイルが無い: $f_path" \
-        "harness update で復元する（直接編集していた場合は上書きされる点に注意）。復元できなければ harness init をやり直す"
+        "bash .harness/bin/harness update で復元する（直接編集していた場合は上書きされる点に注意）。復元できなければ bash .harness/bin/harness init をやり直す"
     fi
   done <<<"$mf_entries"
   [ "$mf_missing" -eq 0 ] && report OK "manifest 記載ファイル（${mf_entry_lines} 件）はすべて存在する"
@@ -208,7 +208,7 @@ if [ "$manifest_ok" = 1 ]; then
     if [ "$(tr -d '\r' < "$ROOT/$f_path" | wc -c)" != "$(wc -c < "$ROOT/$f_path")" ]; then
       cr_found=$((cr_found + 1))
       report FAIL "改行: $f_path に CR（\\r）が含まれる（CRLF 化されている）" \
-        "autocrlf を疑う（git config core.autocrlf false のうえで harness update、または git checkout -- $f_path で復元）"
+        "autocrlf を疑う（git config core.autocrlf false のうえで bash .harness/bin/harness update、または git checkout -- $f_path で復元）"
     fi
   done <<<"$mf_entries"
   [ "$cr_found" -eq 0 ] && report OK "改行: managed / generated ファイルに CR は無い"
@@ -234,13 +234,13 @@ fi
 AGENTS_FILE="$ROOT/AGENTS.md"
 if [ ! -f "$AGENTS_FILE" ]; then
   report FAIL "AGENTS.md が無い" \
-    "harness update をやり直すか、.harness/backup/ から復元する"
+    "bash .harness/bin/harness update をやり直すか、.harness/backup/ から復元する"
 else
   begin_count="$(count_matches '<!-- harness:begin' "$AGENTS_FILE")"
   end_count="$(count_matches '<!-- harness:end -->' "$AGENTS_FILE")"
   if [ "$begin_count" -eq 0 ] && [ "$end_count" -eq 0 ]; then
     report FAIL "AGENTS.md に harness の管理ブロックのマーカーが無い（<!-- harness:begin v=X --> / <!-- harness:end -->）" \
-      "harness update をやり直すか、.harness/backup/ から復元する"
+      "bash .harness/bin/harness update をやり直すか、.harness/backup/ から復元する"
   elif [ "$begin_count" -ne 1 ] || [ "$end_count" -ne 1 ]; then
     report FAIL "AGENTS.md のマーカーがちょうど 1 組ではない（begin=${begin_count}, end=${end_count}）" \
       "重複または欠落したマーカーを手で 1 組に整理するか、.harness/backup/ から復元する"
@@ -267,7 +267,7 @@ case ",$mf_agents," in
       report OK "CLAUDE.md に @AGENTS.md の import がある"
     else
       report FAIL "CLAUDE.md に @AGENTS.md の import が無い" \
-        "harness update をやり直すか、CLAUDE.md の先頭付近に @AGENTS.md を足す"
+        "bash .harness/bin/harness update をやり直すか、CLAUDE.md の先頭付近に @AGENTS.md を足す"
     fi
 
     if [ "$manifest_ok" = 1 ]; then
@@ -283,7 +283,7 @@ case ",$mf_agents," in
         if ! content_eq "$agents_side" "$claude_side"; then
           skill_mismatch=$((skill_mismatch + 1))
           report WARN ".claude/skills/$rel が .agents/skills/$rel と内容がずれている" \
-            "harness update で同期する（.claude 側を直接編集していないか確認する）"
+            "bash .harness/bin/harness update で同期する（.claude 側を直接編集していないか確認する）"
         fi
       done <<<"$mf_entries"
       [ "$skill_mismatch" -eq 0 ] && report OK ".claude/skills/* は .agents/skills/* と内容が一致する"
@@ -313,7 +313,7 @@ case ",$mf_agents," in
         report OK "Codex アダプタ（role-implementer / role-reviewer）が揃っている"
       else
         report FAIL "Codex アダプタの役割スキルが足りない（role-implementer / role-reviewer）" \
-          "harness update で復元する（復元できなければ harness init をやり直す）"
+          "bash .harness/bin/harness update で復元する（復元できなければ bash .harness/bin/harness init をやり直す）"
       fi
     fi
   ;;
@@ -326,7 +326,7 @@ if [ "$manifest_ok" = 1 ]; then
     src_version="$(tr -d '\r\n' < "$mf_source/VERSION")"
     if [ -n "$src_version" ] && [ "$src_version" != "$mf_version" ]; then
       report INFO "source（$mf_source）に新版 $src_version がある（導入済みは $mf_version）" \
-        "bash bin/harness update で追従する（別 ref を使うときは --ref を付ける）"
+        "bash .harness/bin/harness update で追従する（別 ref を使うときは --ref を付ける）"
     else
       report OK "source の版は導入済みと同じ（$mf_version）"
     fi

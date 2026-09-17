@@ -8,7 +8,7 @@
     {"path":".harness/bin/harness","src":"@self","ownership":"managed","sha256":"637a059c9996c94614d914d200c5a980fdf8bb13","source_sha256":""},
     {"path":".harness/bin/harness.cmd","src":"@self-cmd","ownership":"managed","sha256":"8b29353cd4f321bb4fa7c54897c449cf42ede639","source_sha256":""},
     {"path":".harness/scripts/check.sh","src":"scripts/check.sh","ownership":"managed","sha256":"3aa2eda18cf19301cea86fb5c3ca37dc619e5425","source_sha256":""},
-    {"path":".harness/scripts/doctor.sh","src":"scripts/doctor.sh","ownership":"managed","sha256":"bc95d0f4b482123956878862452c4d9ec2edc561","source_sha256":""},
+    {"path":".harness/scripts/doctor.sh","src":"scripts/doctor.sh","ownership":"managed","sha256":"83a1b47d0e2d2348b2642345ce3401e7076a7275","source_sha256":""},
     {"path":".harness/scripts/gc.sh","src":"scripts/gc.sh","ownership":"managed","sha256":"27fcfc6b403f20d001f67de919202c6d4af1e946","source_sha256":""},
     {"path":".harness/scripts/session-start.sh","src":"scripts/session-start.sh","ownership":"managed","sha256":"c2b68ba5a93a87cc1105a1d7a7f5878cb7a3fe03","source_sha256":""},
     {"path":".harness/checks.sh","src":"checks.seed.sh","ownership":"seed","sha256":"-","source_sha256":"-"},
