@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # tests/doctor.sh — harness doctor のシナリオテスト（このリポジトリ専用。ペイロードではない）
 #
-# 使い方:  bash tests/doctor.sh
-# 終了コード: 全シナリオ pass で 0、1 つでも落ちれば 1。
+# 使い方:  bash tests/doctor.sh [<シナリオ名の部分一致>]
+#   引数なし: 全シナリオを実行する。
+#   引数あり: シナリオ名（scenario の第 1 引数）にその文字列を含むものだけ実行する。
+#             例:  bash tests/doctor.sh "B6"        core.hooksPath のシナリオだけ
+#                  bash tests/doctor.sh "gitignore"  gitignore 関連だけ
+# 終了コード: 全シナリオ pass で 0、1 つでも落ちれば 1。フィルタに 1 件も一致しなければ 1。
 #
 # 枠:  scenario "<名前>" <setup関数> <expect関数>
 #   setup 関数 : $WORK（使い捨ての一時ディレクトリ）にプロジェクトを作り、$PROJ を設定する
@@ -14,10 +18,28 @@
 # まで表明する。手順設計が要るもの（B3 の manifest 破損全般、B5 の CRLF 化、B7 の版ずれとマーカー
 # 重複、B8 の「既存ファイルを書き換えた」系）は harness update が .harness/conflicts/ への
 # CONFLICT を出すだけで直らない（実測済み）。個別に手順を決めるまでこの枠には入れない。
+#
+# フィクスチャ共有: harness init はプロセス生成とファイル I/O が支配的で 1 回 ≒ 11 秒かかる。
+# 26 シナリオの大半が「まず素の harness init をする」という同じ前提から始まるので、その前提を
+# ensure_fixture で 1 回だけ作り、setup_init はそれを cp -a で複製するだけにする（init は再実行
+# しない）。複製が「init 直後の状態」とずれていないかは、最初のシナリオ（D1）が複製直後の
+# doctor で FAIL 0 になることを確認して担保する。ずれれば D1 が落ちて気付ける。
+#
+# 確認項目の束ね: 互いに干渉しない WARN（B4 の seed ファイル欠落 / B5 の .gitattributes /
+# B6 の hooksPath / B11 の gitignore）は、ensure_warn_bundle が 1 つのプロジェクトでまとめて
+# 壊し、doctor の前後 2 回分の出力をキャッシュする。対応する scenario はそのキャッシュを読んで
+# 自分の持ち場だけを assert する（往復は 1 回に減るが、scenario 本体の本数・assert の本数は
+# 個別に検証していたときのまま変えていない）。診断を途中で止めうる FAIL（manifest 破損など）
+# は束ねず独立に残す。
+#
+# 同じ理由で、互いに独立して検証できる FAIL（B4 の managed ファイル欠落 / B8 の
+# implementer.md 欠落 / B9 の role-reviewer 欠落。いずれも harness update で復元できる）は
+# ensure_fail_bundle が同様に 1 つのプロジェクトにまとめて壊す。
 set -u
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASH_BIN="$(command -v bash)"
+FILTER="${1:-}"
 
 passed=0; failed=0
 failed_names=()
@@ -53,23 +75,96 @@ apply_fix() { # <直し方どおりのコマンド文字列> — $PROJ の中で
   ( cd "$PROJ" && eval "$1" ) >/dev/null 2>&1
 }
 
+# ---------------------------------------------------------------- フィクスチャ（init 済みツリーの共有）
+# SHARED はスイート全体で使う一時置き場。フィクスチャ本体はこの下に作り、個々のシナリオの
+# $WORK（scenario ごとに作って rm -rf する）とは別に、最後にまとめて消す。
+SHARED="$(mktemp -d)" || { echo "tests/doctor.sh: mktemp -d に失敗した（フィクスチャ置き場）"; exit 2; }
+
+FIXTURE_DONE=0; FIXTURE=""
+ensure_fixture() { # 使い捨てプロジェクトに harness init した雛形ツリーを 1 回だけ作る
+  [ "$FIXTURE_DONE" = 1 ] && return 0
+  FIXTURE="$SHARED/fixture"; mkdir -p "$FIXTURE"
+  (
+    cd "$FIXTURE" &&
+    git init -q . &&
+    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init &&
+    bash "$REPO/bin/harness" init --source "$REPO"
+  ) >/dev/null 2>&1 || { errors+=("setup: フィクスチャ構築（harness init）に失敗した"); return 1; }
+  FIXTURE_DONE=1
+}
+
 # ---------------------------------------------------------------- setup 部品
 setup_empty() { # 未導入（git リポジトリですらない）ディレクトリ
   PROJ="$WORK/empty"; mkdir -p "$PROJ"
 }
-setup_init() { # 使い捨てプロジェクトを作って harness init する
-  PROJ="$WORK/p"; mkdir -p "$PROJ"
-  (
-    cd "$PROJ" &&
-    git init -q . &&
-    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init &&
-    bash "$REPO/bin/harness" init --source "$REPO"
-  ) >/dev/null 2>&1 || { errors+=("setup: harness init に失敗した"); return 1; }
+setup_init() { # 使い捨てプロジェクトをフィクスチャ（$FIXTURE）から複製する。harness init は走らせない
+  ensure_fixture || return 1
+  PROJ="$WORK/p"
+  cp -a "$FIXTURE" "$PROJ" 2>/dev/null || { errors+=("setup: フィクスチャの複製に失敗した"); return 1; }
+}
+
+# ---------------------------------------------------------------- 束ね: 干渉しない WARN（B4/B5/B6/B11）
+# .gitattributes の行 / core.hooksPath / .gitignore の行 / seed ファイル（docs/tech-debt.md）の欠落は、
+# 別ファイル・別設定で互いに干渉しない WARN。4 シナリオ分の「壊す→doctor→直す→doctor」を 1 回の
+# 往復にまとめ、各シナリオはキャッシュされた doctor 出力（前 / 後）を読むだけにする。直し方は元の
+# シナリオごとの文言をそのまま使う（hooksPath は git config core.hooksPath .githooks 単体、他は
+# harness update。apply_plan は mode に関わらずこの 3 つを毎回打ち直し、欠けた seed ファイルも
+# 復元する＝実測済み。詳細は setup_missing_seed_file の注記）ので、両方適用しても矛盾はしない。
+WARN_BUNDLE_DONE=0; WARN_BUNDLE_DIR=""
+WARN_BUNDLE_OUT_BEFORE=""; WARN_BUNDLE_CODE_BEFORE=0
+WARN_BUNDLE_OUT_AFTER=""; WARN_BUNDLE_CODE_AFTER=0
+ensure_warn_bundle() {
+  [ "$WARN_BUNDLE_DONE" = 1 ] && return 0
+  ensure_fixture || return 1
+  WARN_BUNDLE_DIR="$SHARED/warn-bundle"
+  cp -a "$FIXTURE" "$WARN_BUNDLE_DIR" 2>/dev/null || { errors+=("setup: WARN 束ねフィクスチャの複製に失敗した"); return 1; }
+  ( grep -vxF '.harness/** text eol=lf' "$WARN_BUNDLE_DIR/.gitattributes" >"$WARN_BUNDLE_DIR/.gitattributes.tmp" &&
+    mv "$WARN_BUNDLE_DIR/.gitattributes.tmp" "$WARN_BUNDLE_DIR/.gitattributes" ) ||
+    { errors+=("setup: .gitattributes の書き換えに失敗した"); return 1; }
+  git -C "$WARN_BUNDLE_DIR" config --unset core.hooksPath ||
+    { errors+=("setup: core.hooksPath の解除に失敗した"); return 1; }
+  ( grep -vxF '.harness/state/' "$WARN_BUNDLE_DIR/.gitignore" >"$WARN_BUNDLE_DIR/.gitignore.tmp" &&
+    mv "$WARN_BUNDLE_DIR/.gitignore.tmp" "$WARN_BUNDLE_DIR/.gitignore" ) ||
+    { errors+=("setup: .gitignore の書き換えに失敗した"); return 1; }
+  rm -f "$WARN_BUNDLE_DIR/docs/tech-debt.md"
+  WARN_BUNDLE_OUT_BEFORE="$(cd "$WARN_BUNDLE_DIR" && bash .harness/bin/harness doctor 2>&1)"; WARN_BUNDLE_CODE_BEFORE=$?
+  ( cd "$WARN_BUNDLE_DIR" && git config core.hooksPath .githooks ) >/dev/null 2>&1
+  ( cd "$WARN_BUNDLE_DIR" && bash .harness/bin/harness update ) >/dev/null 2>&1
+  WARN_BUNDLE_OUT_AFTER="$(cd "$WARN_BUNDLE_DIR" && bash .harness/bin/harness doctor 2>&1)"; WARN_BUNDLE_CODE_AFTER=$?
+  WARN_BUNDLE_DONE=1
+}
+
+# ------------------------------------------------ 束ね: 独立に検証できる FAIL（欠落 → update で復元）
+# manifest 記載の managed ファイル（state-template/progress.json）/ .claude/agents/implementer.md /
+# .agents/skills/role-reviewer は、どれも「manifest 記載ファイルが無い」という独立の FAIL で、
+# B3 の manifest 破損のように後続の診断をスキップさせるものではない。直し方はどれも harness
+# update 1 回。3 シナリオ分の往復を 1 回にまとめる。
+FAIL_BUNDLE_DONE=0; FAIL_BUNDLE_DIR=""
+FAIL_BUNDLE_OUT_BEFORE=""; FAIL_BUNDLE_CODE_BEFORE=0
+FAIL_BUNDLE_OUT_AFTER=""; FAIL_BUNDLE_CODE_AFTER=0
+ensure_fail_bundle() {
+  [ "$FAIL_BUNDLE_DONE" = 1 ] && return 0
+  ensure_fixture || return 1
+  FAIL_BUNDLE_DIR="$SHARED/fail-bundle"
+  cp -a "$FIXTURE" "$FAIL_BUNDLE_DIR" 2>/dev/null || { errors+=("setup: FAIL 束ねフィクスチャの複製に失敗した"); return 1; }
+  rm -f "$FAIL_BUNDLE_DIR/.harness/state-template/progress.json"
+  rm -f "$FAIL_BUNDLE_DIR/.claude/agents/implementer.md"
+  rm -rf "$FAIL_BUNDLE_DIR/.agents/skills/role-reviewer"
+  FAIL_BUNDLE_OUT_BEFORE="$(cd "$FAIL_BUNDLE_DIR" && bash .harness/bin/harness doctor 2>&1)"; FAIL_BUNDLE_CODE_BEFORE=$?
+  ( cd "$FAIL_BUNDLE_DIR" && bash .harness/bin/harness update ) >/dev/null 2>&1
+  FAIL_BUNDLE_OUT_AFTER="$(cd "$FAIL_BUNDLE_DIR" && bash .harness/bin/harness doctor 2>&1)"; FAIL_BUNDLE_CODE_AFTER=$?
+  FAIL_BUNDLE_DONE=1
 }
 
 # ---------------------------------------------------------------- 枠
 scenario() { # <名前> <setup関数> <expect関数>
   local name="$1" setup="$2" expect="$3"
+  if [ -n "$FILTER" ]; then
+    case "$name" in
+      *"$FILTER"*) ;;
+      *) return 0;;
+    esac
+  fi
   errors=(); PROJ=""; OUT=""; CODE=0
   WORK="$(mktemp -d)" || { echo "tests/doctor.sh: mktemp -d に失敗した"; exit 2; }
   if "$setup"; then "$expect"; fi
@@ -88,6 +183,8 @@ scenario() { # <名前> <setup関数> <expect関数>
 # ================================================================ シナリオ
 
 # D1. 導入直後の doctor は FAIL 0 で exit 0。各行は「OK|WARN|FAIL  項目  →  直し方」形式、最後に集計行。
+# フィクスチャの複製（cp -a）が「実際に harness init した直後の状態」とずれていないことも、
+# ここで最初に確かめる（ずれれば FAIL 0 にならず、この最初のシナリオが落ちて気付ける）。
 expect_fresh_install() {
   run_doctor
   expect_code 0
@@ -186,32 +283,33 @@ expect_manifest_empty_files() {
 }
 scenario "B3: files が空なら FAIL" setup_manifest_empty_files expect_manifest_empty_files
 
-# B4. manifest 記載の managed ファイルを削除すると FAIL で一覧に出る。
-setup_missing_managed_file() {
-  setup_init || return 1
-  rm -f "$PROJ/.harness/state-template/progress.json"
-}
+# B4. manifest 記載の managed ファイルを削除すると FAIL で一覧に出る（update で直る）。
+# 束ね: 下の B8（implementer.md 欠落）/ B9（role-reviewer 欠落）と同じプロジェクトにまとめて
+# 壊し、doctor の前後 2 回分の出力を ensure_fail_bundle でキャッシュする。
+setup_missing_managed_file() { ensure_fail_bundle && PROJ="$FAIL_BUNDLE_DIR"; }
 expect_missing_managed_file() {
-  run_doctor
+  OUT="$FAIL_BUNDLE_OUT_BEFORE"; CODE="$FAIL_BUNDLE_CODE_BEFORE"
   expect_code 1
   expect_out '^FAIL .*state-template/progress\.json'
-  apply_fix "bash .harness/bin/harness update"
-  run_doctor
+  OUT="$FAIL_BUNDLE_OUT_AFTER"; CODE="$FAIL_BUNDLE_CODE_AFTER"
   expect_code 0
   expect_not_out '^FAIL .*state-template/progress\.json'
 }
 scenario "B4: managed ファイルの欠落は FAIL（update で直る）" setup_missing_managed_file expect_missing_managed_file
 
-# B4. manifest 記載の seed ファイルを削除すると WARN（FAIL にはしない）。
-setup_missing_seed_file() {
-  setup_init || return 1
-  rm -f "$PROJ/docs/tech-debt.md"
-}
+# B4. manifest 記載の seed ファイルを削除すると WARN（FAIL にはしない）。update を走らせると
+# 実は復元される（apply_plan は seed が無ければ雛形から作る。実測済み。doctor 自体の直し方の
+# 文言は「手で作る」寄りだが、実際に往復しても矛盾は出ない）。
+# 束ね: 下の B5/B6/B11 と同じ ensure_warn_bundle のキャッシュを読む。
+setup_missing_seed_file() { ensure_warn_bundle && PROJ="$WARN_BUNDLE_DIR"; }
 expect_missing_seed_file() {
-  run_doctor
+  OUT="$WARN_BUNDLE_OUT_BEFORE"; CODE="$WARN_BUNDLE_CODE_BEFORE"
   expect_code 0
   expect_out '^WARN .*docs/tech-debt\.md'
   expect_not_out '^FAIL .*docs/tech-debt\.md'
+  OUT="$WARN_BUNDLE_OUT_AFTER"; CODE="$WARN_BUNDLE_CODE_AFTER"
+  expect_code 0
+  expect_not_out '^WARN .*docs/tech-debt\.md'
 }
 scenario "B4: seed ファイルの欠落は WARN" setup_missing_seed_file expect_missing_seed_file
 
@@ -230,17 +328,14 @@ expect_crlf_managed_file() {
 scenario "B5: managed ファイルの CRLF 化は FAIL（autocrlf を疑う）" setup_crlf_managed_file expect_crlf_managed_file
 
 # B5. .gitattributes から .harness/** の行を消すと WARN。
-setup_missing_gitattributes_line() {
-  setup_init || return 1
-  grep -vxF '.harness/** text eol=lf' "$PROJ/.gitattributes" > "$PROJ/.gitattributes.tmp" &&
-    mv "$PROJ/.gitattributes.tmp" "$PROJ/.gitattributes"
-}
+# 束ね: 上の B4（seed 欠落）と下の B6/B11 と同じプロジェクトにまとめて壊し、doctor の前後
+# 2 回分の出力を ensure_warn_bundle でキャッシュする。
+setup_missing_gitattributes_line() { ensure_warn_bundle && PROJ="$WARN_BUNDLE_DIR"; }
 expect_missing_gitattributes_line() {
-  run_doctor
+  OUT="$WARN_BUNDLE_OUT_BEFORE"; CODE="$WARN_BUNDLE_CODE_BEFORE"
   expect_code 0
   expect_out '^WARN .*gitattributes'
-  apply_fix "bash .harness/bin/harness update"
-  run_doctor
+  OUT="$WARN_BUNDLE_OUT_AFTER"; CODE="$WARN_BUNDLE_CODE_AFTER"
   expect_code 0
   expect_not_out '^WARN .*gitattributes'
   expect_out '^OK .*gitattributes'
@@ -248,17 +343,14 @@ expect_missing_gitattributes_line() {
 scenario "B5: .gitattributes に .harness/** eol=lf が無ければ WARN（update で直る）" setup_missing_gitattributes_line expect_missing_gitattributes_line
 
 # B6. core.hooksPath を外すと WARN（直し方に git config core.hooksPath .githooks）。
-setup_no_hookspath() {
-  setup_init || return 1
-  git -C "$PROJ" config --unset core.hooksPath
-}
+# 束ね: 上の B4/B5 と同じ ensure_warn_bundle のキャッシュを読む。
+setup_no_hookspath() { ensure_warn_bundle && PROJ="$WARN_BUNDLE_DIR"; }
 expect_no_hookspath() {
-  run_doctor
+  OUT="$WARN_BUNDLE_OUT_BEFORE"; CODE="$WARN_BUNDLE_CODE_BEFORE"
   expect_code 0
   expect_out '^WARN .*hooks'
   expect_out 'git config core\.hooksPath \.githooks'
-  apply_fix "git config core.hooksPath .githooks"
-  run_doctor
+  OUT="$WARN_BUNDLE_OUT_AFTER"; CODE="$WARN_BUNDLE_CODE_AFTER"
   expect_code 0
   expect_not_out '^WARN .*hooks'
   expect_out '^OK .*hooks'
@@ -311,18 +403,14 @@ expect_agents_marker_duplicated() {
 scenario "B7: AGENTS.md のマーカーが 2 組あれば FAIL" setup_agents_marker_duplicated expect_agents_marker_duplicated
 
 # B11. .gitignore から .harness/state/ を消すと WARN。
-setup_missing_gitignore_state() {
-  setup_init || return 1
-  grep -vxF '.harness/state/' "$PROJ/.gitignore" > "$PROJ/.gitignore.tmp" &&
-    mv "$PROJ/.gitignore.tmp" "$PROJ/.gitignore"
-}
+# 束ね: 上の B4/B5/B6 と同じ ensure_warn_bundle のキャッシュを読む。
+setup_missing_gitignore_state() { ensure_warn_bundle && PROJ="$WARN_BUNDLE_DIR"; }
 expect_missing_gitignore_state() {
-  run_doctor
+  OUT="$WARN_BUNDLE_OUT_BEFORE"; CODE="$WARN_BUNDLE_CODE_BEFORE"
   expect_code 0
   expect_out '^WARN .*gitignore'
   expect_out '\.harness/state/'
-  apply_fix "bash .harness/bin/harness update"
-  run_doctor
+  OUT="$WARN_BUNDLE_OUT_AFTER"; CODE="$WARN_BUNDLE_CODE_AFTER"
   expect_code 0
   expect_not_out '^WARN .*gitignore'
   expect_out '^OK .*gitignore'
@@ -390,16 +478,13 @@ expect_claude_skill_drift_nogit() {
 scenario "B8: git が使えなくても .claude/skills のずれを検出する" setup_claude_skill_drift_nogit expect_claude_skill_drift_nogit
 
 # B8. .claude/agents/implementer.md を消すと FAIL。
-setup_claude_agent_missing() {
-  setup_init || return 1
-  rm -f "$PROJ/.claude/agents/implementer.md"
-}
+# 束ね: 上の B4（managed ファイル欠落）/ 下の B9（role-reviewer 欠落）と同じ ensure_fail_bundle を読む。
+setup_claude_agent_missing() { ensure_fail_bundle && PROJ="$FAIL_BUNDLE_DIR"; }
 expect_claude_agent_missing() {
-  run_doctor
+  OUT="$FAIL_BUNDLE_OUT_BEFORE"; CODE="$FAIL_BUNDLE_CODE_BEFORE"
   expect_code 1
   expect_out '^FAIL .*implementer\.md'
-  apply_fix "bash .harness/bin/harness update"
-  run_doctor
+  OUT="$FAIL_BUNDLE_OUT_AFTER"; CODE="$FAIL_BUNDLE_CODE_AFTER"
   expect_code 0
   expect_not_out '^FAIL .*implementer\.md'
 }
@@ -426,16 +511,13 @@ expect_no_claude_adapter_check() {
 scenario "B8: agents に claude が無ければ Claude アダプタの診断をしない" setup_init_codex_only expect_no_claude_adapter_check
 
 # B9. .agents/skills/role-reviewer を消すと FAIL。
-setup_role_reviewer_missing() {
-  setup_init || return 1
-  rm -rf "$PROJ/.agents/skills/role-reviewer"
-}
+# 束ね: 上の B4/B8 と同じ ensure_fail_bundle を読む。
+setup_role_reviewer_missing() { ensure_fail_bundle && PROJ="$FAIL_BUNDLE_DIR"; }
 expect_role_reviewer_missing() {
-  run_doctor
+  OUT="$FAIL_BUNDLE_OUT_BEFORE"; CODE="$FAIL_BUNDLE_CODE_BEFORE"
   expect_code 1
   expect_out '^FAIL .*role-reviewer'
-  apply_fix "bash .harness/bin/harness update"
-  run_doctor
+  OUT="$FAIL_BUNDLE_OUT_AFTER"; CODE="$FAIL_BUNDLE_CODE_AFTER"
   expect_code 0
   expect_not_out '^FAIL .*role-reviewer'
 }
@@ -501,8 +583,13 @@ expect_no_bare_bin_harness_path() {
 scenario "回帰: doctor.sh の直し方に「bash bin/harness」(存在しないパス) が残っていない" setup_repo_source expect_no_bare_bin_harness_path
 
 # ================================================================ 集計
+rm -rf "$SHARED" 2>/dev/null
 echo
 echo "tests/doctor.sh: pass=$passed fail=$failed"
+if [ -n "$FILTER" ] && [ $((passed + failed)) -eq 0 ]; then
+  echo "  フィルタ「$FILTER」に一致するシナリオが無かった。"
+  exit 1
+fi
 if [ "$failed" -gt 0 ]; then
   printf '  失敗: %s\n' "${failed_names[@]}"
   echo "  doctor の出力（上の「直近の出力」）と harness/scripts/doctor.sh を突き合わせて直す。"
