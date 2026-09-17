@@ -2,3 +2,11 @@
 bin/harness text eol=lf
 *.sh text eol=lf
 *.cmd text eol=crlf
+.harness/** text eol=lf
+.harness/bin/harness.cmd text eol=crlf
+.githooks/** text eol=lf
+.agents/** text eol=lf
+.claude/** text eol=lf
+docs/roles/** text eol=lf
+AGENTS.md text eol=lf
+CLAUDE.md text eol=lf

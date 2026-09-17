@@ -52,6 +52,7 @@ harness status
 | `diff` | 手で直した管理ファイルの差分（上流に戻す候補） |
 | `upstream <path>...` | このリポジトリへ書き戻す（source がローカル clone のとき） |
 | `check [--fast]` | `.harness/checks.sh` に登録した検査を回す（`--fast` は pre-commit 用） |
+| `gc [--days N] [--strict]` | docs の腐敗検知（handoff の鮮度、索引やリンクの切れ、放置された計画・負債・state、管理ファイルの drift） |
 
 ### ハーネスの中身を更新する
 
@@ -88,6 +89,7 @@ harness/                 # プロジェクトに入るペイロード
 
 [`agent-skills`](../agent-skills) は個人の汎用スキル集（マシン単位・シンボリックリンク）。こちらはプロジェクト運用の足場（リポジトリ単位・コミットされる）。詳細は DESIGN.md §9。
 
-## 未実装
+## 既知の制約
 
-`harness gc`（docs の腐敗検知）、`.claude/settings.json` の自動マージ（断片を手で反映）。
+- `.claude/settings.json` の自動マージは `node` がある環境のみ。無ければ `.harness/adapters/claude.settings.fragment.json` を手で反映する。
+- 動作確認は Windows（Git Bash）のみ。macOS / Linux は未検証。詳細は `docs/tech-debt.md`。

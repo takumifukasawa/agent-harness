@@ -2,7 +2,7 @@
 
 > **主役は「プロジェクトをエージェントにどう進めさせるか」のワークフロー。** それを各プロジェクトに配って更新する仕組みは、ワークフローを支える最小限の配管。
 > 対象エージェント: Claude Code / Codex CLI / 今後の他エージェント。
-> 状態: 0.2.0（2026-09-17）。ワークフローの雛形・それを回す `task-orchestrate` スキル・配管の CLI は実装済み。dogfood は未実施（§11）。
+> 状態: 0.3.0（2026-09-17）。ワークフローの雛形・それを回す `task-orchestrate` スキル・配管の CLI（gc と settings マージ含む）は実装済み。このリポジトリ自身に導入済み。`task-orchestrate` で機能 1 つを通す dogfood は題材待ち（§11）。
 
 ---
 
@@ -178,6 +178,7 @@ harness status                    # 版と、unchanged / MODIFIED / missing
 harness diff                      # 手で直した managed の差分（上流に戻す候補）
 harness upstream <path>...        # 正本の harness/ へ書き戻す（source がローカル clone のとき）
 harness check [--fast]            # .harness/checks.sh の検査を実行
+harness gc [--days N] [--strict]  # docs の腐敗検知（§6）。判断はしない
 harness self-install [--dir]      # PATH に置く。Windows は harness.cmd も
 ```
 
@@ -221,7 +222,7 @@ harness self-install [--dir]      # PATH に置く。Windows は harness.cmd も
 |---|---|---|---|---|
 | 1 | ② | 配布方式 | コピー + manifest | submodule は人もエージェントも事故が多い。subtree は履歴が重く、AGENTS.md 等を外に出す処理が別に要る |
 | 2 | ② | Windows の skills リンク | コピー | symlink は開発者モードが必要 |
-| 3 | ② | `.claude/settings.json` | v0 は断片を手で反映 | JSON マージを後回しにできる |
+| 3 | ② | `.claude/settings.json` | v0 は断片を手で反映 → **0.3.0 で自動マージ**（node があれば。無ければ手で反映） | 管理するのは断片の deny と `.harness/` を含む hooks だけ。プロジェクトの項目は触らない |
 | 4 | ② | Codex 側 hook | 当面使わない | git hooks と AGENTS.md の文章で代替 |
 | 5 | ① | Claude auto-memory と docs | docs が正。memory は参照と個人の好みだけ | Codex と共有でき、二重管理を避ける |
 | 6 | ① | 長期タスクの状態 | SmartHR 型 JSON 2 ファイル、gitignore | §5 |
@@ -240,9 +241,10 @@ harness self-install [--dir]      # PATH に置く。Windows は harness.cmd も
 | ✅ | ① `task-orchestrate` スキル（0.2.0）: §5 の 3 フェーズを回す手順。state の初期化、実装役への指示テンプレート、検査、再試行、最終レビューの重複排除と反証 |
 | ✅ | ① Codex 用の役割スキル生成（0.2.0）: `.agents/skills/role-{implementer,reviewer}/` |
 | ⬜ 3 | **① dogfood**: 自分のプロジェクト 1 つで機能 1 つを §5 で通す。確かめること: 再試行「新しい 1 体」の精度とコスト、Codex でのパス限定規律（cwd か明示渡し）、`checks.sh` に何を登録すると効くか、`task-orchestrate` の手順で統括が迷う箇所 |
-| ⬜ 4 | ② `harness gc`（docs の腐敗検知） |
-| ⬜ 5 | ② `.claude/settings.json` の自動マージ |
-| ⬜ 6 | ② GitHub へ push 後、`curl | bash` からの init を実機で確認。macOS / Linux 未確認 |
+| ✅ | ② `harness gc`（0.3.0）: handoff の鮮度、索引とリンクの切れ、放置された plan / state / 負債、管理ファイルの drift、古い references |
+| ✅ | ② `.claude/settings.json` の自動マージ（0.3.0）: node があれば deny と `.harness/` hooks だけを差し込み、プロジェクトの項目は保持。無ければ手順を案内 |
+| ✅ | このリポジトリ自身への導入（0.3.0）: 検査 8 件を `.harness/checks.sh` に登録。導入コピーとペイロードの同期を検査で強制 |
+| ⬜ 6 | ② GitHub からの `curl | bash` init を実機で確認。macOS / Linux 未確認（`docs/tech-debt.md`） |
 
 ## 12. 非ゴール
 

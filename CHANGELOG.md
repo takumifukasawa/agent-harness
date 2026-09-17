@@ -5,6 +5,16 @@ semver: managed ファイルの移動・マーカー形式変更は major、ル�
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-17
+
+配管の残りを埋め、このリポジトリ自身に導入した版。
+
+- 追加: `harness gc`（`scripts/gc.sh`）。handoff の鮮度、索引にあるが無い doc / あるが索引に無い doc、docs 内のリンク切れ、放置された `plans/active` と `.harness/state`、未着手の負債、管理ファイルの drift、古い references を一覧にする。`--strict` で CI 用に exit 1。判断と修正はしない。
+- 追加: `.claude/settings.json` の自動マージ（node があるとき）。断片の `permissions.deny` と、command に `.harness/` を含む hooks だけを差し込み、プロジェクトの項目は保持。上書き前にバックアップ。無いときは手順を案内。
+- 追加: このリポジトリ自身に `harness init` で導入（dogfood）。`.harness/checks.sh` に 8 件の検査（構文、JSON、スキル名、AGENTS.core.md の行数、VERSION と CHANGELOG の整合、導入コピーとペイロードの同期、init のスモークテスト）。`docs/` に architecture / learnings / tech-debt / decisions 0001 / handoff を記入。
+- 変更: origin を HTTPS に切替（この PC の運用）。
+- プロジェクト側で必要な作業: `harness update` で `gc.sh` が入り、Claude を使うプロジェクトでは `.claude/settings.json` に deny と SessionStart hook が差し込まれる（バックアップは `.harness/backup/`）。不要なら該当項目を削除してよいが、次の update で再度差し込まれる。
+
 ## [0.2.0] - 2026-09-17
 
 ワークフローを実際に回せるようにした版。
