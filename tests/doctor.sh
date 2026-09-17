@@ -181,6 +181,74 @@ expect_missing_gitattributes_line() {
 }
 scenario "B5: .gitattributes に .harness/** eol=lf が無ければ WARN" setup_missing_gitattributes_line expect_missing_gitattributes_line
 
+# B6. core.hooksPath を外すと WARN（直し方に git config core.hooksPath .githooks）。
+setup_no_hookspath() {
+  setup_init || return 1
+  git -C "$PROJ" config --unset core.hooksPath
+}
+expect_no_hookspath() {
+  run_doctor
+  expect_code 0
+  expect_out '^WARN .*hooks'
+  expect_out 'git config core\.hooksPath \.githooks'
+}
+scenario "B6: core.hooksPath が外れていれば WARN" setup_no_hookspath expect_no_hookspath
+
+# B7. AGENTS.md のマーカーの v= を manifest と食い違わせると WARN（harness update を案内）。
+setup_agents_version_mismatch() {
+  setup_init || return 1
+  sed -i 's/<!-- harness:begin v=[^ ]* -->/<!-- harness:begin v=0.0.0-mismatch -->/' "$PROJ/AGENTS.md"
+}
+expect_agents_version_mismatch() {
+  run_doctor
+  expect_code 0
+  expect_out '^WARN .*AGENTS\.md'
+  expect_out 'harness update'
+}
+scenario "B7: AGENTS.md マーカーの版が manifest と食い違えば WARN" setup_agents_version_mismatch expect_agents_version_mismatch
+
+# B7. AGENTS.md からマーカーを消すと FAIL。
+setup_agents_marker_missing() {
+  setup_init || return 1
+  grep -v 'harness:begin\|harness:end' "$PROJ/AGENTS.md" > "$PROJ/AGENTS.md.tmp" &&
+    mv "$PROJ/AGENTS.md.tmp" "$PROJ/AGENTS.md"
+}
+expect_agents_marker_missing() {
+  run_doctor
+  expect_code 1
+  expect_out '^FAIL .*AGENTS\.md'
+}
+scenario "B7: AGENTS.md のマーカーが無ければ FAIL" setup_agents_marker_missing expect_agents_marker_missing
+
+# B7. AGENTS.md のマーカーを 2 組にすると FAIL。
+setup_agents_marker_duplicated() {
+  setup_init || return 1
+  {
+    echo '<!-- harness:begin v=0.3.0 -->'
+    echo '<!-- harness:end -->'
+  } >> "$PROJ/AGENTS.md"
+}
+expect_agents_marker_duplicated() {
+  run_doctor
+  expect_code 1
+  expect_out '^FAIL .*AGENTS\.md'
+}
+scenario "B7: AGENTS.md のマーカーが 2 組あれば FAIL" setup_agents_marker_duplicated expect_agents_marker_duplicated
+
+# B11. .gitignore から .harness/state/ を消すと WARN。
+setup_missing_gitignore_state() {
+  setup_init || return 1
+  grep -vxF '.harness/state/' "$PROJ/.gitignore" > "$PROJ/.gitignore.tmp" &&
+    mv "$PROJ/.gitignore.tmp" "$PROJ/.gitignore"
+}
+expect_missing_gitignore_state() {
+  run_doctor
+  expect_code 0
+  expect_out '^WARN .*gitignore'
+  expect_out '\.harness/state/'
+}
+scenario "B11: .gitignore に .harness/state/ が無ければ WARN" setup_missing_gitignore_state expect_missing_gitignore_state
+
 # ================================================================ 集計
 echo
 echo "tests/doctor.sh: pass=$passed fail=$failed"
