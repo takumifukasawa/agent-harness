@@ -20,7 +20,7 @@
 
 | # | タスク | 状態 | モデル | 備考 |
 |---|---|---|---|---|
-| T01 | 骨格: doctor.sh、CLI サブコマンド、終了コード、ツール診断（B1-B2）、`tests/doctor.sh` の土台と検査登録 | todo | opus | 構造を決めるので上位モデル |
+| T01 | 骨格: doctor.sh、CLI サブコマンド、終了コード、ツール診断（B1-B2）、`tests/doctor.sh` の土台と検査登録 | done (87ae970) | opus | 構造を決めるので上位モデル |
 | T02 | 導入状態: manifest（B3）、ファイル存在（B4）、改行と .gitattributes（B5） | todo | sonnet | T01 依存 |
 | T03 | git と AGENTS.md: hooks（B6）、マーカーと版（B7）、gitignore（B11） | todo | sonnet | T01 依存 |
 | T04 | アダプタと版: Claude（B8）、Codex（B9）、新版（B10） | todo | sonnet | T01 依存 |
@@ -37,6 +37,7 @@ T02〜T04 は互いに独立だが、同じ `doctor.sh` を編集するので直
 ## 進捗ログ（セッションごとに 1〜3 行）
 
 - 2026-09-17: 準備フェーズ。spec 合意、分解案作成。
+- 2026-09-17: T01 done（Red→Green の 2 コミット、check 9 件 pass、再試行 0）。実装役の判断: 行形式は 1 行（spec どおり。gc の 2 行形式は範囲外で触らない）、B2 は有無のみで版の下限は見ない。
 
 ## 未確定事項（人間の判断待ち）
 
