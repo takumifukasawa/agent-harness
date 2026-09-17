@@ -19,7 +19,7 @@
 - B2. 任意ツール: `node`、`jq` の有無。無ければ WARN（「settings 自動マージは手動になる」等、影響を添える）。Windows（`uname -s` が MINGW/MSYS/CYGWIN）では `cygpath` の有無も見る。
 - B3. manifest: `.harness/manifest.json` が読め、1 エントリ 1 行の形式で、`harness_version` / `source` / `agents` が取れる。壊れていれば FAIL。
 - B4. ファイルの存在: manifest に記載された path がすべて存在する（seed は除く。seed の欠落は WARN）。無いものは FAIL で一覧。
-- B5. 改行: managed / generated のファイルに CR（`\r`）が含まれない。含まれれば FAIL（autocrlf を疑う直し方を添える）。`.gitattributes` に `.harness/** text eol=lf` があるか、無ければ WARN。
+- B5. 改行: managed / generated のファイルに CR（`\r`）が含まれない。含まれれば FAIL（autocrlf を疑う直し方を添える）。**`*.cmd` は CRLF が正しい規約（`.gitattributes` の `*.cmd text eol=crlf`）なので判定から除外する。** `.gitattributes` に `.harness/** text eol=lf` があるか、無ければ WARN。
 - B6. git hooks: `core.hooksPath` が `.githooks` で、`.githooks/pre-commit` が存在する。違えば WARN（直し方: `git config core.hooksPath .githooks`）。
 - B7. AGENTS.md: マーカー `<!-- harness:begin v=X -->` と `<!-- harness:end -->` がちょうど 1 組あり、`X` が manifest の `harness_version` と一致。不一致は WARN（`harness update` を案内）、マーカー欠落や複数は FAIL。
 - B8. Claude アダプタ（manifest の agents に `claude` を含むとき）: `CLAUDE.md` に `@AGENTS.md` がある。`.claude/skills/<name>` が `.agents/skills/<name>` と内容一致（ずれていれば WARN、`harness update` を案内）。`.claude/agents/*.md` が manifest どおりにある。

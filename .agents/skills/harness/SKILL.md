@@ -1,6 +1,6 @@
 ---
 name: harness
-description: agent-harness の CLI をセッション内から実行し、結果を読んで次の行動を案内する。"/harness status", "/harness update", "/harness diff", "/harness check", "/harness upstream <path>" のように引数でサブコマンドを受ける。発火例 - "ハーネスの状態を見て", "ハーネスを更新して", "harness status", "検査を回して", "ハーネスの差分を見て", "このスキルの変更を上流に戻して"。引数が無ければ status を実行する。
+description: agent-harness の CLI をセッション内から実行し、結果を読んで次の行動を案内する。"/harness status", "/harness update", "/harness diff", "/harness check", "/harness upstream <path>", "/harness doctor" のように引数でサブコマンドを受ける。発火例 - "ハーネスの状態を見て", "ハーネスを更新して", "harness status", "検査を回して", "ハーネスの差分を見て", "このスキルの変更を上流に戻して", "ハーネスの環境を診断して"。引数が無ければ status を実行する。
 ---
 
 # harness — CLI をセッション内から使う

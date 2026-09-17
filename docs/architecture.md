@@ -34,7 +34,7 @@ harness/               ペイロード。プロジェクトに配られる中身
 | bash スクリプトは LF、`*.cmd` は CRLF | `.gitattributes` | 強制済 |
 | 空のプロジェクトに init して直後の status が全部 unchanged | checks.sh "init smoke test" | 強制済 |
 | ペイロードに Claude / Codex 固有の依存を入れない（アダプタ以外） | 未強制（レビューで見る） | 未強制 |
-| manifest は 1 エントリ 1 行（bash の sed で読める） | 未強制（`write_manifest` の実装に依存） | 未強制 |
+| manifest は 1 エントリ 1 行（bash の sed で読める） | `harness doctor` の B3（エントリ行数と `"path"` キー数を照合し、ズレを FAIL で報告。`.harness/checks.sh` "doctor scenarios" が検出ロジックの回帰を防ぐ） | 検出のみ（`doctor` の実行が前提。`harness check` に自動接続はしていない） |
 
 ## 意図的に許している自由
 

@@ -162,12 +162,13 @@ docs の腐敗（handoff の鮮度、as-of 日付の化石、索引と実体の�
 
 | 所有権 | 意味 | update 時 |
 |---|---|---|
-| **managed** | ハーネスが正本（スキル、スクリプト、CLI、CLAUDE.md） | 未改変なら上書き。改変済みなら保持し `.harness/conflicts/<path>.new` に新版 |
+| **managed** | ハーネスが正本（スキル、スクリプト、CLI） | **復元**（正本の内容で上書き）。変更前は `.harness/backup/<ts>/<path>` へ退避し、`restore <path>` と退避先を 1 行出力、集計に `restored=N` を足す |
 | **seed** | 雛形から一度だけ生成。以後プロジェクトの資産（docs、checks.sh） | 触らない。無ければ生成 |
-| **merge** | AGENTS.md。マーカー `<!-- harness:begin v=X -->`…`<!-- harness:end -->` の内側だけハーネス | ブロックだけ差し替え。ブロックが手で変わっていたら衝突。`v=` は CLI が VERSION から埋める |
-| **generated** | seed から生成されるアダプタ出力（`.claude/agents/*.md`） | 生成元のハッシュも記録。生成元が変われば再生成、出力だけ変わっていれば衝突 |
+| **merge** | AGENTS.md。マーカー `<!-- harness:begin v=X -->`…`<!-- harness:end -->` の内側だけハーネス | managed ブロックだけを現行版に**復元**（ブロック外のプロジェクトの記述は触らない）。マーカーが重複・破損していれば 1 対に畳む。`v=` は CLI が VERSION から埋める。変更前はファイルごと backup へ |
+| **generated** | seed から生成されるアダプタ出力（`.claude/agents/*.md`） | managed と同じく**復元**。生成元のハッシュも記録し、生成元が変われば再生成 |
+| **CLAUDE.md** | `@AGENTS.md` を読ませる import スタブ（それ以外はプロジェクトが自由に書く） | 上書きしない。`@AGENTS.md` の行だけを保証し、プロジェクトが書いた内容は残す |
 
-改変判定は 2-way（導入時ハッシュ vs 現在）。上書き前に `.harness/backup/<ts>/` へ退避。既存の `AGENTS.md` / `CLAUDE.md` は壊さず先頭に足すだけ。manifest に無いのに存在する managed パスは衝突扱いにして上書きしない。
+改変判定は 2-way（導入時ハッシュ vs 現在）。上書き・復元の前は必ず `.harness/backup/<ts>/` へ退避する（`docs/decisions/0002-update-repairs-managed-files.md`）。既存の `AGENTS.md` / `CLAUDE.md` は壊さず先頭に足すだけ。manifest に無いのに存在する managed パスは衝突扱いにして上書きしない。
 
 ## 8. CLI
 

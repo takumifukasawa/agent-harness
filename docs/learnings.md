@@ -36,5 +36,15 @@
 
 ## 2026-09-17 Git for Windows の grep で CR（`\r`）がマッチしない [harness候補]
 - 症状: ファイルに CR バイトが実在する（`od -c` / `cat -A` で見える）のに、`grep -q $'\r' file` や CR だけのパターンファイルを使った `grep -f` が一貫して不一致になる。
-- 原因: 未特定（Git for Windows 同梱 grep 3.0 で再現。`harness doctor` の B5 実装時に遭遇）。
+- 原因: 未特定（Git for Windows 同梱 grep 3.0 で再現。`harness doctor` の B5 実装時に遭遇）。2026-09-18 に原因判明、下の学びを参照。
 - 対処 / 再発したら: grep で CR を探さない。`tr -d '\r'` の前後でバイト数（`wc -c`）を比べて CR の有無を判定する（`harness/scripts/doctor.sh` の B5 がその形）。
+
+## 2026-09-18 Git Bash の grep はテキストモードで CR を落とすため CRLF 検出に使えない [harness候補]
+- 症状: 上の 2026-09-17 の学びの原因調査。CRLF 化されたファイル（`cmp` や `od -c` では CR が見える）に対し、どんな書き方で `grep` に CR（`\r`）を探させても一致しない。
+- 原因: Git Bash（MSYS2）同梱の grep はテキストモードでファイル・パイプを読み、CR を改行の一部として落としてから照合する。渡す前のバイト列に CR が実在しても grep 自身が消費前に捨てるので、パターンの書き方では回避できない。
+- 対処 / 再発したら: CRLF・CR の有無を判定するのに grep を使わない。`cmp -s a b` で2ファイルの一致を見るか、`od -c file` の出力（`\r` が文字列として現れる）を見る。バイト数比較でもよい（`tr -d '\r' < f | wc -c` と `wc -c < f` の差）。
+
+## 2026-09-18 `git hash-object` はリポジトリの外・素で呼んでも core.autocrlf を適用する [harness候補]
+- 症状: `--no-filters` を付けずに `git hash-object` で 2 ファイルの内容一致を判定すると、CRLF 化されただけの LF 管理ファイルが「一致（未変更）」と誤判定される。`status` の MODIFIED 判定・`update` の上書き/復元判断・検査 "installed copies in sync" の 3 経路が同時にこれで壊れていた（`docs/decisions/0002-update-repairs-managed-files.md`）。
+- 原因: 素の `git hash-object` は `.gitattributes` の `text eol=lf` と環境の `core.autocrlf` によるフィルタを通してから hash を取る。CRLF 化されたファイルもフィルタで LF に正規化されてから hash されるため、ハッシュだけ比べると「同じ」に見える。
+- 対処 / 再発したら: 2 つのファイルの内容が同じかを判定する処理はすべて `git hash-object --no-filters` を使う（素の `git hash-object` を使っている箇所が無いか grep する）。`harness/scripts/doctor.sh` の `content_eq` と `bin/harness` の `hash_of()` がその形。
