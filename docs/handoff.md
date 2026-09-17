@@ -1,10 +1,10 @@
 # handoff — 現在地
 
-最終更新: 2026-09-17（T03 完了時点）
+最終更新: 2026-09-17（T04 完了時点）
 
 ## いま何をしているか（1〜3 行）
 
-`harness doctor` を題材に `task-orchestrate` の dogfood 中（反復フェーズ）。計画: `docs/plans/active/harness-doctor.md`。T01（骨格 B1-B2）・T02（B3-B5）・T03（B6/B7/B11）が done、次は T04（B8-B10）。統括は 1 タスクごとにセッションを切る運用。
+`harness doctor` を題材に `task-orchestrate` の dogfood 中（反復フェーズ）。計画: `docs/plans/active/harness-doctor.md`。T01（骨格 B1-B2）・T02（B3-B5）・T03（B6/B7/B11）・T04（B8-B10）が done、次は T05（文書と配線。最後のタスク）。統括は 1 タスクごとにセッションを切る運用。
 
 ## 状態
 
@@ -13,14 +13,14 @@
 | 設計（2 部構成、決定ログ 11 件） | 確定 | `DESIGN.md` |
 | CLI: init / update / status / diff / upstream / check / gc / self-install | 実装済み・Windows で検証済み | `bin/harness`, `docs/learnings.md` |
 | Claude settings 自動マージ（node 前提） | 実装済み・検証済み | `bin/harness` `merge_claude_settings` |
-| `task-orchestrate` スキル | 実装済み・**dogfood 中**（doctor で T01-T03 通過、再試行 0、実装役 1 タスク 10〜20 分） | `harness/skills/task-orchestrate/SKILL.md` |
+| `task-orchestrate` スキル | 実装済み・**dogfood 中**（doctor で T01-T04 通過、再試行 0、実装役 1 タスク 10〜20 分） | `harness/skills/task-orchestrate/SKILL.md` |
 | Codex 用 `role-*` スキル生成 | 実装済み | `bin/harness` `plan()` |
-| このリポジトリへの導入（dogfood の土台） | 導入済み・検査 9 件 pass（doctor scenarios 14 件含む） | `.harness/checks.sh` |
+| このリポジトリへの導入（dogfood の土台） | 導入済み・検査 9 件 pass（doctor scenarios 21 件含む） | `.harness/checks.sh` |
 | v0.1.0 / v0.2.0 | push 済み（origin は HTTPS に切替済み） | git tags |
 
 ## NEXT（依存順。順序制約があれば明記）
 
-1. **T04 を進める**: 新しいセッションで「続きのタスクを進めて」→ `task-orchestrate` §0 が `.harness/state/progress.json`（current_task: T04）を読み、実装役を 1 体起こす。T04 は B8（Claude アダプタ）/ B9（Codex アダプタ）/ B10（版比較。source がローカルか URL かで分岐）。同じ `doctor.sh` を触るので、着手前に `bash bin/harness update` で導入コピーの同期を確認。T05（文書と配線）は T04 の後。
+1. **T05 を進める**: 新しいセッションで「続きのタスクを進めて」→ `task-orchestrate` §0 が `.harness/state/progress.json`（current_task: T05）を読み、実装役を 1 体起こす。T05 は文書と配線（harness スキルの表、README、DESIGN §8、init の案内文、CHANGELOG の Unreleased。VERSION は上げない）。文書は実装済みの診断項目 B1-B11 と一致させる（T04 の note_for_next: B8/B9 は個別ファイル欠落を B4 に譲り集計 OK 行だけを出す）。
 2. 全タスク done 後に最終レビュー（§3、reviewer 4 観点並列）。通ったら VERSION を上げる。
 3. 題材を通したら、統括が手順で迷った箇所・再試行の精度とコスト・検査に何を登録すると効いたか を `docs/learnings.md` に残し、`[harness候補]` を `harness/` へ昇格する（候補が 1 件増えた: Git for Windows の grep で CR がマッチしない）。
 4. `agent-skills` 側の `context-catchup` / `context-handoff` の description に「ハーネス未導入のリポジトリで使う」と書き、発火の重なりを解消する（別リポジトリの作業）。
