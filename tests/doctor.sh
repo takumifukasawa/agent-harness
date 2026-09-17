@@ -8,6 +8,12 @@
 #   setup 関数 : $WORK（使い捨ての一時ディレクトリ）にプロジェクトを作り、$PROJ を設定する
 #   expect 関数: run_doctor / run_doctor_no_path などを呼び、expect_* で表明する
 # シナリオを足すときは、先に落ちるシナリオを書いてから doctor.sh に診断項目を足す（TDD）。
+#
+# 直し方が単一の実行可能なコマンドである項目は、expect 関数の中で
+# 「壊す → doctor で当該行が出る → apply_fix で直し方どおりに実行 → doctor で当該行が消える」
+# まで表明する。手順設計が要るもの（B3 の manifest 破損全般、B5 の CRLF 化、B7 の版ずれとマーカー
+# 重複、B8 の「既存ファイルを書き換えた」系）は harness update が .harness/conflicts/ への
+# CONFLICT を出すだけで直らない（実測済み）。個別に手順を決めるまでこの枠には入れない。
 set -u
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -42,6 +48,9 @@ run_doctor_without_path() { # PATH を潰して doctor.sh を直接回す（git 
 }
 run_doctor_with_broken_git() { # git だけが使えない PATH で doctor.sh を直接回す（git 無しでも内容比較が効くか）
   OUT="$(cd "$PROJ" && PATH="$WORK/nogit:$PATH" "$BASH_BIN" .harness/scripts/doctor.sh 2>&1)"; CODE=$?
+}
+apply_fix() { # <直し方どおりのコマンド文字列> — $PROJ の中でコピペしたのと同じように実行する
+  ( cd "$PROJ" && eval "$1" ) >/dev/null 2>&1
 }
 
 # ---------------------------------------------------------------- setup 部品
@@ -186,8 +195,12 @@ expect_missing_managed_file() {
   run_doctor
   expect_code 1
   expect_out '^FAIL .*state-template/progress\.json'
+  apply_fix "bash .harness/bin/harness update"
+  run_doctor
+  expect_code 0
+  expect_not_out '^FAIL .*state-template/progress\.json'
 }
-scenario "B4: managed ファイルの欠落は FAIL" setup_missing_managed_file expect_missing_managed_file
+scenario "B4: managed ファイルの欠落は FAIL（update で直る）" setup_missing_managed_file expect_missing_managed_file
 
 # B4. manifest 記載の seed ファイルを削除すると WARN（FAIL にはしない）。
 setup_missing_seed_file() {
@@ -226,8 +239,13 @@ expect_missing_gitattributes_line() {
   run_doctor
   expect_code 0
   expect_out '^WARN .*gitattributes'
+  apply_fix "bash .harness/bin/harness update"
+  run_doctor
+  expect_code 0
+  expect_not_out '^WARN .*gitattributes'
+  expect_out '^OK .*gitattributes'
 }
-scenario "B5: .gitattributes に .harness/** eol=lf が無ければ WARN" setup_missing_gitattributes_line expect_missing_gitattributes_line
+scenario "B5: .gitattributes に .harness/** eol=lf が無ければ WARN（update で直る）" setup_missing_gitattributes_line expect_missing_gitattributes_line
 
 # B6. core.hooksPath を外すと WARN（直し方に git config core.hooksPath .githooks）。
 setup_no_hookspath() {
@@ -239,8 +257,13 @@ expect_no_hookspath() {
   expect_code 0
   expect_out '^WARN .*hooks'
   expect_out 'git config core\.hooksPath \.githooks'
+  apply_fix "git config core.hooksPath .githooks"
+  run_doctor
+  expect_code 0
+  expect_not_out '^WARN .*hooks'
+  expect_out '^OK .*hooks'
 }
-scenario "B6: core.hooksPath が外れていれば WARN" setup_no_hookspath expect_no_hookspath
+scenario "B6: core.hooksPath が外れていれば WARN（直し方のコマンドで直る）" setup_no_hookspath expect_no_hookspath
 
 # B7. AGENTS.md のマーカーの v= を manifest と食い違わせると WARN（harness update を案内）。
 setup_agents_version_mismatch() {
@@ -265,8 +288,12 @@ expect_agents_marker_missing() {
   run_doctor
   expect_code 1
   expect_out '^FAIL .*AGENTS\.md'
+  apply_fix "bash .harness/bin/harness update"
+  run_doctor
+  expect_code 0
+  expect_not_out '^FAIL .*AGENTS\.md'
 }
-scenario "B7: AGENTS.md のマーカーが無ければ FAIL" setup_agents_marker_missing expect_agents_marker_missing
+scenario "B7: AGENTS.md のマーカーが無ければ FAIL（update で直る）" setup_agents_marker_missing expect_agents_marker_missing
 
 # B7. AGENTS.md のマーカーを 2 組にすると FAIL。
 setup_agents_marker_duplicated() {
@@ -294,8 +321,13 @@ expect_missing_gitignore_state() {
   expect_code 0
   expect_out '^WARN .*gitignore'
   expect_out '\.harness/state/'
+  apply_fix "bash .harness/bin/harness update"
+  run_doctor
+  expect_code 0
+  expect_not_out '^WARN .*gitignore'
+  expect_out '^OK .*gitignore'
 }
-scenario "B11: .gitignore に .harness/state/ が無ければ WARN" setup_missing_gitignore_state expect_missing_gitignore_state
+scenario "B11: .gitignore に .harness/state/ が無ければ WARN（update で直る）" setup_missing_gitignore_state expect_missing_gitignore_state
 
 # B8. CLAUDE.md から @AGENTS.md の import を消すと FAIL。
 setup_claude_md_no_import() {
@@ -366,8 +398,12 @@ expect_claude_agent_missing() {
   run_doctor
   expect_code 1
   expect_out '^FAIL .*implementer\.md'
+  apply_fix "bash .harness/bin/harness update"
+  run_doctor
+  expect_code 0
+  expect_not_out '^FAIL .*implementer\.md'
 }
-scenario "B8: .claude/agents/implementer.md が無ければ FAIL" setup_claude_agent_missing expect_claude_agent_missing
+scenario "B8: .claude/agents/implementer.md が無ければ FAIL（update で直る）" setup_claude_agent_missing expect_claude_agent_missing
 
 # B8. manifest の agents に claude を含まないとき（--agents codex で init）は CLAUDE.md 系の診断をしない。
 setup_init_codex_only() {
@@ -398,8 +434,12 @@ expect_role_reviewer_missing() {
   run_doctor
   expect_code 1
   expect_out '^FAIL .*role-reviewer'
+  apply_fix "bash .harness/bin/harness update"
+  run_doctor
+  expect_code 0
+  expect_not_out '^FAIL .*role-reviewer'
 }
-scenario "B9: .agents/skills/role-reviewer が無ければ FAIL" setup_role_reviewer_missing expect_role_reviewer_missing
+scenario "B9: .agents/skills/role-reviewer が無ければ FAIL（update で直る）" setup_role_reviewer_missing expect_role_reviewer_missing
 
 # B10. source（ローカル）の VERSION を上げていると INFO で新版ありと出る。
 setup_source_version_bump() {
@@ -421,8 +461,16 @@ expect_source_version_bump() {
   run_doctor
   expect_code 0
   expect_out '^INFO .*9\.9\.9'
+  # 回帰: 導入先に存在しない「bash bin/harness」を案内していないこと（この行が過去の実バグ）。
+  expect_not_out 'bash bin/harness'
+  expect_out 'bash \.harness/bin/harness update'
+  apply_fix "bash .harness/bin/harness update"
+  run_doctor
+  expect_code 0
+  expect_not_out '^INFO .*9\.9\.9'
+  expect_out '^OK .*source の版は'
 }
-scenario "B10: source（ローカル）に新版があれば INFO" setup_source_version_bump expect_source_version_bump
+scenario "B10: source（ローカル）に新版があれば INFO（直し方どおりに update すると追従して消える）" setup_source_version_bump expect_source_version_bump
 
 # B10. source が URL のときはネットワークに触らない（manifest の source を到達不能な URL に差し替えて確認）。
 setup_source_is_url() {
@@ -435,6 +483,22 @@ expect_source_is_url() {
   expect_not_out 'Could not resolve|clone に失敗|fetch に失敗'
 }
 scenario "B10: source が URL ならネットワークに触らず完走する" setup_source_is_url expect_source_is_url
+
+# 回帰: spec C1（直し方はそのまま実行できるコマンド）/ A1（導入先の CLI は .harness/bin/harness）。
+# ソース（harness/scripts/doctor.sh。正本。導入コピーの .harness/scripts/doctor.sh ではない）に、
+# 導入先に存在しない「bash bin/harness」（.harness/ を欠いた CLI パス）が二度と紛れ込まないことを
+# 個別のシナリオに頼らず機械的に保証する。使い捨てプロジェクトは要らない。
+setup_repo_source() { PROJ="$WORK"; }
+expect_no_bare_bin_harness_path() {
+  CODE=0
+  local hits
+  hits="$(grep -n 'bash bin/harness' "$REPO/harness/scripts/doctor.sh" 2>/dev/null || true)"
+  OUT="$hits"
+  if [ -n "$hits" ]; then
+    errors+=("harness/scripts/doctor.sh に、導入先に存在しない「bash bin/harness」が残っている（.harness/bin/harness に統一する）: $hits")
+  fi
+}
+scenario "回帰: doctor.sh の直し方に「bash bin/harness」(存在しないパス) が残っていない" setup_repo_source expect_no_bare_bin_harness_path
 
 # ================================================================ 集計
 echo
