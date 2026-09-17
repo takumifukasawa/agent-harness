@@ -9,7 +9,7 @@
 
 | ファイル | 範囲 | 状態 |
 |---|---|---|
-| （dogfood の題材が決まったらここに追加） | | 草案 |
+| [harness-doctor.md](harness-doctor.md) | `harness doctor`: 導入先の環境と導入状態の診断 | 合意済 |
 
 ## 1 つの spec の書き方
 
