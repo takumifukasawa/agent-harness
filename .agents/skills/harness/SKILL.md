@@ -21,6 +21,7 @@ bash .harness/bin/harness <subcommand> [args]
 | `diff` | 手で直した managed ファイルの差分 | 上流に戻す候補。秘密情報・プロジェクト名が混ざっていないか見る |
 | `upstream <path>...` | agent-harness リポジトリへ書き戻す（source がローカル clone のとき） | 成功したら「agent-harness 側で commit → CHANGELOG → VERSION」が次の作業だと伝える |
 | `check [--fast]` | `.harness/checks.sh` の検査を回す | 失敗した検査の出力をそのまま報告。修復手順が書かれていればそれに従う |
+| `doctor` | 環境と導入状態を診断する（終了コード: 0=FAIL 0 件、1=FAIL あり、2=未導入） | 1 行 1 項目 `OK\|WARN\|FAIL  項目  →  直し方`、末尾の集計行 `harness doctor: OK=n WARN=n FAIL=n` を報告。WARN/FAIL があれば各行の「→」の直し方に従う。`INFO`（source に新版あり）は集計に含めず、`harness update` を促す |
 | `version` | 版を表示 | |
 
 ## やらないこと

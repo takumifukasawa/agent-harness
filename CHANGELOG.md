@@ -5,6 +5,9 @@ semver: managed ファイルの移動・マーカー形式変更は major、ル�
 
 ## [Unreleased]
 
+- 追加: `harness doctor`（`scripts/doctor.sh`）。環境とハーネス導入状態を機械的に診断する（bash/git/node/jq、manifest、改行、git hooks、AGENTS.md マーカー、Claude/Codex アダプタ、source の新版、`.gitignore`）。LLM は使わず報告のみ、自動修復はしない。終了コードは 0=問題なし/WARN のみ、1=FAIL あり、2=未導入。`harness init` の最後の案内にも `harness doctor` を促す 1 行を追加。
+- プロジェクト側で必要な作業: `harness update` で `doctor.sh` が入る。追加の手作業なし。
+
 ## [0.3.0] - 2026-09-17
 
 配管の残りを埋め、このリポジトリ自身に導入した版。

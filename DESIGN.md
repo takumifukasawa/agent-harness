@@ -179,6 +179,7 @@ harness diff                      # 手で直した managed の差分（上流�
 harness upstream <path>...        # 正本の harness/ へ書き戻す（source がローカル clone のとき）
 harness check [--fast]            # .harness/checks.sh の検査を実行
 harness gc [--days N] [--strict]  # docs の腐敗検知（§6）。判断はしない
+harness doctor                    # 環境と導入状態の診断（OK/WARN/FAIL の一覧。判断はしない）
 harness self-install [--dir]      # PATH に置く。Windows は harness.cmd も
 ```
 

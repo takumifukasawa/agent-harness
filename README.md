@@ -53,6 +53,7 @@ harness status
 | `upstream <path>...` | このリポジトリへ書き戻す（source がローカル clone のとき） |
 | `check [--fast]` | `.harness/checks.sh` に登録した検査を回す（`--fast` は pre-commit 用） |
 | `gc [--days N] [--strict]` | docs の腐敗検知（handoff の鮮度、索引やリンクの切れ、放置された計画・負債・state、管理ファイルの drift） |
+| `doctor` | 環境と導入状態の診断（ツール確認、manifest、改行、アダプタ、source の新版など）。OK/WARN/FAIL の一覧と集計を表示 |
 
 ### ハーネスの中身を更新する
 

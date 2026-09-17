@@ -453,6 +453,7 @@ cmd_init() {
   merge_claude_settings "$agents"
   echo
   info "次: docs/spec/ に何を作るかを書き、.harness/checks.sh に検査を登録する。セッション開始は session-catchup。"
+  info "     導入直後の環境確認は harness doctor。"
 }
 
 # update は .harness/bin/harness 自身を上書きする。実行中のスクリプトを上書きすると bash が壊れた内容を
