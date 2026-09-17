@@ -89,6 +89,86 @@ if [ "$is_windows" = 1 ]; then
   fi
 fi
 
+# ---------------------------------------------------------------- B3. manifest
+# bin/harness の manifest_get / manifest_entries と同じ「1 エントリ 1 行」書式を前提にする。
+MANIFEST="$ROOT/.harness/manifest.json"
+manifest_get() { # key
+  sed -n "s/^  \"$1\": *\"\(.*\)\",\{0,1\}$/\1/p" "$MANIFEST" | head -1
+}
+
+mf_version="$(manifest_get harness_version)"
+mf_source="$(manifest_get source)"
+mf_agents="$(manifest_get agents)"
+
+# path<TAB>src<TAB>ownership<TAB>sha256<TAB>source_sha256
+mf_entries="$(grep '^    {"path"' "$MANIFEST" 2>/dev/null | sed -E \
+  's/.*"path":"([^"]*)".*"src":"([^"]*)".*"ownership":"([^"]*)".*"sha256":"([^"]*)".*"source_sha256":"([^"]*)".*/\1\t\2\t\3\t\4\t\5/')"
+mf_entry_lines="$(grep -c '^    {"path"' "$MANIFEST" 2>/dev/null || echo 0)"
+mf_bad_lines=0
+if [ "$mf_entry_lines" -gt 0 ]; then
+  mf_bad_lines="$(printf '%s\n' "$mf_entries" | awk -F'\t' 'NF!=5{c++} END{print c+0}')"
+fi
+
+manifest_ok=1
+if [ -z "$mf_version" ] || [ -z "$mf_source" ] || [ -z "$mf_agents" ] || \
+   [ "$mf_entry_lines" -eq 0 ] || [ "$mf_bad_lines" -gt 0 ]; then
+  manifest_ok=0
+fi
+
+if [ "$manifest_ok" = 1 ]; then
+  report OK "manifest（version=$mf_version, agents=$mf_agents, ${mf_entry_lines} 件）"
+else
+  report FAIL "manifest（.harness/manifest.json）が壊れている（harness_version / source / agents が読めない、またはエントリ行の形式が崩れている）" \
+    ".harness/backup/ があれば復元するか、harness init をやり直す。B4/B5 は manifest が読めるまでスキップする"
+fi
+
+# ---------------------------------------------------------------- B4. ファイルの存在（manifest 記載分）
+# seed の欠落は WARN（導入後にプロジェクトが編集・削除しうる）。managed / generated / merge の欠落は FAIL。
+if [ "$manifest_ok" = 1 ]; then
+  mf_missing=0
+  while IFS=$'\t' read -r f_path f_src f_own f_sha f_srcsha; do
+    [ -z "$f_path" ] && continue
+    [ -e "$ROOT/$f_path" ] && continue
+    mf_missing=$((mf_missing + 1))
+    if [ "$f_own" = "seed" ]; then
+      report WARN "seed ファイルが無い: $f_path" \
+        "seed は導入後にプロジェクトが編集する前提のファイル。必要なら harness の docs-template/ から取り直すか手で作る"
+    else
+      report FAIL "$f_own ファイルが無い: $f_path" \
+        "harness update で復元する（直接編集していた場合は上書きされる点に注意）。復元できなければ harness init をやり直す"
+    fi
+  done <<<"$mf_entries"
+  [ "$mf_missing" -eq 0 ] && report OK "manifest 記載ファイル（${mf_entry_lines} 件）はすべて存在する"
+fi
+
+# ---------------------------------------------------------------- B5. 改行
+# managed / generated のファイルに CR（\r）が含まれていないか。Windows の core.autocrlf=true で
+# チェックアウトすると LF 管理のはずのファイルが CRLF になり、ハッシュ比較や shebang 実行が壊れる。
+if [ "$manifest_ok" = 1 ]; then
+  cr_found=0
+  while IFS=$'\t' read -r f_path f_src f_own f_sha f_srcsha; do
+    [ -z "$f_path" ] && continue
+    case "$f_own" in managed|generated) ;; *) continue;; esac
+    case "$f_path" in *.cmd) continue;; esac  # *.cmd は CRLF が規約（.gitattributes）
+    [ -f "$ROOT/$f_path" ] || continue  # 欠落は B4 で報告済み
+    # grep の \r マッチは環境によって信用できない（MSYS の一部 grep が誤検知しない）ので、
+    # tr -d '\r' の前後でバイト数を比べる（CR があれば減る）。
+    if [ "$(tr -d '\r' < "$ROOT/$f_path" | wc -c)" != "$(wc -c < "$ROOT/$f_path")" ]; then
+      cr_found=$((cr_found + 1))
+      report FAIL "改行: $f_path に CR（\\r）が含まれる（CRLF 化されている）" \
+        "autocrlf を疑う（git config core.autocrlf false のうえで harness update、または git checkout -- $f_path で復元）"
+    fi
+  done <<<"$mf_entries"
+  [ "$cr_found" -eq 0 ] && report OK "改行: managed / generated ファイルに CR は無い"
+
+  if [ -f "$ROOT/.gitattributes" ] && grep -qxF ".harness/** text eol=lf" "$ROOT/.gitattributes"; then
+    report OK ".gitattributes に .harness/** text eol=lf がある"
+  else
+    report WARN ".gitattributes に .harness/** text eol=lf が無い" \
+      ".gitattributes に \".harness/** text eol=lf\" を足す（本来 harness init/update が足す行。手で消していないか確認する）"
+  fi
+fi
+
 # ---------------------------------------------------------------- 集計
 echo
 echo "harness doctor: OK=$n_ok WARN=$n_warn FAIL=$n_fail"
