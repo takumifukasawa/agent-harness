@@ -41,6 +41,7 @@ T02〜T04 は互いに独立だが、同じ `doctor.sh` を編集するので直
 - 2026-09-17: T02 done（Red c504636 → Green d436aee、check 9 件 pass、doctor scenarios 9 件、再試行 0）。実装役の発見: Windows の grep で CR がマッチしない罠（`docs/learnings.md` に記録、[harness候補]）。
 - 2026-09-17: T03 done（Red 2cd33d3 → Green 609ae7c、check 9 件 pass、doctor scenarios 14 件、再試行 0、実装役 約 12 分）。
 - 2026-09-17: T04 done（Red 010ae34 → Green a976d85、check 9 件 pass、doctor scenarios 21 件、再試行 0、実装役 約 19 分）。実装役の判断: B8/B9 の個別ファイル欠落は B4 の汎用存在チェックに譲り、アダプタ診断は集計 OK 行だけ足す。T05 の文書は実装済み一覧（B1-B11）と一致させる。
+- 2026-09-17: T05 done（851798f、1 コミット、check 9 件 pass、doctor scenarios 21 件、再試行 0、実装役 約 8 分）。全 5 タスク done、phase を review に。統括の観察: 実装役が check を裏プロセスで回して自分の完了待ちで停止し、統括が「前面で回して報告せよ」と 1 回催促した（実装役の指示に「検査は前面で回す」を足す候補）。
 
 ## 未確定事項（人間の判断待ち）
 
