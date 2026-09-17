@@ -21,7 +21,7 @@
 | # | タスク | 状態 | モデル | 備考 |
 |---|---|---|---|---|
 | T01 | 骨格: doctor.sh、CLI サブコマンド、終了コード、ツール診断（B1-B2）、`tests/doctor.sh` の土台と検査登録 | done (87ae970) | opus | 構造を決めるので上位モデル |
-| T02 | 導入状態: manifest（B3）、ファイル存在（B4）、改行と .gitattributes（B5） | todo | sonnet | T01 依存 |
+| T02 | 導入状態: manifest（B3）、ファイル存在（B4）、改行と .gitattributes（B5） | done (d436aee) | sonnet | T01 依存 |
 | T03 | git と AGENTS.md: hooks（B6）、マーカーと版（B7）、gitignore（B11） | todo | sonnet | T01 依存 |
 | T04 | アダプタと版: Claude（B8）、Codex（B9）、新版（B10） | todo | sonnet | T01 依存 |
 | T05 | 文書と配線: スキルの表、README、DESIGN §8、init の案内、CHANGELOG | todo | sonnet | T02-T04 依存 |
@@ -42,3 +42,4 @@ T02〜T04 は互いに独立だが、同じ `doctor.sh` を編集するので直
 ## 未確定事項（人間の判断待ち）
 
 - なし（分解案は 2026-09-17 に合意）。
+- 2026-09-17: T02 done（Red c504636 → Green d436aee、check 9 件 pass、doctor scenarios 9 件、再試行 0）。実装役の発見: Windows の grep で CR がマッチしない罠（`docs/learnings.md` に記録、[harness候補]）。

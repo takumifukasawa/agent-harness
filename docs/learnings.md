@@ -33,3 +33,8 @@
 - 症状: `cat > file <<'EOF'` を含む長いコマンドが `unexpected EOF while looking for matching quote` で落ちる。
 - 原因: ツールのコマンド受け渡しで引用が崩れる（詳細は未特定）。
 - 対処 / 再発したら: 長いファイルは Write ツールで書く。bash の heredoc は短いものに限る。
+
+## 2026-09-17 Git for Windows の grep で CR（`\r`）がマッチしない [harness候補]
+- 症状: ファイルに CR バイトが実在する（`od -c` / `cat -A` で見える）のに、`grep -q $'\r' file` や CR だけのパターンファイルを使った `grep -f` が一貫して不一致になる。
+- 原因: 未特定（Git for Windows 同梱 grep 3.0 で再現。`harness doctor` の B5 実装時に遭遇）。
+- 対処 / 再発したら: grep で CR を探さない。`tr -d '\r'` の前後でバイト数（`wc -c`）を比べて CR の有無を判定する（`harness/scripts/doctor.sh` の B5 がその形）。

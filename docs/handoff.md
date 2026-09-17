@@ -4,7 +4,7 @@
 
 ## いま何をしているか（1〜3 行）
 
-agent-harness を設計・実装し、このリポジトリ自身に `harness init` で導入した（dogfood 開始）。`task-orchestrate` で機能 1 つを通す本番の dogfood は、題材が未決。
+`harness doctor` を題材に `task-orchestrate` の dogfood 中（反復フェーズ）。計画: `docs/plans/active/harness-doctor.md`。T01（骨格 B1-B2）と T02（B3-B5）が done、次は T03。統括は 1 タスクごとにセッションを切る運用。
 
 ## 状態
 
@@ -13,20 +13,21 @@ agent-harness を設計・実装し、このリポジトリ自身に `harness in
 | 設計（2 部構成、決定ログ 11 件） | 確定 | `DESIGN.md` |
 | CLI: init / update / status / diff / upstream / check / gc / self-install | 実装済み・Windows で検証済み | `bin/harness`, `docs/learnings.md` |
 | Claude settings 自動マージ（node 前提） | 実装済み・検証済み | `bin/harness` `merge_claude_settings` |
-| `task-orchestrate` スキル | 実装済み・独立レビュー 25 件反映・**未使用** | `harness/skills/task-orchestrate/SKILL.md` |
+| `task-orchestrate` スキル | 実装済み・**dogfood 中**（doctor で T01-T02 通過、再試行 0） | `harness/skills/task-orchestrate/SKILL.md` |
 | Codex 用 `role-*` スキル生成 | 実装済み | `bin/harness` `plan()` |
 | このリポジトリへの導入（dogfood の土台） | 導入済み・検査 8 件 pass | `.harness/checks.sh` |
 | v0.1.0 / v0.2.0 | push 済み（origin は HTTPS に切替済み） | git tags |
 
 ## NEXT（依存順。順序制約があれば明記）
 
-1. **dogfood の題材を決める**（ユーザー判断）。候補: `harness release`（VERSION と CHANGELOG の整合を確認し tag を打つ補助）、`harness doctor`（導入先の環境診断: bash / git / node / cygpath / 改行）、macOS・Linux 対応の検証と修正。題材が決まったら `docs/spec/` に spec を書き、`task-orchestrate` の準備フェーズから始める。
-2. 題材を通したら、統括が手順で迷った箇所・再試行「新しい 1 体」の精度とコスト・検査に何を登録すると効いたか を `docs/learnings.md` に残し、`[harness候補]` を `harness/` へ昇格する。
-3. `agent-skills` 側の `context-catchup` / `context-handoff` の description に「ハーネス未導入のリポジトリで使う」と書き、発火の重なりを解消する（別リポジトリの作業）。
+1. **T03 を進める**: 新しいセッションで「続きのタスクを進めて」→ `task-orchestrate` §0 が `.harness/state/progress.json`（current_task: T03）を読み、実装役を 1 体起こす。T03/T04 は同じ `doctor.sh` を触るので直列。T05（文書と配線）は T02-T04 の後。
+2. 全タスク done 後に最終レビュー（§3、reviewer 4 観点並列）。通ったら VERSION を上げる。
+3. 題材を通したら、統括が手順で迷った箇所・再試行の精度とコスト・検査に何を登録すると効いたか を `docs/learnings.md` に残し、`[harness候補]` を `harness/` へ昇格する（候補が 1 件増えた: Git for Windows の grep で CR がマッチしない）。
+4. `agent-skills` 側の `context-catchup` / `context-handoff` の description に「ハーネス未導入のリポジトリで使う」と書き、発火の重なりを解消する（別リポジトリの作業）。
 
 ## 未確定事項（人間の判断待ち）
 
-- dogfood の題材（上の 1）。
+- なし（`progress.json` の `open_questions` も空）。
 
 ## このセッションで触らなかったが確認したもの
 
