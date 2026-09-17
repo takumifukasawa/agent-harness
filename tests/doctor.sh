@@ -249,6 +249,111 @@ expect_missing_gitignore_state() {
 }
 scenario "B11: .gitignore に .harness/state/ が無ければ WARN" setup_missing_gitignore_state expect_missing_gitignore_state
 
+# B8. CLAUDE.md から @AGENTS.md の import を消すと FAIL。
+setup_claude_md_no_import() {
+  setup_init || return 1
+  grep -v '^@AGENTS\.md' "$PROJ/CLAUDE.md" > "$PROJ/CLAUDE.md.tmp" &&
+    mv "$PROJ/CLAUDE.md.tmp" "$PROJ/CLAUDE.md"
+}
+expect_claude_md_no_import() {
+  run_doctor
+  expect_code 1
+  expect_out '^FAIL .*CLAUDE\.md'
+}
+scenario "B8: CLAUDE.md に @AGENTS.md の import が無ければ FAIL" setup_claude_md_no_import expect_claude_md_no_import
+
+# B8. .claude/skills/<name>/SKILL.md を書き換えて .agents/skills 側とずらすと WARN（harness update 案内付き）。
+setup_claude_skill_drift() {
+  setup_init || return 1
+  echo "drift" >> "$PROJ/.claude/skills/harness/SKILL.md"
+}
+expect_claude_skill_drift() {
+  run_doctor
+  expect_code 0
+  expect_out '^WARN .*\.claude/skills/harness'
+  expect_out 'harness update'
+}
+scenario "B8: .claude/skills が .agents/skills とずれれば WARN" setup_claude_skill_drift expect_claude_skill_drift
+
+# B8. .claude/agents/implementer.md を消すと FAIL。
+setup_claude_agent_missing() {
+  setup_init || return 1
+  rm -f "$PROJ/.claude/agents/implementer.md"
+}
+expect_claude_agent_missing() {
+  run_doctor
+  expect_code 1
+  expect_out '^FAIL .*implementer\.md'
+}
+scenario "B8: .claude/agents/implementer.md が無ければ FAIL" setup_claude_agent_missing expect_claude_agent_missing
+
+# B8. manifest の agents に claude を含まないとき（--agents codex で init）は CLAUDE.md 系の診断をしない。
+setup_init_codex_only() {
+  PROJ="$WORK/p"; mkdir -p "$PROJ"
+  (
+    cd "$PROJ" &&
+    git init -q . &&
+    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init &&
+    bash "$REPO/bin/harness" init --source "$REPO" --agents codex
+  ) >/dev/null 2>&1 || { errors+=("setup: harness init --agents codex に失敗した"); return 1; }
+}
+expect_no_claude_adapter_check() {
+  run_doctor
+  expect_code 0
+  expect_out '^harness doctor: OK=[0-9]+ WARN=[0-9]+ FAIL=0$'
+  expect_not_out 'CLAUDE\.md'
+  expect_not_out '\.claude/skills'
+  expect_not_out '\.claude/agents'
+}
+scenario "B8: agents に claude が無ければ Claude アダプタの診断をしない" setup_init_codex_only expect_no_claude_adapter_check
+
+# B9. .agents/skills/role-reviewer を消すと FAIL。
+setup_role_reviewer_missing() {
+  setup_init || return 1
+  rm -rf "$PROJ/.agents/skills/role-reviewer"
+}
+expect_role_reviewer_missing() {
+  run_doctor
+  expect_code 1
+  expect_out '^FAIL .*role-reviewer'
+}
+scenario "B9: .agents/skills/role-reviewer が無ければ FAIL" setup_role_reviewer_missing expect_role_reviewer_missing
+
+# B10. source（ローカル）の VERSION を上げていると INFO で新版ありと出る。
+setup_source_version_bump() {
+  local src="$WORK/src"
+  mkdir -p "$src" &&
+    cp -r "$REPO/harness" "$src/harness" &&
+    cp -r "$REPO/bin" "$src/bin" &&
+    cp "$REPO/VERSION" "$src/VERSION" || { errors+=("setup: source コピーに失敗した"); return 1; }
+  PROJ="$WORK/p"; mkdir -p "$PROJ"
+  (
+    cd "$PROJ" &&
+    git init -q . &&
+    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init &&
+    bash "$src/bin/harness" init --source "$src"
+  ) >/dev/null 2>&1 || { errors+=("setup: harness init に失敗した"); return 1; }
+  echo "9.9.9" > "$src/VERSION"
+}
+expect_source_version_bump() {
+  run_doctor
+  expect_code 0
+  expect_out '^INFO .*9\.9\.9'
+}
+scenario "B10: source（ローカル）に新版があれば INFO" setup_source_version_bump expect_source_version_bump
+
+# B10. source が URL のときはネットワークに触らない（manifest の source を到達不能な URL に差し替えて確認）。
+setup_source_is_url() {
+  setup_init || return 1
+  sed -i 's#"source": "[^"]*"#"source": "https://example.invalid/agent-harness.git"#' "$PROJ/.harness/manifest.json"
+}
+expect_source_is_url() {
+  run_doctor
+  expect_code 0
+  expect_not_out 'Could not resolve|clone に失敗|fetch に失敗'
+}
+scenario "B10: source が URL ならネットワークに触らず完走する" setup_source_is_url expect_source_is_url
+
 # ================================================================ 集計
 echo
 echo "tests/doctor.sh: pass=$passed fail=$failed"
