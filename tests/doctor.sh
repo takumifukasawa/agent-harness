@@ -15,9 +15,13 @@
 #
 # 直し方が単一の実行可能なコマンドである項目は、expect 関数の中で
 # 「壊す → doctor で当該行が出る → apply_fix で直し方どおりに実行 → doctor で当該行が消える」
-# まで表明する。手順設計が要るもの（B3 の manifest 破損全般、B5 の CRLF 化、B7 の版ずれとマーカー
-# 重複、B8 の「既存ファイルを書き換えた」系）は harness update が .harness/conflicts/ への
-# CONFLICT を出すだけで直らない（実測済み）。個別に手順を決めるまでこの枠には入れない。
+# まで表明する。T14 時点でこの枠に乗っているのは B3（manifest 破損。決定 0003 のとおり、
+# version/source/agents の見出しが読めれば harness update、読めなければ壊れたものを退避して
+# harness init --source をやり直す）/ B4（managed・seed ファイルの欠落）/ B5（CRLF 化。決定
+# 0002 以降 update が生バイトで復元する）/ B6（git hooks。プロジェクトルートが git リポジトリで
+# なければ git init から）/ B7（版ずれ・マーカー重複。決定 0002 以降 update が畳む）。
+# B8 の「既存ファイルを書き換えた」系（.claude/skills のドリフトなど）はまだ個別の手順を
+# 決めていないため、この枠にまだ入れていない。
 #
 # フィクスチャ共有: harness init はプロセス生成とファイル I/O が支配的で 1 回 ≒ 11 秒かかる。
 # 26 シナリオの大半が「まず素の harness init をする」という同じ前提から始まるので、その前提を
@@ -227,6 +231,9 @@ expect_missing_git() {
 scenario "B1: git 不在なら FAIL / exit 1" setup_init expect_missing_git
 
 # B3. manifest が壊れていれば FAIL（存在はするが harness_version 等が読めない形にする）。
+# version/source/agents の見出しごと読めないケース: harness update は source を解決できず
+# 失敗し、harness init は manifest.json があるだけで拒否するので、壊れたものを退避してから
+# 元の source を指定して init をやり直す以外に道が無い（決定 0003。実測済み）。
 setup_broken_manifest() {
   setup_init || return 1
   printf '{ "broken"\n' > "$PROJ/.harness/manifest.json"
@@ -235,10 +242,16 @@ expect_broken_manifest() {
   run_doctor
   expect_code 1
   expect_out '^FAIL .*manifest'
+  expect_out 'init --source'
   # 黙ってスキップしない: manifest に依存する診断を飛ばしたことが出力で分かる
   expect_out '^WARN .*スキップ'
+  apply_fix "mv .harness/manifest.json .harness/manifest.json.broken && bash .harness/bin/harness init --source '$REPO'"
+  run_doctor
+  expect_code 0
+  expect_not_out '^FAIL .*manifest'
+  expect_not_out '^WARN .*スキップ'
 }
-scenario "B3: manifest が壊れていれば FAIL" setup_broken_manifest expect_broken_manifest
+scenario "B3: manifest が壊れていれば FAIL（退避して init --source で直る）" setup_broken_manifest expect_broken_manifest
 
 # B3. manifest のエントリが 1 行 1 件で書かれていなければ FAIL（bin/harness も同じ前提で読めない）。
 # 偽の全快の再発防止: 以前は grep -c の `|| echo 0` が "0\n0" を作って整数比較が壊れ、
@@ -259,8 +272,14 @@ expect_manifest_entries_one_line() {
   expect_not_out 'integer expression expected'
   expect_not_out '^OK .*manifest 記載ファイル'
   expect_out '^WARN .*スキップ'
+  # version/source/agents の見出しは読めているので、files の記載が壊れていても
+  # harness update がツリーの実物から作り直せる（決定 0003。実測済み）。
+  apply_fix "bash .harness/bin/harness update"
+  run_doctor
+  expect_code 0
+  expect_not_out '^FAIL .*manifest'
 }
-scenario "B3: エントリが 1 行 1 件でなければ FAIL（偽の全快を出さない）" setup_manifest_entries_one_line expect_manifest_entries_one_line
+scenario "B3: エントリが 1 行 1 件でなければ FAIL（偽の全快を出さない。update で直る）" setup_manifest_entries_one_line expect_manifest_entries_one_line
 
 # B3. files が空なら FAIL（エントリ 0 件のガードが効いているか）。
 setup_manifest_empty_files() {
@@ -280,8 +299,12 @@ expect_manifest_empty_files() {
   expect_not_out 'integer expression expected'
   expect_not_out '^OK .*manifest 記載ファイル'
   expect_out '^WARN .*スキップ'
+  apply_fix "bash .harness/bin/harness update"
+  run_doctor
+  expect_code 0
+  expect_not_out '^FAIL .*manifest'
 }
-scenario "B3: files が空なら FAIL" setup_manifest_empty_files expect_manifest_empty_files
+scenario "B3: files が空なら FAIL（update で直る）" setup_manifest_empty_files expect_manifest_empty_files
 
 # B4. manifest 記載の managed ファイルを削除すると FAIL で一覧に出る（update で直る）。
 # 束ね: 下の B8（implementer.md 欠落）/ B9（role-reviewer 欠落）と同じプロジェクトにまとめて
@@ -324,8 +347,14 @@ expect_crlf_managed_file() {
   expect_code 1
   expect_out '^FAIL .*scripts/gc\.sh'
   expect_out 'autocrlf'
+  # update は git checkout を経由せず生バイトで復元するので、core.autocrlf の設定に
+  # 関係なく直る（決定 0002 / 0003。実測済み）。
+  apply_fix "bash .harness/bin/harness update"
+  run_doctor
+  expect_code 0
+  expect_not_out '^FAIL .*scripts/gc\.sh'
 }
-scenario "B5: managed ファイルの CRLF 化は FAIL（autocrlf を疑う）" setup_crlf_managed_file expect_crlf_managed_file
+scenario "B5: managed ファイルの CRLF 化は FAIL（update で直る）" setup_crlf_managed_file expect_crlf_managed_file
 
 # B5. .gitattributes から .harness/** の行を消すと WARN。
 # 束ね: 上の B4（seed 欠落）と下の B6/B11 と同じプロジェクトにまとめて壊し、doctor の前後
@@ -357,6 +386,28 @@ expect_no_hookspath() {
 }
 scenario "B6: core.hooksPath が外れていれば WARN（直し方のコマンドで直る）" setup_no_hookspath expect_no_hookspath
 
+# B6. プロジェクトルートが git リポジトリでなければ（.git が無い）、core.hooksPath はそもそも
+# 設定できない（git config core.hooksPath ... は fatal: not in a git directory で落ちる。
+# 実測済み）。「未設定」と混同せず、根本原因を先に告げる（決定 0003）。
+# .git ごと消す性質上、他の WARN 束ね（git config を使う）とは同居できないので独立させる。
+setup_no_git_repo() {
+  setup_init || return 1
+  rm -rf "$PROJ/.git"
+}
+expect_no_git_repo() {
+  run_doctor
+  expect_code 0
+  expect_out '^WARN .*git リポジトリではない'
+  expect_out 'fatal: not in a git directory'
+  expect_out 'git init'
+  apply_fix "git init . && git config core.hooksPath .githooks"
+  run_doctor
+  expect_code 0
+  expect_not_out '^WARN .*git リポジトリではない'
+  expect_out '^OK .*git hooks'
+}
+scenario "B6: プロジェクトルートが git リポジトリでなければ根本原因を告げる（git init で直る）" setup_no_git_repo expect_no_git_repo
+
 # B7. AGENTS.md のマーカーの v= を manifest と食い違わせると WARN（harness update を案内）。
 setup_agents_version_mismatch() {
   setup_init || return 1
@@ -367,8 +418,13 @@ expect_agents_version_mismatch() {
   expect_code 0
   expect_out '^WARN .*AGENTS\.md'
   expect_out 'harness update'
+  apply_fix "bash .harness/bin/harness update"
+  run_doctor
+  expect_code 0
+  expect_not_out '^WARN .*AGENTS\.md'
+  expect_out '^OK .*AGENTS\.md'
 }
-scenario "B7: AGENTS.md マーカーの版が manifest と食い違えば WARN" setup_agents_version_mismatch expect_agents_version_mismatch
+scenario "B7: AGENTS.md マーカーの版が manifest と食い違えば WARN（update で直る）" setup_agents_version_mismatch expect_agents_version_mismatch
 
 # B7. AGENTS.md からマーカーを消すと FAIL。
 setup_agents_marker_missing() {
@@ -399,8 +455,13 @@ expect_agents_marker_duplicated() {
   run_doctor
   expect_code 1
   expect_out '^FAIL .*AGENTS\.md'
+  # update は begin/end が複数あっても 1 対に畳む（決定 0002。実測済み）。
+  apply_fix "bash .harness/bin/harness update"
+  run_doctor
+  expect_code 0
+  expect_not_out '^FAIL .*AGENTS\.md'
 }
-scenario "B7: AGENTS.md のマーカーが 2 組あれば FAIL" setup_agents_marker_duplicated expect_agents_marker_duplicated
+scenario "B7: AGENTS.md のマーカーが 2 組あれば FAIL（update で直る）" setup_agents_marker_duplicated expect_agents_marker_duplicated
 
 # B11. .gitignore から .harness/state/ を消すと WARN。
 # 束ね: 上の B4/B5/B6 と同じ ensure_warn_bundle のキャッシュを読む。
