@@ -18,6 +18,12 @@
 # まで表明する。手順設計が要るもの（B3 の manifest 破損全般、B5 の CRLF 化、B7 の版ずれとマーカー
 # 重複、B8 の「既存ファイルを書き換えた」系）は harness update が .harness/conflicts/ への
 # CONFLICT を出すだけで直らない（実測済み）。個別に手順を決めるまでこの枠には入れない。
+#
+# フィクスチャ共有: harness init はプロセス生成とファイル I/O が支配的で 1 回 ≒ 11 秒かかる。
+# 26 シナリオの大半が「まず素の harness init をする」という同じ前提から始まるので、その前提を
+# ensure_fixture で 1 回だけ作り、setup_init はそれを cp -a で複製するだけにする（init は再実行
+# しない）。複製が「init 直後の状態」とずれていないかは、最初のシナリオ（D1）が複製直後の
+# doctor で FAIL 0 になることを確認して担保する。ずれれば D1 が落ちて気付ける。
 set -u
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -58,18 +64,32 @@ apply_fix() { # <直し方どおりのコマンド文字列> — $PROJ の中で
   ( cd "$PROJ" && eval "$1" ) >/dev/null 2>&1
 }
 
+# ---------------------------------------------------------------- フィクスチャ（init 済みツリーの共有）
+# SHARED はスイート全体で使う一時置き場。フィクスチャ本体はこの下に作り、個々のシナリオの
+# $WORK（scenario ごとに作って rm -rf する）とは別に、最後にまとめて消す。
+SHARED="$(mktemp -d)" || { echo "tests/doctor.sh: mktemp -d に失敗した（フィクスチャ置き場）"; exit 2; }
+
+FIXTURE_DONE=0; FIXTURE=""
+ensure_fixture() { # 使い捨てプロジェクトに harness init した雛形ツリーを 1 回だけ作る
+  [ "$FIXTURE_DONE" = 1 ] && return 0
+  FIXTURE="$SHARED/fixture"; mkdir -p "$FIXTURE"
+  (
+    cd "$FIXTURE" &&
+    git init -q . &&
+    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init &&
+    bash "$REPO/bin/harness" init --source "$REPO"
+  ) >/dev/null 2>&1 || { errors+=("setup: フィクスチャ構築（harness init）に失敗した"); return 1; }
+  FIXTURE_DONE=1
+}
+
 # ---------------------------------------------------------------- setup 部品
 setup_empty() { # 未導入（git リポジトリですらない）ディレクトリ
   PROJ="$WORK/empty"; mkdir -p "$PROJ"
 }
-setup_init() { # 使い捨てプロジェクトを作って harness init する
-  PROJ="$WORK/p"; mkdir -p "$PROJ"
-  (
-    cd "$PROJ" &&
-    git init -q . &&
-    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init &&
-    bash "$REPO/bin/harness" init --source "$REPO"
-  ) >/dev/null 2>&1 || { errors+=("setup: harness init に失敗した"); return 1; }
+setup_init() { # 使い捨てプロジェクトをフィクスチャ（$FIXTURE）から複製する。harness init は走らせない
+  ensure_fixture || return 1
+  PROJ="$WORK/p"
+  cp -a "$FIXTURE" "$PROJ" 2>/dev/null || { errors+=("setup: フィクスチャの複製に失敗した"); return 1; }
 }
 
 # ---------------------------------------------------------------- 枠
@@ -512,6 +532,7 @@ expect_no_bare_bin_harness_path() {
 scenario "回帰: doctor.sh の直し方に「bash bin/harness」(存在しないパス) が残っていない" setup_repo_source expect_no_bare_bin_harness_path
 
 # ================================================================ 集計
+rm -rf "$SHARED" 2>/dev/null
 echo
 echo "tests/doctor.sh: pass=$passed fail=$failed"
 if [ -n "$FILTER" ] && [ $((passed + failed)) -eq 0 ]; then
