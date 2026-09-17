@@ -24,6 +24,13 @@
 # ensure_fixture で 1 回だけ作り、setup_init はそれを cp -a で複製するだけにする（init は再実行
 # しない）。複製が「init 直後の状態」とずれていないかは、最初のシナリオ（D1）が複製直後の
 # doctor で FAIL 0 になることを確認して担保する。ずれれば D1 が落ちて気付ける。
+#
+# 確認項目の束ね: 互いに干渉しない WARN（B4 の seed ファイル欠落 / B5 の .gitattributes /
+# B6 の hooksPath / B11 の gitignore）は、ensure_warn_bundle が 1 つのプロジェクトでまとめて
+# 壊し、doctor の前後 2 回分の出力をキャッシュする。対応する scenario はそのキャッシュを読んで
+# 自分の持ち場だけを assert する（往復は 1 回に減るが、scenario 本体の本数・assert の本数は
+# 個別に検証していたときのまま変えていない）。診断を途中で止めうる FAIL（manifest 破損など）
+# は束ねず独立に残す。
 set -u
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -90,6 +97,37 @@ setup_init() { # 使い捨てプロジェクトをフィクスチャ（$FIXTURE�
   ensure_fixture || return 1
   PROJ="$WORK/p"
   cp -a "$FIXTURE" "$PROJ" 2>/dev/null || { errors+=("setup: フィクスチャの複製に失敗した"); return 1; }
+}
+
+# ---------------------------------------------------------------- 束ね: 干渉しない WARN（B4/B5/B6/B11）
+# .gitattributes の行 / core.hooksPath / .gitignore の行 / seed ファイル（docs/tech-debt.md）の欠落は、
+# 別ファイル・別設定で互いに干渉しない WARN。4 シナリオ分の「壊す→doctor→直す→doctor」を 1 回の
+# 往復にまとめ、各シナリオはキャッシュされた doctor 出力（前 / 後）を読むだけにする。直し方は元の
+# シナリオごとの文言をそのまま使う（hooksPath は git config core.hooksPath .githooks 単体、他は
+# harness update。apply_plan は mode に関わらずこの 3 つを毎回打ち直し、欠けた seed ファイルも
+# 復元する＝実測済み。詳細は setup_missing_seed_file の注記）ので、両方適用しても矛盾はしない。
+WARN_BUNDLE_DONE=0; WARN_BUNDLE_DIR=""
+WARN_BUNDLE_OUT_BEFORE=""; WARN_BUNDLE_CODE_BEFORE=0
+WARN_BUNDLE_OUT_AFTER=""; WARN_BUNDLE_CODE_AFTER=0
+ensure_warn_bundle() {
+  [ "$WARN_BUNDLE_DONE" = 1 ] && return 0
+  ensure_fixture || return 1
+  WARN_BUNDLE_DIR="$SHARED/warn-bundle"
+  cp -a "$FIXTURE" "$WARN_BUNDLE_DIR" 2>/dev/null || { errors+=("setup: WARN 束ねフィクスチャの複製に失敗した"); return 1; }
+  ( grep -vxF '.harness/** text eol=lf' "$WARN_BUNDLE_DIR/.gitattributes" >"$WARN_BUNDLE_DIR/.gitattributes.tmp" &&
+    mv "$WARN_BUNDLE_DIR/.gitattributes.tmp" "$WARN_BUNDLE_DIR/.gitattributes" ) ||
+    { errors+=("setup: .gitattributes の書き換えに失敗した"); return 1; }
+  git -C "$WARN_BUNDLE_DIR" config --unset core.hooksPath ||
+    { errors+=("setup: core.hooksPath の解除に失敗した"); return 1; }
+  ( grep -vxF '.harness/state/' "$WARN_BUNDLE_DIR/.gitignore" >"$WARN_BUNDLE_DIR/.gitignore.tmp" &&
+    mv "$WARN_BUNDLE_DIR/.gitignore.tmp" "$WARN_BUNDLE_DIR/.gitignore" ) ||
+    { errors+=("setup: .gitignore の書き換えに失敗した"); return 1; }
+  rm -f "$WARN_BUNDLE_DIR/docs/tech-debt.md"
+  WARN_BUNDLE_OUT_BEFORE="$(cd "$WARN_BUNDLE_DIR" && bash .harness/bin/harness doctor 2>&1)"; WARN_BUNDLE_CODE_BEFORE=$?
+  ( cd "$WARN_BUNDLE_DIR" && git config core.hooksPath .githooks ) >/dev/null 2>&1
+  ( cd "$WARN_BUNDLE_DIR" && bash .harness/bin/harness update ) >/dev/null 2>&1
+  WARN_BUNDLE_OUT_AFTER="$(cd "$WARN_BUNDLE_DIR" && bash .harness/bin/harness doctor 2>&1)"; WARN_BUNDLE_CODE_AFTER=$?
+  WARN_BUNDLE_DONE=1
 }
 
 # ---------------------------------------------------------------- 枠
@@ -233,16 +271,19 @@ expect_missing_managed_file() {
 }
 scenario "B4: managed ファイルの欠落は FAIL（update で直る）" setup_missing_managed_file expect_missing_managed_file
 
-# B4. manifest 記載の seed ファイルを削除すると WARN（FAIL にはしない）。
-setup_missing_seed_file() {
-  setup_init || return 1
-  rm -f "$PROJ/docs/tech-debt.md"
-}
+# B4. manifest 記載の seed ファイルを削除すると WARN（FAIL にはしない）。update を走らせると
+# 実は復元される（apply_plan は seed が無ければ雛形から作る。実測済み。doctor 自体の直し方の
+# 文言は「手で作る」寄りだが、実際に往復しても矛盾は出ない）。
+# 束ね: 下の B5/B6/B11 と同じ ensure_warn_bundle のキャッシュを読む。
+setup_missing_seed_file() { ensure_warn_bundle && PROJ="$WARN_BUNDLE_DIR"; }
 expect_missing_seed_file() {
-  run_doctor
+  OUT="$WARN_BUNDLE_OUT_BEFORE"; CODE="$WARN_BUNDLE_CODE_BEFORE"
   expect_code 0
   expect_out '^WARN .*docs/tech-debt\.md'
   expect_not_out '^FAIL .*docs/tech-debt\.md'
+  OUT="$WARN_BUNDLE_OUT_AFTER"; CODE="$WARN_BUNDLE_CODE_AFTER"
+  expect_code 0
+  expect_not_out '^WARN .*docs/tech-debt\.md'
 }
 scenario "B4: seed ファイルの欠落は WARN" setup_missing_seed_file expect_missing_seed_file
 
@@ -261,17 +302,14 @@ expect_crlf_managed_file() {
 scenario "B5: managed ファイルの CRLF 化は FAIL（autocrlf を疑う）" setup_crlf_managed_file expect_crlf_managed_file
 
 # B5. .gitattributes から .harness/** の行を消すと WARN。
-setup_missing_gitattributes_line() {
-  setup_init || return 1
-  grep -vxF '.harness/** text eol=lf' "$PROJ/.gitattributes" > "$PROJ/.gitattributes.tmp" &&
-    mv "$PROJ/.gitattributes.tmp" "$PROJ/.gitattributes"
-}
+# 束ね: 上の B4（seed 欠落）と下の B6/B11 と同じプロジェクトにまとめて壊し、doctor の前後
+# 2 回分の出力を ensure_warn_bundle でキャッシュする。
+setup_missing_gitattributes_line() { ensure_warn_bundle && PROJ="$WARN_BUNDLE_DIR"; }
 expect_missing_gitattributes_line() {
-  run_doctor
+  OUT="$WARN_BUNDLE_OUT_BEFORE"; CODE="$WARN_BUNDLE_CODE_BEFORE"
   expect_code 0
   expect_out '^WARN .*gitattributes'
-  apply_fix "bash .harness/bin/harness update"
-  run_doctor
+  OUT="$WARN_BUNDLE_OUT_AFTER"; CODE="$WARN_BUNDLE_CODE_AFTER"
   expect_code 0
   expect_not_out '^WARN .*gitattributes'
   expect_out '^OK .*gitattributes'
@@ -279,17 +317,14 @@ expect_missing_gitattributes_line() {
 scenario "B5: .gitattributes に .harness/** eol=lf が無ければ WARN（update で直る）" setup_missing_gitattributes_line expect_missing_gitattributes_line
 
 # B6. core.hooksPath を外すと WARN（直し方に git config core.hooksPath .githooks）。
-setup_no_hookspath() {
-  setup_init || return 1
-  git -C "$PROJ" config --unset core.hooksPath
-}
+# 束ね: 上の B4/B5 と同じ ensure_warn_bundle のキャッシュを読む。
+setup_no_hookspath() { ensure_warn_bundle && PROJ="$WARN_BUNDLE_DIR"; }
 expect_no_hookspath() {
-  run_doctor
+  OUT="$WARN_BUNDLE_OUT_BEFORE"; CODE="$WARN_BUNDLE_CODE_BEFORE"
   expect_code 0
   expect_out '^WARN .*hooks'
   expect_out 'git config core\.hooksPath \.githooks'
-  apply_fix "git config core.hooksPath .githooks"
-  run_doctor
+  OUT="$WARN_BUNDLE_OUT_AFTER"; CODE="$WARN_BUNDLE_CODE_AFTER"
   expect_code 0
   expect_not_out '^WARN .*hooks'
   expect_out '^OK .*hooks'
@@ -342,18 +377,14 @@ expect_agents_marker_duplicated() {
 scenario "B7: AGENTS.md のマーカーが 2 組あれば FAIL" setup_agents_marker_duplicated expect_agents_marker_duplicated
 
 # B11. .gitignore から .harness/state/ を消すと WARN。
-setup_missing_gitignore_state() {
-  setup_init || return 1
-  grep -vxF '.harness/state/' "$PROJ/.gitignore" > "$PROJ/.gitignore.tmp" &&
-    mv "$PROJ/.gitignore.tmp" "$PROJ/.gitignore"
-}
+# 束ね: 上の B4/B5/B6 と同じ ensure_warn_bundle のキャッシュを読む。
+setup_missing_gitignore_state() { ensure_warn_bundle && PROJ="$WARN_BUNDLE_DIR"; }
 expect_missing_gitignore_state() {
-  run_doctor
+  OUT="$WARN_BUNDLE_OUT_BEFORE"; CODE="$WARN_BUNDLE_CODE_BEFORE"
   expect_code 0
   expect_out '^WARN .*gitignore'
   expect_out '\.harness/state/'
-  apply_fix "bash .harness/bin/harness update"
-  run_doctor
+  OUT="$WARN_BUNDLE_OUT_AFTER"; CODE="$WARN_BUNDLE_CODE_AFTER"
   expect_code 0
   expect_not_out '^WARN .*gitignore'
   expect_out '^OK .*gitignore'
