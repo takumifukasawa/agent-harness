@@ -1,2 +1,93 @@
 # agent-harness
-agent-harness
+
+AI コーディングエージェント（Claude Code / Codex CLI / その他）に**プロジェクトをどう進めさせるか**のワークフローを、このリポジトリで管理し、各プロジェクトに配って更新する。
+
+- **主役はワークフロー**: 1 セッション 1 タスク、統括 / 実装 / レビュー / 機械検査の役割分離、状態の外部化、spec と規律の分離、合意の書き戻し（SmartHR 型）。AGENTS.md は目次で、`docs/` が正本。
+- **エージェント非依存**: 正本は `AGENTS.md`・`SKILL.md`・Markdown・シェル・git hooks。エージェント固有部分は薄いアダプタに閉じ込める。
+- **配管は最小限**: `harness init` で入れ、`harness update` で版を上げ、`harness upstream` で直したものを戻す。手変更は manifest のハッシュで検出し、壊さない。
+
+設計の全体は [DESIGN.md](DESIGN.md)。版履歴は [CHANGELOG.md](CHANGELOG.md)。依存は **git と bash** だけ（Windows は Git for Windows 同梱の Git Bash）。
+
+## 使い方
+
+### プロジェクトに入れる（初回）
+
+```bash
+# このリポジトリを clone してあるなら
+bash /path/to/agent-harness/bin/harness init
+
+# clone していない PC でも、URL から直接
+curl -fsSL https://raw.githubusercontent.com/takumifukasawa/agent-harness/main/bin/harness \
+  | bash -s -- init --source https://github.com/takumifukasawa/agent-harness.git
+```
+
+入るもの: `AGENTS.md` の管理ブロック、`CLAUDE.md`（`@AGENTS.md`）、`.agents/skills/`（Codex）と `.claude/skills/`（Claude）、`docs/` の雛形、`.harness/`（manifest、検査ランナー、CLI 自身のコピー）、`.githooks/pre-commit`。既存の `AGENTS.md` / `CLAUDE.md` は壊さず先頭に足すだけ。
+
+### 以後（どの PC でも）
+
+CLI はプロジェクトに同梱されるので、clone した PC で追加インストールは不要。呼び方は 3 つ。
+
+**エージェントのセッション内から（推奨）** — Claude Code は `/harness ...`、Codex は `$harness ...`。CLI を実行し、結果を読んで次の行動まで案内する。
+
+```
+/harness status
+/harness update
+/harness diff
+/harness check
+```
+
+**PATH に置いて短く** — 一度だけ `self-install` する。Windows では `harness.cmd` も置かれ、PowerShell / cmd から `harness status` と打てる（中身は Git Bash に委譲）。プロジェクト内では同梱コピーへ委譲するので、版はプロジェクトに固定される。
+
+```bash
+bash .harness/bin/harness self-install      # ~/.local/bin（Windows は ~/bin）へ。PATH の案内が出る
+harness status
+```
+
+**同梱コピーを直接** — `bash .harness/bin/harness status`（Windows の PowerShell / cmd は `.harness\bin\harness.cmd status`）。
+
+| サブコマンド | やること |
+|---|---|
+| `status` | 導入版、手で直したファイル（MODIFIED）の一覧 |
+| `update [--ref <tag>]` | 新版を取り込む。CHANGELOG を表示し、手変更は保持して `.harness/conflicts/` に新版を置く |
+| `diff` | 手で直した管理ファイルの差分（上流に戻す候補） |
+| `upstream <path>...` | このリポジトリへ書き戻す（source がローカル clone のとき） |
+| `check [--fast]` | `.harness/checks.sh` に登録した検査を回す（`--fast` は pre-commit 用） |
+
+### ハーネスの中身を更新する
+
+**プロジェクト側から**: 管理ファイル（スキル、スクリプト）を直す → `/harness diff` → `/harness upstream <path>`。source が git URL のプロジェクトでは、このリポジトリを clone して manifest の `source` をそのパスに書き換えてから実行する。
+
+**このリポジトリで**:
+
+1. `harness/` を直す。
+2. `CHANGELOG.md` の `[Unreleased]` に変更と「プロジェクト側で必要な作業」を書く。
+3. `VERSION` を上げ、CHANGELOG の見出しにする（managed ファイルの移動やマーカー形式の変更は major）。`AGENTS.md` のマーカー版は CLI が自動で埋めるので触らない。
+4. commit → push。tag を打てば `harness update --ref vX.Y.Z` で pin できる。
+5. 各プロジェクトで `/harness update`。
+
+`docs/learnings.md` に溜まった学びをルール・スキル・検査へ昇格させる手順は、導入先の `.agents/skills/harness-maintain/SKILL.md`。
+
+## 構成
+
+```
+bin/harness              # CLI（bash）。init | update | status | diff | upstream | check | self-install | version
+bin/harness.cmd          # Windows 用シム（PowerShell / cmd → Git Bash）
+harness/                 # プロジェクトに入るペイロード
+├── AGENTS.core.md       # AGENTS.md の managed ブロック（共通ルール。目次であって百科事典ではない）
+├── docs-template/       # docs/ の雛形（索引・handoff・architecture・plans・decisions・learnings・tech-debt・references・spec・roles・rules）
+├── skills/              # harness（CLI 実行）/ session-catchup / session-handoff / harness-maintain
+├── scripts/             # check.sh（検査ランナー、LLM 不使用）、session-start.sh
+├── checks.seed.sh       # プロジェクトが編集する検査一覧の雛形
+├── state-template/      # progress.json / stages.json（長期タスクの機械可読な状態）
+├── adapters/claude/     # CLAUDE.md 雛形・settings 断片・確認済み事実
+├── adapters/codex/      # 確認済み事実
+└── manifest.example.json
+```
+
+## 隣のリポジトリとの関係
+
+[`agent-skills`](../agent-skills) は個人の汎用スキル集（マシン単位・シンボリックリンク）。こちらはプロジェクト運用の足場（リポジトリ単位・コミットされる）。詳細は DESIGN.md §9。
+
+## 未実装
+
+`harness gc`（docs の腐敗検知）、`.claude/settings.json` の自動マージ（断片を手で反映）。

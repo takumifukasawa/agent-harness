@@ -1,0 +1,22 @@
+{
+  "_doc": "タスク一覧。orchestrator は進行中のタスクだけを読み、終わったぶんは開かない。progress.json と分けるのは肥大化を防ぐため（1 ファイルだと 10 タスクで 100KB 超になった実例あり）。implementer の戻り値を転記する。",
+  "tasks": [
+    {
+      "id": "T01",
+      "title": "",
+      "status": "todo | in_progress | done | blocked | failed",
+      "acceptance": ["検査で確認できる条件を文で数件。例: 設定で無効にしている対象には作成できない"],
+      "spec_refs": ["docs/spec/<file>.md#<section>"],
+      "rules": ["<path>/AGENTS.md"],
+      "files_scope": [],
+      "depends_on": [],
+      "model": "設計余地あり → 上位 / 定型 → 下位",
+      "result": {
+        "commit": null,
+        "questions": [],
+        "report_path": null,
+        "note_for_next": ""
+      }
+    }
+  ]
+}

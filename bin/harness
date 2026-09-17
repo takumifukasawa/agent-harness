@@ -1,0 +1,587 @@
+#!/usr/bin/env bash
+# harness — agent-harness をプロジェクトに導入・更新・吸い上げする CLI
+#
+#   harness init   [--source <path|git-url>] [--ref <branch|tag>] [--agents claude,codex]
+#   harness update [--ref <branch|tag>]
+#   harness status
+#   harness diff
+#   harness upstream <path>...
+#   harness check  [--fast]
+#   harness self-install [--dir <dir>]   # `harness` を PATH に置く（Windows は harness.cmd も）
+#   harness version
+#
+# 設計: DESIGN.md §6（所有権）, §8（コマンド）。依存は git と bash だけ。
+# この CLI 自身も .harness/bin/harness（+ harness.cmd）としてプロジェクトに同梱されるので、
+# clone した PC では `.harness/bin/harness update` がそのまま動く。
+# PATH に置いた harness は、プロジェクト内では同梱コピーへ委譲する（版がプロジェクトに固定される）。
+set -euo pipefail
+
+DEFAULT_SOURCE="https://github.com/takumifukasawa/agent-harness.git"
+MANIFEST_REL=".harness/manifest.json"
+BEGIN_RE='<!-- harness:begin'
+END_RE='<!-- harness:end -->'
+
+# ---------------------------------------------------------------- util
+die()  { echo "harness: $*" >&2; exit 1; }
+info() { echo "harness: $*"; }
+hash_of() { git hash-object "$1"; }
+now() { date +%Y-%m-%d; }
+ts() { date +%Y%m%d-%H%M%S; }
+
+project_root() {
+  local r; r="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+  # Git for Windows は C:/... を返す。MSYS の /c/... 形式に揃える（比較やメッセージの一貫性のため）
+  if command -v cygpath >/dev/null 2>&1; then cygpath -u "$r"; else echo "$r"; fi
+}
+
+# 「同じスクリプトか」はパス文字列や -ef で判定しない（Windows で C:/ と /c/ と /tmp が混在し一致しない）。
+# 内容が同一なら同じものとして扱う。この用途（委譲の抑止、自己上書きの回避）では内容一致で十分。
+same_script() { # a b
+  [ -f "$1" ] && [ -f "$2" ] && [ "$(git hash-object "$1")" = "$(git hash-object "$2")" ]
+}
+
+# この CLI が agent-harness リポジトリの中から実行されているなら、そのパスを返す
+self_repo() {
+  local here
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
+  [ -n "$here" ] && [ -f "$here/../VERSION" ] && [ -d "$here/../harness" ] && (cd "$here/.." && pwd) || echo ""
+}
+
+# source（ローカルパス or git URL）を解決し、ペイロードのあるディレクトリを返す
+# git URL の場合は ~/.cache/agent-harness/<hash> に clone / fetch する
+resolve_source() {
+  local src="$1" ref="${2:-}"
+  if [ -d "$src" ]; then
+    (cd "$src" && pwd); return
+  fi
+  local cache="${HOME}/.cache/agent-harness/$(printf '%s' "$src" | sha256sum | cut -c1-12)"
+  if [ ! -d "$cache/.git" ]; then
+    info "fetching $src" >&2
+    git clone --quiet "$src" "$cache" >&2 || die "clone に失敗: $src"
+  else
+    git -C "$cache" fetch --quiet --tags origin >&2 || die "fetch に失敗: $src"
+  fi
+  if [ -n "$ref" ]; then
+    git -C "$cache" checkout --quiet "$ref" >&2 || die "ref が見つからない: $ref"
+    git -C "$cache" pull --quiet --ff-only origin "$ref" >/dev/null 2>&1 || true
+  else
+    local def
+    def="$(git -C "$cache" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|origin/||' || echo main)"
+    git -C "$cache" checkout --quiet "$def" >&2 && git -C "$cache" pull --quiet --ff-only origin "$def" >&2 || true
+  fi
+  echo "$cache"
+}
+
+# ---------------------------------------------------------------- manifest
+# 1 エントリ 1 行の JSON。bash だけで読めるよう、書式を固定する。
+#   {"path":"...","src":"...","ownership":"managed|seed|merge|generated","sha256":"...","source_sha256":"..."}
+manifest_path() { echo "$ROOT/$MANIFEST_REL"; }
+
+manifest_get() { # key
+  sed -n "s/^  \"$1\": *\"\(.*\)\",\{0,1\}$/\1/p" "$(manifest_path)" | head -1
+}
+
+# path<TAB>src<TAB>ownership<TAB>sha256<TAB>source_sha256
+manifest_entries() {
+  [ -f "$(manifest_path)" ] || return 0
+  grep '^    {"path"' "$(manifest_path)" | sed -E \
+    's/.*"path":"([^"]*)".*"src":"([^"]*)".*"ownership":"([^"]*)".*"sha256":"([^"]*)".*"source_sha256":"([^"]*)".*/\1\t\2\t\3\t\4\t\5/'
+}
+
+# 収集したエントリ（配列 ENTRIES、TSV 行）から manifest を書く
+write_manifest() {
+  local version="$1" source="$2" ref="$3" agents="$4"
+  local out; out="$(manifest_path)"
+  mkdir -p "$(dirname "$out")"
+  {
+    echo "{"
+    echo "  \"harness_version\": \"$version\","
+    echo "  \"source\": \"$source\","
+    echo "  \"source_ref\": \"$ref\","
+    echo "  \"installed_at\": \"$(now)\","
+    echo "  \"agents\": \"$agents\","
+    echo "  \"files\": ["
+    local n=${#ENTRIES[@]} i=0 e
+    for e in "${ENTRIES[@]}"; do
+      i=$((i + 1))
+      IFS=$'\t' read -r p s o h sh <<<"$e"
+      printf '    {"path":"%s","src":"%s","ownership":"%s","sha256":"%s","source_sha256":"%s"}%s\n' \
+        "$p" "$s" "$o" "$h" "$sh" "$([ $i -lt $n ] && echo ',')"
+    done
+    echo "  ]"
+    echo "}"
+  } >"$out"
+}
+
+# ---------------------------------------------------------------- install plan
+# ペイロード → プロジェクトの対応表を TSV で出す: src<TAB>dest<TAB>ownership
+# src は $PAYLOAD 配下の相対パス（"@self" は CLI 自身）
+plan() {
+  local agents="$1" f rel
+  # CLI 自身（+ Windows の PowerShell / cmd から呼ぶためのシム）
+  echo -e "@self\t.harness/bin/harness\tmanaged"
+  echo -e "@self-cmd\t.harness/bin/harness.cmd\tmanaged"
+  # スクリプト
+  for f in "$PAYLOAD/scripts/"*; do
+    [ -f "$f" ] || continue
+    echo -e "scripts/$(basename "$f")\t.harness/scripts/$(basename "$f")\tmanaged"
+  done
+  echo -e "checks.seed.sh\t.harness/checks.sh\tseed"
+  # 状態の雛形
+  for f in "$PAYLOAD/state-template/"*; do
+    [ -f "$f" ] || continue
+    echo -e "state-template/$(basename "$f")\t.harness/state-template/$(basename "$f")\tmanaged"
+  done
+  # スキル → .agents/skills/
+  while IFS= read -r f; do
+    rel="${f#"$PAYLOAD"/skills/}"
+    echo -e "skills/$rel\t.agents/skills/$rel\tmanaged"
+    case ",$agents," in *,claude,*) echo -e "skills/$rel\t.claude/skills/$rel\tmanaged";; esac
+  done < <(find "$PAYLOAD/skills" -type f | sort)
+  # docs 雛形 → docs/（seed）
+  while IFS= read -r f; do
+    rel="${f#"$PAYLOAD"/docs-template/}"
+    echo -e "docs-template/$rel\tdocs/$rel\tseed"
+  done < <(find "$PAYLOAD/docs-template" -type f ! -name .gitkeep | sort)
+  # AGENTS.md（merge）
+  echo -e "AGENTS.core.md\tAGENTS.md\tmerge"
+  # Claude アダプタ
+  case ",$agents," in *,claude,*)
+    echo -e "adapters/claude/CLAUDE.md.template\tCLAUDE.md\tmanaged"
+    echo -e "adapters/claude/settings.fragment.json\t.harness/adapters/claude.settings.fragment.json\tmanaged"
+    for r in implementer reviewer; do
+      echo -e "docs-template/roles/$r.md\t.claude/agents/$r.md\tgenerated"
+    done
+  ;; esac
+  # git hooks
+  echo -e "@pre-commit\t.githooks/pre-commit\tmanaged"
+}
+
+# ペイロード側の内容をファイルに書き出す（src の種類ごとの生成を含む）
+render_src() { # src dest_tmp
+  local src="$1" tmp="$2"
+  case "$src" in
+    @self)
+      if [ -n "$SELF_PATH" ]; then cp "$SELF_PATH" "$tmp"; else cp "$PAYLOAD/../bin/harness" "$tmp"; fi ;;
+    @self-cmd) write_cmd_shim "$tmp" ;;
+    AGENTS.core.md)
+      # マーカーの版はペイロードの VERSION から埋める（手で合わせない）
+      sed "s/<!-- harness:begin v=[^ ]* -->/<!-- harness:begin v=${HVER} -->/" "$PAYLOAD/$src" >"$tmp" ;;
+    @pre-commit)
+      cat >"$tmp" <<'EOF'
+#!/usr/bin/env bash
+# agent-harness managed: 速い検査だけを pre-commit で回す（有効化: git config core.hooksPath .githooks）
+exec bash "$(git rev-parse --show-toplevel)/.harness/scripts/check.sh" --fast
+EOF
+      ;;
+    *) cp "$PAYLOAD/$src" "$tmp" ;;
+  esac
+}
+
+# Windows 用シム。cmd / PowerShell から `harness ...` を bash の本体へ渡す（Git for Windows の bash）。
+write_cmd_shim() { # dest
+  printf '@echo off\r\nbash "%%~dp0harness" %%*\r\n' >"$1"
+}
+
+# docs/roles/<r>.md → .claude/agents/<r>.md
+render_agent() { # role_src_file dest_tmp name
+  local role="$1" tmp="$2" name="$3" desc
+  # description は H1（例: "# implementer — 実装（タスク 1 つにつき 1 体）"）から取る
+  desc="$(grep -m1 '^# ' "$role" | sed 's/^# *//; s/"/\\"/g')"
+  {
+    echo "---"
+    echo "name: $name"
+    echo "description: ${desc:-agent-harness role $name}"
+    echo "model: inherit"
+    echo "---"
+    echo
+    echo "<!-- generated by agent-harness from docs/roles/$name.md — edit the source, not this file -->"
+    echo
+    cat "$role"
+  } >"$tmp"
+}
+
+# AGENTS.md の managed ブロックを差し替え / 挿入
+merge_agents_md() { # block_file dest
+  local block="$1" dest="$2" tmp
+  tmp="$(mktemp)"
+  if [ -f "$dest" ] && grep -q "$BEGIN_RE" "$dest"; then
+    awk -v blk="$block" -v b="$BEGIN_RE" -v e="$END_RE" '
+      index($0,b)==1 { while ((getline l < blk) > 0) print l; skip=1; next }
+      skip && index($0,e)==1 { skip=0; next }
+      !skip { print }' "$dest" >"$tmp"
+  elif [ -f "$dest" ]; then
+    { cat "$block"; echo; cat "$dest"; } >"$tmp"
+  else
+    { cat "$block"; echo; echo "# プロジェクト固有のルール"; echo; echo "<!-- ここから下はプロジェクトが書く。目的、ディレクトリ構成、ビルド/テストコマンド、規約、やらないこと -->"; } >"$tmp"
+  fi
+  mv "$tmp" "$dest"
+}
+
+# managed ブロックだけを取り出してハッシュ
+block_hash() { # file
+  awk -v b="$BEGIN_RE" -v e="$END_RE" 'index($0,b)==1{p=1} p{print} p&&index($0,e)==1{exit}' "$1" | git hash-object --stdin
+}
+
+ensure_gitignore() {
+  local gi="$ROOT/.gitignore" line
+  for line in ".harness/state/" ".harness/backup/" ".harness/conflicts/"; do
+    grep -qxF "$line" "$gi" 2>/dev/null || echo "$line" >>"$gi"
+  done
+}
+
+# Windows の core.autocrlf で bash スクリプトが CRLF になると動かず、ハッシュ比較も狂う。LF を強制する。
+ensure_gitattributes() {
+  local ga="$ROOT/.gitattributes" line
+  # ハッシュ比較の対象（managed / generated とその生成元）はすべて LF 固定にする
+  for line in ".harness/** text eol=lf" ".harness/bin/harness.cmd text eol=crlf" ".githooks/** text eol=lf" ".agents/** text eol=lf" ".claude/** text eol=lf" "docs/roles/** text eol=lf" "AGENTS.md text eol=lf" "CLAUDE.md text eol=lf"; do
+    grep -qxF "$line" "$ga" 2>/dev/null || echo "$line" >>"$ga"
+  done
+}
+
+# サブディレクトリの AGENTS.md の隣に CLAUDE.md アダプタを置く
+ensure_nested_claude_md() {
+  local f d
+  while IFS= read -r f; do
+    d="$(dirname "$f")"
+    [ "$d" = "$ROOT" ] && continue
+    if [ ! -f "$d/CLAUDE.md" ]; then
+      cp "$PAYLOAD/adapters/claude/CLAUDE.md.template" "$d/CLAUDE.md"
+      info "  + ${d#"$ROOT"/}/CLAUDE.md (adapter for nested AGENTS.md)"
+    fi
+  done < <(find "$ROOT" -name AGENTS.md -not -path '*/.git/*' -not -path '*/node_modules/*' -not -path '*/.harness/*')
+}
+
+# ---------------------------------------------------------------- apply (init/update 共通)
+# 各 plan 行を所有権規則で適用し、ENTRIES を組み立てる
+apply_plan() { # agents mode(init|update)
+  local agents="$1" mode="$2"
+  local backup="$ROOT/.harness/backup/$(ts)" conflicts="$ROOT/.harness/conflicts"
+  declare -A OLD_HASH OLD_SRC_HASH
+  local p s o h sh
+  while IFS=$'\t' read -r p s o h sh; do OLD_HASH["$p"]="$h"; OLD_SRC_HASH["$p"]="$sh"; done < <(manifest_entries)
+
+  ENTRIES=()
+  local n_new=0 n_up=0 n_keep=0 n_conf=0 n_seed=0
+  local src dest own tmp abs newhash curhash srchash
+  while IFS=$'\t' read -r src dest own; do
+    abs="$ROOT/$dest"; tmp="$(mktemp)"
+    srchash=""
+    case "$own" in
+      generated)
+        # 生成元は プロジェクト側の seed（docs/roles/x.md）。無ければペイロードの雛形から。
+        local rolefile="$ROOT/docs/roles/$(basename "$dest")"
+        [ -f "$rolefile" ] || rolefile="$PAYLOAD/$src"
+        render_agent "$rolefile" "$tmp" "$(basename "$dest" .md)"
+        srchash="$(hash_of "$rolefile")"
+        ;;
+      merge) render_src "$src" "$tmp" ;;
+      *)     render_src "$src" "$tmp" ;;
+    esac
+    newhash="$(hash_of "$tmp")"
+
+    if [ "$own" = "seed" ]; then
+      if [ -f "$abs" ]; then n_keep=$((n_keep + 1)); else
+        mkdir -p "$(dirname "$abs")"; cp "$tmp" "$abs"; n_seed=$((n_seed + 1)); info "  seed  $dest"
+      fi
+      ENTRIES+=("$dest"$'\t'"$src"$'\t'"$own"$'\t'"-"$'\t'"-")
+    elif [ "$own" = "merge" ]; then
+      # AGENTS.md: ブロックだけ差し替え。ブロックが手で変わっていたら conflict
+      if [ -f "$abs" ] && grep -q "$BEGIN_RE" "$abs"; then
+        curhash="$(block_hash "$abs")"
+        if [ -n "${OLD_HASH[$dest]:-}" ] && [ "$curhash" != "${OLD_HASH[$dest]}" ] && [ "$curhash" != "$newhash" ]; then
+          mkdir -p "$conflicts"; cp "$tmp" "$conflicts/AGENTS.core.md.new"; n_conf=$((n_conf + 1))
+          info "  CONFLICT $dest (managed block edited locally) -> .harness/conflicts/AGENTS.core.md.new"
+          ENTRIES+=("$dest"$'\t'"$src"$'\t'"$own"$'\t'"$curhash"$'\t'"-"); rm -f "$tmp"; continue
+        fi
+        if [ "$curhash" = "$newhash" ]; then
+          n_keep=$((n_keep + 1)); ENTRIES+=("$dest"$'\t'"$src"$'\t'"$own"$'\t'"$newhash"$'\t'"-"); rm -f "$tmp"; continue
+        fi
+        mkdir -p "$backup/$(dirname "$dest")"; cp "$abs" "$backup/$dest"
+      fi
+      merge_agents_md "$tmp" "$abs"; n_up=$((n_up + 1)); info "  merge $dest"
+      ENTRIES+=("$dest"$'\t'"$src"$'\t'"$own"$'\t'"$newhash"$'\t'"-")
+    else
+      # managed / generated
+      if [ ! -f "$abs" ]; then
+        mkdir -p "$(dirname "$abs")"; cp "$tmp" "$abs"; n_new=$((n_new + 1)); info "  +     $dest"
+      else
+        curhash="$(hash_of "$abs")"
+        if [ "$curhash" = "$newhash" ]; then
+          n_keep=$((n_keep + 1))
+        elif [ -z "${OLD_HASH[$dest]:-}" ] && [ "$dest" != "CLAUDE.md" ]; then
+          # manifest に無いのに存在する = プロジェクト側の既存ファイル。壊さず conflict に
+          mkdir -p "$conflicts/$(dirname "$dest")"; cp "$tmp" "$conflicts/$dest.new"; n_conf=$((n_conf + 1))
+          info "  CONFLICT $dest (exists, not from harness) -> .harness/conflicts/$dest.new"
+          ENTRIES+=("$dest"$'\t'"$src"$'\t'"$own"$'\t'"$curhash"$'\t'"$srchash")
+          rm -f "$tmp"; continue
+        elif [ -z "${OLD_HASH[$dest]:-}" ] && [ "$dest" = "CLAUDE.md" ]; then
+          # 既存 CLAUDE.md には import 行だけ足す
+          if ! grep -q '^@AGENTS.md' "$abs"; then
+            mkdir -p "$backup"; cp "$abs" "$backup/CLAUDE.md"
+            { echo "@AGENTS.md"; echo; cat "$abs"; } >"$tmp"; mv "$tmp" "$abs"; tmp="$(mktemp)"
+            info "  merge CLAUDE.md (+ @AGENTS.md import; project content kept)"
+          fi
+          n_keep=$((n_keep + 1)); curhash="$(hash_of "$abs")"
+          ENTRIES+=("$dest"$'\t'"$src"$'\t'"$own"$'\t'"$curhash"$'\t'"$srchash"); rm -f "$tmp"; continue
+        elif [ "$curhash" = "${OLD_HASH[$dest]:-}" ]; then
+          mkdir -p "$backup/$(dirname "$dest")"; cp "$abs" "$backup/$dest"
+          cp "$tmp" "$abs"; n_up=$((n_up + 1)); info "  update $dest"
+        else
+          mkdir -p "$conflicts/$(dirname "$dest")"; cp "$tmp" "$conflicts/$dest.new"; n_conf=$((n_conf + 1))
+          info "  CONFLICT $dest (edited locally) -> .harness/conflicts/$dest.new"
+          ENTRIES+=("$dest"$'\t'"$src"$'\t'"$own"$'\t'"$curhash"$'\t'"$srchash"); rm -f "$tmp"; continue
+        fi
+      fi
+      newhash="$(hash_of "$abs")"
+      ENTRIES+=("$dest"$'\t'"$src"$'\t'"$own"$'\t'"$newhash"$'\t'"$srchash")
+    fi
+    rm -f "$tmp"
+  done < <(plan "$agents")
+
+  chmod +x "$ROOT/.harness/bin/harness" "$ROOT/.githooks/pre-commit" "$ROOT/.harness/scripts/"*.sh 2>/dev/null || true
+  ensure_gitignore
+  ensure_gitattributes
+  case ",$agents," in *,claude,*) ensure_nested_claude_md;; esac
+  git -C "$ROOT" config core.hooksPath .githooks 2>/dev/null || true
+
+  echo
+  info "$mode done: new=$n_new updated=$n_up unchanged=$n_keep seeded=$n_seed conflicts=$n_conf"
+  [ "$n_conf" -gt 0 ] && info "conflicts: .harness/conflicts/ を見て、新版を採るか harness upstream で戻すか決める"
+  [ -d "$backup" ] && info "backup: ${backup#"$ROOT"/}"
+  return 0
+}
+
+print_claude_settings_hint() {
+  local agents="$1"
+  case ",$agents," in *,claude,*)
+    echo
+    info "Claude Code の hooks / deny は自動マージしない（v0）。次の断片を .claude/settings.json に手で反映:"
+    info "  ${MANIFEST_REL%/manifest.json}/adapters/claude.settings.fragment.json"
+  ;; esac
+}
+
+# ---------------------------------------------------------------- commands
+cmd_init() {
+  local source="" ref="" agents="claude,codex"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --source) source="$2"; shift 2;;
+      --ref) ref="$2"; shift 2;;
+      --agents) agents="$2"; shift 2;;
+      *) die "unknown option: $1";;
+    esac
+  done
+  ROOT="$(project_root)"
+  [ -f "$(manifest_path)" ] && die "既に導入済み（$MANIFEST_REL がある）。harness update を使う"
+  [ -z "$source" ] && source="$(self_repo)"
+  [ -z "$source" ] && source="$DEFAULT_SOURCE"
+  # ローカルパスは絶対パスにして保存する（相対のままだと別ディレクトリからの update で壊れる）
+  [ -d "$source" ] && source="$(cd "$source" && pwd)"
+  local srcdir; srcdir="$(resolve_source "$source" "$ref")"
+  PAYLOAD="$srcdir/harness"; SELF_PATH="$srcdir/bin/harness"
+  [ -d "$PAYLOAD" ] || die "ペイロードが無い: $PAYLOAD"
+  local version; version="$(tr -d '\r\n' <"$srcdir/VERSION")"; HVER="$version"
+  info "init  project=$ROOT"
+  info "      source=$source ref=${ref:-default} version=$version agents=$agents"
+  apply_plan "$agents" init
+  write_manifest "$version" "$source" "$ref" "$agents"
+  print_claude_settings_hint "$agents"
+  echo
+  info "次: docs/spec/ に何を作るかを書き、.harness/checks.sh に検査を登録する。セッション開始は session-catchup。"
+}
+
+# update は .harness/bin/harness 自身を上書きする。実行中のスクリプトを上書きすると bash が壊れた内容を
+# 読み続けるので、同梱コピーから起動されたときは一時ファイルに自分を写してそこから再実行する。
+reexec_if_vendored() {
+  [ -n "${HARNESS_REEXEC:-}" ] && return 0
+  local me="${BASH_SOURCE[0]}" vendored="$ROOT/.harness/bin/harness" tmp
+  same_script "$me" "$vendored" || return 0
+  tmp="$(mktemp)"; cp "$me" "$tmp"
+  HARNESS_REEXEC=1 HARNESS_REEXEC_TMP="$tmp" exec bash "$tmp" update "$@"
+}
+
+cmd_update() {
+  local ref=""
+  ROOT="$(project_root)"
+  reexec_if_vendored "$@"
+  [ -n "${HARNESS_REEXEC_TMP:-}" ] && trap 'rm -f "$HARNESS_REEXEC_TMP"' EXIT
+  while [ $# -gt 0 ]; do
+    case "$1" in --ref) ref="$2"; shift 2;; *) die "unknown option: $1";; esac
+  done
+  [ -f "$(manifest_path)" ] || die "未導入（$MANIFEST_REL が無い）。harness init を使う"
+  local source agents oldver
+  source="$(manifest_get source)"; agents="$(manifest_get agents)"; oldver="$(manifest_get harness_version)"
+  [ -z "$ref" ] && ref="$(manifest_get source_ref)"
+  local srcdir; srcdir="$(resolve_source "$source" "$ref")"
+  PAYLOAD="$srcdir/harness"; SELF_PATH="$srcdir/bin/harness"
+  local version; version="$(tr -d '\r\n' <"$srcdir/VERSION")"; HVER="$version"
+  info "update $oldver -> $version  (source=$source ref=${ref:-default})"
+  if [ "$oldver" != "$version" ] && [ -f "$srcdir/CHANGELOG.md" ]; then
+    echo; echo "── CHANGELOG（$oldver より新しい分）"
+    awk -v old="## [$oldver]" 'index($0,old)==1{exit} /^## \[/{p=1} p' "$srcdir/CHANGELOG.md" | sed 's/^/   /'
+    echo
+  fi
+  apply_plan "$agents" update
+  write_manifest "$version" "$source" "$ref" "$agents"
+  print_claude_settings_hint "$agents"
+}
+
+cmd_status() {
+  ROOT="$(project_root)"
+  [ -f "$(manifest_path)" ] || die "未導入（$MANIFEST_REL が無い）"
+  local ver src ref; ver="$(manifest_get harness_version)"; src="$(manifest_get source)"; ref="$(manifest_get source_ref)"
+  echo "harness $ver  source=$src ref=${ref:-default}  installed=$(manifest_get installed_at)"
+  if [ -d "$src" ] && [ -f "$src/VERSION" ]; then
+    local latest; latest="$(cat "$src/VERSION")"
+    [ "$latest" != "$ver" ] && echo "  latest at source: $latest  (harness update で取り込む)"
+  fi
+  echo
+  local p s o h sh cur state n_mod=0 n_miss=0
+  while IFS=$'\t' read -r p s o h sh; do
+    if [ ! -e "$ROOT/$p" ]; then state="missing"; n_miss=$((n_miss + 1))
+    elif [ "$o" = "seed" ]; then state="seed"
+    elif [ "$o" = "merge" ]; then cur="$(block_hash "$ROOT/$p")"; [ "$cur" = "$h" ] && state="unchanged" || { state="MODIFIED"; n_mod=$((n_mod + 1)); }
+    else
+      cur="$(hash_of "$ROOT/$p")"
+      if [ "$cur" = "$h" ]; then state="unchanged"; else state="MODIFIED"; n_mod=$((n_mod + 1)); fi
+      if [ "$o" = "generated" ] && [ -n "$sh" ] && [ "$sh" != "-" ]; then
+        local rolefile="$ROOT/docs/roles/$(basename "$p")"
+        [ -f "$rolefile" ] && [ "$(hash_of "$rolefile")" != "$sh" ] && state="$state, source-changed (harness update で再生成)"
+      fi
+    fi
+    printf '  %-10s %-9s %s\n' "$o" "$state" "$p"
+  done < <(manifest_entries)
+  echo
+  echo "modified=$n_mod missing=$n_miss   (MODIFIED な managed は harness diff で確認し、汎用なら harness upstream で戻す)"
+}
+
+cmd_diff() {
+  ROOT="$(project_root)"
+  [ -f "$(manifest_path)" ] || die "未導入"
+  local src ref; src="$(manifest_get source)"; ref="$(manifest_get source_ref)"
+  local srcdir; srcdir="$(resolve_source "$src" "$ref")"
+  PAYLOAD="$srcdir/harness"; SELF_PATH="$srcdir/bin/harness"; HVER="$(tr -d '\r\n' <"$srcdir/VERSION")"
+  local p s o h sh cur tmp any=0
+  while IFS=$'\t' read -r p s o h sh; do
+    [ "$o" = "seed" ] && continue
+    [ -f "$ROOT/$p" ] || continue
+    if [ "$o" = "merge" ]; then cur="$(block_hash "$ROOT/$p")"; else cur="$(hash_of "$ROOT/$p")"; fi
+    [ "$cur" = "$h" ] && continue
+    any=1; tmp="$(mktemp)"
+    if [ "$o" = "generated" ]; then echo "── $p: generated（生成元 docs/roles を直すのが正。この差分は再生成で消える）"; rm -f "$tmp"; continue; fi
+    render_src "$s" "$tmp"
+    echo "── $p  (source: $s)"
+    if [ "$o" = "merge" ]; then
+      diff -u "$tmp" <(awk -v b="$BEGIN_RE" -v e="$END_RE" 'index($0,b)==1{q=1} q{print} q&&index($0,e)==1{exit}' "$ROOT/$p") || true
+    else
+      diff -u "$tmp" "$ROOT/$p" || true
+    fi
+    rm -f "$tmp"
+  done < <(manifest_entries)
+  [ "$any" = 0 ] && echo "差分なし（managed ファイルは導入時のまま）"
+  return 0
+}
+
+cmd_upstream() {
+  ROOT="$(project_root)"
+  [ -f "$(manifest_path)" ] || die "未導入"
+  [ $# -gt 0 ] || die "usage: harness upstream <path>..."
+  local src; src="$(manifest_get source)"
+  [ -d "$src" ] || die "source が git URL ($src)。agent-harness を clone し、manifest の source をそのローカルパスに書き換えてから実行する"
+  local p s o h sh target
+  for target in "$@"; do
+    target="${target#./}"
+    local found=0
+    while IFS=$'\t' read -r p s o h sh; do
+      [ "$p" = "$target" ] || continue
+      found=1
+      case "$o" in
+        seed) die "$p は seed（プロジェクトの資産）。上流に戻すものではない";;
+        generated) die "$p は生成物。生成元 docs/roles/ を直し、そちらを共有する";;
+      esac
+      case "$s" in @*) die "$p は CLI 内部生成。bin/harness を直す";; esac
+      if grep -qiE 'password|secret|token|api[_-]?key' "$ROOT/$p"; then
+        info "WARN: $p に秘密情報らしき語がある。共有物になるので確認する"
+      fi
+      if [ "$o" = "merge" ]; then
+        awk -v b="$BEGIN_RE" -v e="$END_RE" 'index($0,b)==1{q=1} q{print} q&&index($0,e)==1{exit}' "$ROOT/$p" >"$src/harness/$s"
+      else
+        cp "$ROOT/$p" "$src/harness/$s"
+      fi
+      info "upstream $p -> $src/harness/$s"
+    done < <(manifest_entries)
+    [ "$found" = 1 ] || die "manifest に無い: $target"
+  done
+  echo
+  info "次: $src でレビュー → commit → CHANGELOG.md に「プロジェクト側で必要な作業」→ VERSION を上げる"
+}
+
+cmd_check() {
+  ROOT="$(project_root)"
+  [ -f "$ROOT/.harness/scripts/check.sh" ] || die "未導入（.harness/scripts/check.sh が無い）"
+  exec bash "$ROOT/.harness/scripts/check.sh" "$@"
+}
+
+cmd_version() {
+  local r; r="$(self_repo)"
+  if [ -n "$r" ]; then echo "harness (repo) $(tr -d '\r\n' <"$r/VERSION")"; else
+    ROOT="$(project_root)"; [ -f "$(manifest_path)" ] && echo "harness (installed) $(manifest_get harness_version)" || echo "harness (standalone)"
+  fi
+}
+
+# `harness` を PATH 上に置く。Windows では harness.cmd も置き、PowerShell / cmd から使えるようにする。
+cmd_self_install() {
+  local dir=""
+  while [ $# -gt 0 ]; do case "$1" in --dir) dir="$2"; shift 2;; *) die "unknown option: $1";; esac; done
+  local me="${BASH_SOURCE[0]}"
+  [ -f "$me" ] || die "標準入力から実行中は self-install できない。clone した bin/harness か、導入済みプロジェクトの .harness/bin/harness から実行する"
+  local win=0; case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) win=1;; esac
+  if [ -z "$dir" ]; then
+    if [ "$win" = 1 ]; then dir="$HOME/bin"; else dir="$HOME/.local/bin"; fi
+  fi
+  mkdir -p "$dir"
+  cp "$me" "$dir/harness" && chmod +x "$dir/harness"
+  info "installed: $dir/harness"
+  if [ "$win" = 1 ]; then
+    write_cmd_shim "$dir/harness.cmd"; info "installed: $dir/harness.cmd (PowerShell / cmd 用)"
+  fi
+  case ":$PATH:" in *":$dir:"*) info "PATH に入っている。新しいシェルで 'harness version' を確認";;
+    *) info "PATH に $dir を追加する:"
+       if [ "$win" = 1 ]; then
+         info "  PowerShell: [Environment]::SetEnvironmentVariable('Path', \$env:Path + ';$(cygpath -w "$dir" 2>/dev/null || echo "$dir")', 'User')"
+         info "  Git Bash は ~/bin を自動で PATH に含める（新しいシェルで有効）"
+       else
+         info "  echo 'export PATH=\"$dir:\$PATH\"' >> ~/.bashrc"
+       fi;;
+  esac
+}
+
+usage() { sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+
+# PATH 上の harness から呼ばれ、プロジェクトに同梱コピーがあれば、そちらへ委譲する（版をプロジェクトに固定）
+maybe_delegate() {
+  local cmd="${1:-}"
+  case "$cmd" in init|self-install|version|--version|-v|""|help|-h|--help) return 0;; esac
+  local root vendored me="${BASH_SOURCE[0]}"
+  root="$(project_root)"; vendored="$root/.harness/bin/harness"
+  [ -f "$vendored" ] || return 0
+  same_script "$me" "$vendored" && return 0   # 既に同梱コピー（と同じ内容）を実行中
+  exec bash "$vendored" "$@"
+}
+
+# ---------------------------------------------------------------- main
+ROOT=""; PAYLOAD=""; SELF_PATH=""; HVER=""
+maybe_delegate "$@"
+case "${1:-}" in
+  init)     shift; cmd_init "$@";;
+  self-install) shift; cmd_self_install "$@";;
+  update)   shift; cmd_update "$@";;
+  status)   shift; cmd_status "$@";;
+  diff)     shift; cmd_diff "$@";;
+  upstream) shift; cmd_upstream "$@";;
+  check)    shift; cmd_check "$@";;
+  version|--version|-v) cmd_version;;
+  ""|help|-h|--help) usage;;
+  *) die "unknown command: $1 (harness help)";;
+esac
