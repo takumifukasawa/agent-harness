@@ -164,11 +164,21 @@ mf_broken=""
 manifest_ok=1
 [ -n "$mf_broken" ] && manifest_ok=0
 
+# 壊れた manifest の復旧経路は決定 0003 のとおり、見出し（version/source/agents）が読めるかで
+# 二手に分かれる。読めれば harness update がツリーの実物から files を作り直せる（files の中身は
+# 読まない）。読めなければ update は source を解決できず失敗し、init は manifest.json が
+# 存在するだけで拒否するので、壊れたものを退避してから作り直す以外に道が無い（実測済み）。
 if [ "$manifest_ok" = 1 ]; then
   report OK "manifest（version=$mf_version, agents=$mf_agents, ${mf_entry_lines} 件）"
+elif [ -n "$mf_version" ] && [ -n "$mf_source" ] && [ -n "$mf_agents" ]; then
+  report FAIL "manifest（.harness/manifest.json）の files が壊れている:${mf_broken%;}" \
+    "bash .harness/bin/harness update で作り直す（version/source/agents は読めているので、files の記載が壊れていても復元できる）"
+  # 黙ってスキップしない。何を確認できていないかを出力に残す。
+  report WARN "manifest が読めないため B4（ファイルの存在）/ B5（改行）/ B8・B9（アダプタ側の照合）/ B10（新版）の診断をスキップした" \
+    "先に上の FAIL（manifest）を直してから、もう一度 harness doctor を回す"
 else
-  report FAIL "manifest（.harness/manifest.json）が壊れている:${mf_broken%;}" \
-    ".harness/backup/ があれば復元するか、harness init をやり直す（bin/harness も同じ「1 エントリ 1 行」で読む）"
+  report FAIL "manifest（.harness/manifest.json）が壊れている（見出しごと読めない）:${mf_broken%;}" \
+    "mv .harness/manifest.json .harness/manifest.json.broken && bash .harness/bin/harness init --source <このプロジェクトの導入元。不明なら .harness/manifest.json.broken や git log -p -- .harness/manifest.json、docs/handoff.md で確認。省略時は既定の公開リポジトリを使う>"
   # 黙ってスキップしない。何を確認できていないかを出力に残す。
   report WARN "manifest が読めないため B4（ファイルの存在）/ B5（改行）/ B8・B9（アダプタ側の照合）/ B10（新版）の診断をスキップした" \
     "先に上の FAIL（manifest）を直してから、もう一度 harness doctor を回す"
@@ -183,8 +193,11 @@ if [ "$manifest_ok" = 1 ]; then
     [ -e "$ROOT/$f_path" ] && continue
     mf_missing=$((mf_missing + 1))
     if [ "$f_own" = "seed" ]; then
+      # apply_plan は seed が無ければ雛形（src。多くは docs-template/ だが .harness/checks.sh の
+      # ように checks.seed.sh など docs-template/ 外のこともある）から作り直す。src ごとに手で
+      # 辿らせず、update 1 回に一本化する（実測済み。決定 0003）。
       report WARN "seed ファイルが無い: $f_path" \
-        "seed は導入後にプロジェクトが編集する前提のファイル。必要なら harness の docs-template/ から取り直すか手で作る"
+        "bash .harness/bin/harness update で雛形から復元する（seed は導入後にプロジェクトが編集する前提なので、復元後の内容は必要に応じて書き直す）"
     else
       report FAIL "$f_own ファイルが無い: $f_path" \
         "bash .harness/bin/harness update で復元する（直接編集していた場合は上書きされる点に注意）。復元できなければ bash .harness/bin/harness init をやり直す"
@@ -207,8 +220,11 @@ if [ "$manifest_ok" = 1 ]; then
     # tr -d '\r' の前後でバイト数を比べる（CR があれば減る）。
     if [ "$(tr -d '\r' < "$ROOT/$f_path" | wc -c)" != "$(wc -c < "$ROOT/$f_path")" ]; then
       cr_found=$((cr_found + 1))
-      report FAIL "改行: $f_path に CR（\\r）が含まれる（CRLF 化されている）" \
-        "autocrlf を疑う（git config core.autocrlf false のうえで bash .harness/bin/harness update、または git checkout -- $f_path で復元）"
+      # update の復元は git checkout を経由せず生バイトで書くので、core.autocrlf の設定に
+      # 関係なく直る（決定 0002 の hash_of/apply_plan、実測済み）。autocrlf 設定自体の是正は
+      # 「直し方」ではなく再発防止の話なので、直し方は update 1 本にする（決定 0003）。
+      report FAIL "改行: $f_path に CR（\\r）が含まれる（CRLF 化されている。多くは core.autocrlf=true が原因）" \
+        "bash .harness/bin/harness update で復元する（正本の内容を生バイトで書き込むため autocrlf の設定に関係なく直る）"
     fi
   done <<<"$mf_entries"
   [ "$cr_found" -eq 0 ] && report OK "改行: managed / generated ファイルに CR は無い"
@@ -222,12 +238,21 @@ if [ "$manifest_ok" = 1 ]; then
 fi
 
 # ---------------------------------------------------------------- B6. git hooks
-hooks_path="$(git -C "$ROOT" config --get core.hooksPath 2>/dev/null || true)"
-if [ "$hooks_path" = ".githooks" ] && [ -f "$ROOT/.githooks/pre-commit" ]; then
-  report OK "git hooks（core.hooksPath=.githooks, .githooks/pre-commit あり）"
+# $ROOT が git リポジトリでなければ（.git が無い）、core.hooksPath はそもそも設定できない
+# （git config core.hooksPath ... は "fatal: not in a git directory" で落ちる）。
+# `config --get` 単体はこのエラーを 2>/dev/null で握りつぶし「未設定」と区別が付かなくなるので、
+# 根本原因（git リポジトリではない）を先に確認してから分岐する（実測済み。決定 0003）。
+if ! git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  report WARN "git hooks: $ROOT が git リポジトリではない（.git が無い）ため core.hooksPath を確認できない（git config はここでは fatal: not in a git directory になる）" \
+    "git init . && git config core.hooksPath .githooks でこのディレクトリを git 管理下に置いたうえで hooksPath も設定する（git を使わない運用なら、この WARN は無視してよい）"
 else
-  report WARN "git hooks（core.hooksPath が .githooks になっていない、または .githooks/pre-commit が無い。現在値: ${hooks_path:-未設定}）" \
-    "git config core.hooksPath .githooks"
+  hooks_path="$(git -C "$ROOT" config --get core.hooksPath 2>/dev/null || true)"
+  if [ "$hooks_path" = ".githooks" ] && [ -f "$ROOT/.githooks/pre-commit" ]; then
+    report OK "git hooks（core.hooksPath=.githooks, .githooks/pre-commit あり）"
+  else
+    report WARN "git hooks（core.hooksPath が .githooks になっていない、または .githooks/pre-commit が無い。現在値: ${hooks_path:-未設定}）" \
+      "git config core.hooksPath .githooks"
+  fi
 fi
 
 # ---------------------------------------------------------------- B7. AGENTS.md のマーカーと版
@@ -242,8 +267,9 @@ else
     report FAIL "AGENTS.md に harness の管理ブロックのマーカーが無い（<!-- harness:begin v=X --> / <!-- harness:end -->）" \
       "bash .harness/bin/harness update をやり直すか、.harness/backup/ から復元する"
   elif [ "$begin_count" -ne 1 ] || [ "$end_count" -ne 1 ]; then
+    # update は begin/end が複数あっても 1 対に畳む（決定 0002。手で整理させる必要はない。実測済み）。
     report FAIL "AGENTS.md のマーカーがちょうど 1 組ではない（begin=${begin_count}, end=${end_count}）" \
-      "重複または欠落したマーカーを手で 1 組に整理するか、.harness/backup/ から復元する"
+      "bash .harness/bin/harness update で 1 対に畳む（変更前の AGENTS.md は .harness/backup/ に退避される）"
   else
     agents_ver="$(sed -n 's/.*<!-- harness:begin v=\([^ ]*\) -->.*/\1/p' "$AGENTS_FILE" | head -1)"
     if [ "$manifest_ok" != 1 ]; then
@@ -253,7 +279,7 @@ else
       report OK "AGENTS.md のマーカー（v=$agents_ver, manifest と一致）"
     else
       report WARN "AGENTS.md のマーカーの版（v=${agents_ver:-不明}）が manifest の harness_version（${mf_version:-不明}）と食い違う" \
-        "harness update を実行して同期する"
+        "bash .harness/bin/harness update で同期する"
     fi
   fi
 fi
