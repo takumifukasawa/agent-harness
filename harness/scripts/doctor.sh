@@ -45,9 +45,38 @@ report() { # severity 項目 [直し方]
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
-# ファイルの同一性は内容ハッシュで判定する（Windows でパス表記が C:/ と /c/ と /tmp で混在するため）
+# 2 つのファイルの内容が同一か（パスではなく中身で見る。Windows では C:/ と /c/ と /tmp が混在する）。
+# 素の git hash-object は使わない。理由が 2 つある:
+#   1. .gitattributes の text eol=lf フィルタを通すので、CRLF 化しただけのファイルを「一致」と誤診する
+#   2. git が無い環境では両辺が空文字になり、常に「一致」になる（誤った OK を出す）
+# そこで生バイトで比べる。cmp → git hash-object --no-filters → bash 内蔵だけ、の順に落ちる。
 content_eq() { # a b
-  [ -f "$1" ] && [ -f "$2" ] && [ "$(git hash-object "$1" 2>/dev/null)" = "$(git hash-object "$2" 2>/dev/null)" ]
+  [ -f "$1" ] && [ -f "$2" ] || return 1
+  if have cmp; then
+    cmp -s "$1" "$2"
+  elif have git; then
+    local h1 h2
+    h1="$(git hash-object --no-filters "$1" 2>/dev/null)"
+    h2="$(git hash-object --no-filters "$2" 2>/dev/null)"
+    [ -n "$h1" ] && [ "$h1" = "$h2" ]
+  else
+    # 外部コマンドが一切無くても判定する最後の手段（bash 内蔵の mapfile だけを使う）
+    local -a lines_a=() lines_b=()
+    mapfile lines_a <"$1" 2>/dev/null || return 1
+    mapfile lines_b <"$2" 2>/dev/null || return 1
+    [ "${#lines_a[@]}" = "${#lines_b[@]}" ] && [ "${lines_a[*]}" = "${lines_b[*]}" ]
+  fi
+}
+
+# grep -c は 0 件のとき "0" を出して exit 1 を返す。`|| echo 0` を足すと出力が "0\n0" になり、
+# 続く整数比較が「integer expression expected」で失敗して条件が常に偽になる（偽の全快の元）。
+# 数を数えるときは必ずこの 2 つを通し、整数以外が来ても 0 に落とす。
+as_int() { # 文字列 → 先頭の整数（空や非整数は 0）
+  local n="${1%%[!0-9]*}"
+  printf '%s' "${n:-0}"
+}
+count_matches() { # 正規表現 ファイル → マッチした行数（整数）
+  as_int "$(grep -c "$1" "$2" 2>/dev/null || true)"
 }
 
 os_name="$(uname -s 2>/dev/null || echo unknown)"
@@ -109,23 +138,40 @@ mf_agents="$(manifest_get agents)"
 # path<TAB>src<TAB>ownership<TAB>sha256<TAB>source_sha256
 mf_entries="$(grep '^    {"path"' "$MANIFEST" 2>/dev/null | sed -E \
   's/.*"path":"([^"]*)".*"src":"([^"]*)".*"ownership":"([^"]*)".*"sha256":"([^"]*)".*"source_sha256":"([^"]*)".*/\1\t\2\t\3\t\4\t\5/')"
-mf_entry_lines="$(grep -c '^    {"path"' "$MANIFEST" 2>/dev/null || echo 0)"
-mf_bad_lines=0
-if [ "$mf_entry_lines" -gt 0 ]; then
-  mf_bad_lines="$(printf '%s\n' "$mf_entries" | awk -F'\t' 'NF!=5{c++} END{print c+0}')"
+mf_entry_lines="$(count_matches '^    {"path"' "$MANIFEST")"
+
+# 1 行に複数エントリ / 別のインデント で書かれた manifest を「エントリ 0 件」と取り違えないための照合。
+# ファイル全体の "path" キーの数とエントリ行の数が食い違えば、1 エントリ 1 行になっていない。
+mf_path_keys="$mf_entry_lines"   # awk が無ければ照合しない（無い側に倒して誤検知を避ける）
+if have awk; then
+  mf_path_keys="$(as_int "$(awk '{ c += gsub(/"path":"/, "&") } END { print c + 0 }' "$MANIFEST" 2>/dev/null)")"
 fi
 
-manifest_ok=1
-if [ -z "$mf_version" ] || [ -z "$mf_source" ] || [ -z "$mf_agents" ] || \
-   [ "$mf_entry_lines" -eq 0 ] || [ "$mf_bad_lines" -gt 0 ]; then
-  manifest_ok=0
+mf_bad_lines=0
+if [ "$mf_entry_lines" -gt 0 ] && have awk; then
+  mf_bad_lines="$(as_int "$(printf '%s\n' "$mf_entries" | awk -F'\t' 'NF!=5{c++} END{print c+0}')")"
 fi
+
+mf_broken=""
+[ -z "$mf_version" ] && mf_broken="$mf_broken harness_version が読めない;"
+[ -z "$mf_source" ] && mf_broken="$mf_broken source が読めない;"
+[ -z "$mf_agents" ] && mf_broken="$mf_broken agents が読めない;"
+[ "$mf_entry_lines" -eq 0 ] && mf_broken="$mf_broken files のエントリ行が 0 件;"
+[ "$mf_bad_lines" -gt 0 ] && mf_broken="$mf_broken 項目が欠けたエントリ行が ${mf_bad_lines} 件;"
+[ "$mf_path_keys" -ne "$mf_entry_lines" ] && \
+  mf_broken="$mf_broken 1 エントリ 1 行ではない（\"path\" が ${mf_path_keys} 個に対しエントリ行は ${mf_entry_lines} 行）;"
+
+manifest_ok=1
+[ -n "$mf_broken" ] && manifest_ok=0
 
 if [ "$manifest_ok" = 1 ]; then
   report OK "manifest（version=$mf_version, agents=$mf_agents, ${mf_entry_lines} 件）"
 else
-  report FAIL "manifest（.harness/manifest.json）が壊れている（harness_version / source / agents が読めない、またはエントリ行の形式が崩れている）" \
-    ".harness/backup/ があれば復元するか、harness init をやり直す。B4/B5 は manifest が読めるまでスキップする"
+  report FAIL "manifest（.harness/manifest.json）が壊れている:${mf_broken%;}" \
+    ".harness/backup/ があれば復元するか、harness init をやり直す（bin/harness も同じ「1 エントリ 1 行」で読む）"
+  # 黙ってスキップしない。何を確認できていないかを出力に残す。
+  report WARN "manifest が読めないため B4（ファイルの存在）/ B5（改行）/ B8・B9（アダプタ側の照合）/ B10（新版）の診断をスキップした" \
+    "先に上の FAIL（manifest）を直してから、もう一度 harness doctor を回す"
 fi
 
 # ---------------------------------------------------------------- B4. ファイルの存在（manifest 記載分）
@@ -190,9 +236,8 @@ if [ ! -f "$AGENTS_FILE" ]; then
   report FAIL "AGENTS.md が無い" \
     "harness update をやり直すか、.harness/backup/ から復元する"
 else
-  begin_count="$(grep -c '<!-- harness:begin' "$AGENTS_FILE" 2>/dev/null || true)"
-  end_count="$(grep -c '<!-- harness:end -->' "$AGENTS_FILE" 2>/dev/null || true)"
-  begin_count="${begin_count:-0}"; end_count="${end_count:-0}"
+  begin_count="$(count_matches '<!-- harness:begin' "$AGENTS_FILE")"
+  end_count="$(count_matches '<!-- harness:end -->' "$AGENTS_FILE")"
   if [ "$begin_count" -eq 0 ] && [ "$end_count" -eq 0 ]; then
     report FAIL "AGENTS.md に harness の管理ブロックのマーカーが無い（<!-- harness:begin v=X --> / <!-- harness:end -->）" \
       "harness update をやり直すか、.harness/backup/ から復元する"
