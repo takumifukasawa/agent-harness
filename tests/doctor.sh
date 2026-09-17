@@ -117,6 +117,70 @@ expect_missing_git() {
 }
 scenario "B1: git 不在なら FAIL / exit 1" setup_init expect_missing_git
 
+# B3. manifest が壊れていれば FAIL（存在はするが harness_version 等が読めない形にする）。
+setup_broken_manifest() {
+  setup_init || return 1
+  printf '{ "broken"\n' > "$PROJ/.harness/manifest.json"
+}
+expect_broken_manifest() {
+  run_doctor
+  expect_code 1
+  expect_out '^FAIL .*manifest'
+}
+scenario "B3: manifest が壊れていれば FAIL" setup_broken_manifest expect_broken_manifest
+
+# B4. manifest 記載の managed ファイルを削除すると FAIL で一覧に出る。
+setup_missing_managed_file() {
+  setup_init || return 1
+  rm -f "$PROJ/.harness/state-template/progress.json"
+}
+expect_missing_managed_file() {
+  run_doctor
+  expect_code 1
+  expect_out '^FAIL .*state-template/progress\.json'
+}
+scenario "B4: managed ファイルの欠落は FAIL" setup_missing_managed_file expect_missing_managed_file
+
+# B4. manifest 記載の seed ファイルを削除すると WARN（FAIL にはしない）。
+setup_missing_seed_file() {
+  setup_init || return 1
+  rm -f "$PROJ/docs/tech-debt.md"
+}
+expect_missing_seed_file() {
+  run_doctor
+  expect_code 0
+  expect_out '^WARN .*docs/tech-debt\.md'
+  expect_not_out '^FAIL .*docs/tech-debt\.md'
+}
+scenario "B4: seed ファイルの欠落は WARN" setup_missing_seed_file expect_missing_seed_file
+
+# B5. managed ファイルを CRLF 化すると FAIL（autocrlf を疑う直し方付き）。
+setup_crlf_managed_file() {
+  setup_init || return 1
+  awk '{printf "%s\r\n", $0}' "$PROJ/.harness/scripts/gc.sh" > "$PROJ/.harness/scripts/gc.sh.tmp" &&
+    mv "$PROJ/.harness/scripts/gc.sh.tmp" "$PROJ/.harness/scripts/gc.sh"
+}
+expect_crlf_managed_file() {
+  run_doctor
+  expect_code 1
+  expect_out '^FAIL .*scripts/gc\.sh'
+  expect_out 'autocrlf'
+}
+scenario "B5: managed ファイルの CRLF 化は FAIL（autocrlf を疑う）" setup_crlf_managed_file expect_crlf_managed_file
+
+# B5. .gitattributes から .harness/** の行を消すと WARN。
+setup_missing_gitattributes_line() {
+  setup_init || return 1
+  grep -vxF '.harness/** text eol=lf' "$PROJ/.gitattributes" > "$PROJ/.gitattributes.tmp" &&
+    mv "$PROJ/.gitattributes.tmp" "$PROJ/.gitattributes"
+}
+expect_missing_gitattributes_line() {
+  run_doctor
+  expect_code 0
+  expect_out '^WARN .*gitattributes'
+}
+scenario "B5: .gitattributes に .harness/** eol=lf が無ければ WARN" setup_missing_gitattributes_line expect_missing_gitattributes_line
+
 # ================================================================ 集計
 echo
 echo "tests/doctor.sh: pass=$passed fail=$failed"
