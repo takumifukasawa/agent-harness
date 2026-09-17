@@ -40,6 +40,9 @@ run_doctor_in() { # <dir> [args...] 任意のディレクトリで、このリ�
 run_doctor_without_path() { # PATH を潰して doctor.sh を直接回す（git 不在の再現）
   OUT="$(cd "$PROJ" && PATH=/nonexistent "$BASH_BIN" .harness/scripts/doctor.sh 2>&1)"; CODE=$?
 }
+run_doctor_with_broken_git() { # git だけが使えない PATH で doctor.sh を直接回す（git 無しでも内容比較が効くか）
+  OUT="$(cd "$PROJ" && PATH="$WORK/nogit:$PATH" "$BASH_BIN" .harness/scripts/doctor.sh 2>&1)"; CODE=$?
+}
 
 # ---------------------------------------------------------------- setup 部品
 setup_empty() { # 未導入（git リポジトリですらない）ディレクトリ
@@ -126,8 +129,53 @@ expect_broken_manifest() {
   run_doctor
   expect_code 1
   expect_out '^FAIL .*manifest'
+  # 黙ってスキップしない: manifest に依存する診断を飛ばしたことが出力で分かる
+  expect_out '^WARN .*スキップ'
 }
 scenario "B3: manifest が壊れていれば FAIL" setup_broken_manifest expect_broken_manifest
+
+# B3. manifest のエントリが 1 行 1 件で書かれていなければ FAIL（bin/harness も同じ前提で読めない）。
+# 偽の全快の再発防止: 以前は grep -c の `|| echo 0` が "0\n0" を作って整数比較が壊れ、
+# 「エントリ 0 件」のガードが常に偽になり、managed ファイルを消しても FAIL 0 / exit 0 を返していた。
+setup_manifest_entries_one_line() {
+  setup_init || return 1
+  # files の各エントリを 1 行に畳む（整形ツールを通した manifest を模す）。見出しキーは 1 行 1 個のまま。
+  awk '/^    \{"path"/ { sub(/^ +/, ""); printf "%s", $0; next } { print }' \
+    "$PROJ/.harness/manifest.json" > "$PROJ/.harness/manifest.tmp" &&
+    mv "$PROJ/.harness/manifest.tmp" "$PROJ/.harness/manifest.json" || return 1
+  # 壊れた manifest を「全部そろっている」と報告しないことを見るため、managed ファイルも消しておく
+  rm -f "$PROJ/.harness/scripts/gc.sh" "$PROJ/.harness/state-template/progress.json"
+}
+expect_manifest_entries_one_line() {
+  run_doctor
+  expect_code 1
+  expect_out '^FAIL .*manifest'
+  expect_not_out 'integer expression expected'
+  expect_not_out '^OK .*manifest 記載ファイル'
+  expect_out '^WARN .*スキップ'
+}
+scenario "B3: エントリが 1 行 1 件でなければ FAIL（偽の全快を出さない）" setup_manifest_entries_one_line expect_manifest_entries_one_line
+
+# B3. files が空なら FAIL（エントリ 0 件のガードが効いているか）。
+setup_manifest_empty_files() {
+  setup_init || return 1
+  awk '/^  "files": \[/ { print "  \"files\": []"; skip = 1; next }
+       skip == 1 && /^  \]/ { skip = 0; next }
+       skip == 1 { next }
+       { print }' \
+    "$PROJ/.harness/manifest.json" > "$PROJ/.harness/manifest.tmp" &&
+    mv "$PROJ/.harness/manifest.tmp" "$PROJ/.harness/manifest.json" || return 1
+  rm -f "$PROJ/.harness/scripts/gc.sh"
+}
+expect_manifest_empty_files() {
+  run_doctor
+  expect_code 1
+  expect_out '^FAIL .*manifest'
+  expect_not_out 'integer expression expected'
+  expect_not_out '^OK .*manifest 記載ファイル'
+  expect_out '^WARN .*スキップ'
+}
+scenario "B3: files が空なら FAIL" setup_manifest_empty_files expect_manifest_empty_files
 
 # B4. manifest 記載の managed ファイルを削除すると FAIL で一覧に出る。
 setup_missing_managed_file() {
@@ -274,6 +322,40 @@ expect_claude_skill_drift() {
   expect_out 'harness update'
 }
 scenario "B8: .claude/skills が .agents/skills とずれれば WARN" setup_claude_skill_drift expect_claude_skill_drift
+
+# B8. .claude/skills が CRLF 化されていれば内容のずれとして WARN。
+# git hash-object は .gitattributes の text eol=lf フィルタを通すため、CRLF 化しただけの
+# ファイルを「一致」と誤診していた（生バイトは違うのにハッシュが同じになる）。
+setup_claude_skill_crlf() {
+  setup_init || return 1
+  local f="$PROJ/.claude/skills/harness/SKILL.md"
+  awk '{ printf "%s\r\n", $0 }' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+}
+expect_claude_skill_crlf() {
+  run_doctor
+  # 同じファイルは B5（CR の検出）でも FAIL する。ここで見るのは B8 の一致判定のほう。
+  expect_code 1
+  expect_out '^WARN .*\.claude/skills/harness'
+  expect_not_out '^OK +\.claude/skills/\* は'
+}
+scenario "B8: CRLF 化した .claude/skills を内容のずれとして検出する" setup_claude_skill_crlf expect_claude_skill_crlf
+
+# B8. git が使えない環境でも .claude/skills のずれを検出する（git 頼みの比較は両辺が空になって常に真だった）。
+setup_claude_skill_drift_nogit() {
+  setup_init || return 1
+  echo "drift" >> "$PROJ/.claude/skills/harness/SKILL.md"
+  mkdir -p "$WORK/nogit" &&
+    printf '#!/usr/bin/env bash\nexit 127\n' > "$WORK/nogit/git" &&
+    chmod +x "$WORK/nogit/git"
+}
+expect_claude_skill_drift_nogit() {
+  run_doctor_with_broken_git
+  expect_out '^WARN .*\.claude/skills/harness'
+  expect_not_out '^OK +\.claude/skills/\* は'
+  # ずれていないスキルまで巻き添えで WARN にしない
+  expect_not_out '^WARN .*\.claude/skills/harness-maintain'
+}
+scenario "B8: git が使えなくても .claude/skills のずれを検出する" setup_claude_skill_drift_nogit expect_claude_skill_drift_nogit
 
 # B8. .claude/agents/implementer.md を消すと FAIL。
 setup_claude_agent_missing() {
