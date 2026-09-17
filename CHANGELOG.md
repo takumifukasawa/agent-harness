@@ -6,7 +6,11 @@ semver: managed ファイルの移動・マーカー形式変更は major、ル�
 ## [Unreleased]
 
 - 追加: `harness doctor`（`scripts/doctor.sh`）。環境とハーネス導入状態を機械的に診断する（bash/git/node/jq、manifest、改行、git hooks、AGENTS.md マーカー、Claude/Codex アダプタ、source の新版、`.gitignore`）。LLM は使わず報告のみ、自動修復はしない。終了コードは 0=問題なし/WARN のみ、1=FAIL あり、2=未導入。`harness init` の最後の案内にも `harness doctor` を促す 1 行を追加。
-- プロジェクト側で必要な作業: `harness update` で `doctor.sh` が入る。追加の手作業なし。
+- 変更（挙動。決定 0002）: `harness update` が、変更済みの managed / generated を `.harness/conflicts/` へ退避するだけで放置せず、**正本の内容に復元する**（変更前は `.harness/backup/<ts>/` へ退避し、`restore <path>` と退避先を出力。集計に `restored=N` を追加）。`AGENTS.md` は managed ブロックだけを現行版に戻し、ブロック外のプロジェクトの記述は触らない。重複した managed ブロックは 1 対に畳む。`CLAUDE.md` は import スタブ扱いで、`@AGENTS.md` の行だけを保証して中身は残す。`seed` と「manifest に無いのに存在するファイル」の扱いは従来どおり（触らない / conflicts）。
+- 修正: 内容の比較をフィルタ無し（生バイト）の `git hash-object --no-filters` に統一。素の `git hash-object` は `.gitattributes` の `text eol=lf` と `core.autocrlf` を通すため、CRLF 化しただけの導入コピーを「未変更」と誤判定していた（`harness status` の MODIFIED 判定、`update` の上書き判断、検査 "installed copies in sync" が揃って騙されていた）。
+- 修正: `AGENTS.md` の `end` マーカーが失われていると、`update` が begin から末尾までを managed ブロックと見なしてプロジェクトの記述ごと消していた。今は begin の 1 行だけを落とし、残骸はファイルに残して案内する。
+- 追加: `tests/update.sh`（このリポジトリ専用の検査 "update scenarios"、12 シナリオ）。所有権の規則の回帰を押さえる。
+- プロジェクト側で必要な作業: `harness update` で `doctor.sh` が入る。**次回の `update` は、これまで「未変更」と誤判定されていた CRLF のファイルと、手で直した managed / generated を正本の内容に戻す**（変更前は `.harness/backup/<ts>/` に残る）。残したいローカルの変更があるなら、先に `harness diff` で確認し `harness upstream <path>` で正本へ戻してから `update` する。manifest の `sha256` は自動で書き直されるので手作業は不要。
 
 ## [0.3.0] - 2026-09-17
 

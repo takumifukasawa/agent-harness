@@ -26,9 +26,29 @@ END_RE='<!-- harness:end -->'
 # ---------------------------------------------------------------- util
 die()  { echo "harness: $*" >&2; exit 1; }
 info() { echo "harness: $*"; }
-hash_of() { git hash-object "$1"; }
 now() { date +%Y-%m-%d; }
 ts() { date +%Y%m%d-%H%M%S; }
+
+# 内容ハッシュ。フィルタを通さない生バイトで取る。
+# 素の `git hash-object` は .gitattributes の text/eol と core.autocrlf を適用するので、CRLF 化しただけの
+# 導入コピーを「未変更」と誤判定する。これに騙されるのは status の MODIFIED 判定、update の上書き判断、
+# 検査 "installed copies in sync" の 3 つ全部（scripts/doctor.sh の content_eq と同じ方針）。
+hash_of() { # file
+  local h; h="$(git hash-object --no-filters "$1" 2>/dev/null || true)"
+  [ -n "$h" ] || die "内容ハッシュを取れない: $1（git が要る）"
+  printf '%s' "$h"
+}
+
+# grep -c は 0 件のとき "0" を出して exit 1 を返す。`|| echo 0` を足すと出力が "0\n0" になり、
+# 続く整数比較が「integer expression expected」で失敗して条件が常に偽になる。数は必ずここを通す。
+count_lines() { # 正規表現 ファイル → 整数
+  local n; n="$(grep -c "$1" "$2" 2>/dev/null || true)"; n="${n%%[!0-9]*}"; printf '%s' "${n:-0}"
+}
+
+# 上書き前に変更前の内容を .harness/backup/<ts>/ へ退避する（ローカルの変更を黙って捨てない）
+backup_file() { # backup_dir dest_rel
+  mkdir -p "$1/$(dirname "$2")" && cp "$ROOT/$2" "$1/$2"
+}
 
 project_root() {
   local r; r="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -38,8 +58,11 @@ project_root() {
 
 # 「同じスクリプトか」はパス文字列や -ef で判定しない（Windows で C:/ と /c/ と /tmp が混在し一致しない）。
 # 内容が同一なら同じものとして扱う。この用途（委譲の抑止、自己上書きの回避）では内容一致で十分。
+# ここだけは改行コードの違いを無視する（hash_of の生バイト比較とは別）。CRLF 化しただけの同梱コピーを
+# 「別のスクリプト」と見なすと、正本側の bin/harness が壊れた同梱コピーへ exec してしまい、直す道が塞がる。
 same_script() { # a b
-  [ -f "$1" ] && [ -f "$2" ] && [ "$(git hash-object "$1")" = "$(git hash-object "$2")" ]
+  [ -f "$1" ] && [ -f "$2" ] || return 1
+  [ "$(tr -d '\r' <"$1" | git hash-object --stdin)" = "$(tr -d '\r' <"$2" | git hash-object --stdin)" ]
 }
 
 # この CLI が agent-harness リポジトリの中から実行されているなら、そのパスを返す
@@ -214,15 +237,25 @@ render_agent() { # role_src_file dest_tmp role_name kind
   } >"$tmp"
 }
 
-# AGENTS.md の managed ブロックを差し替え / 挿入
+# AGENTS.md の managed ブロックを差し替え / 挿入する。ブロック外（プロジェクトの記述）は必ず残す。
+#   - ブロックが複数あれば 1 つに畳む（最初のブロックの位置に新版を置き、残りの領域は落とす）
+#   - end マーカーが見つからない begin は、その 1 行だけを落とす。ファイル末尾までを巻き込んで消すと
+#     プロジェクトの記述が飛ぶので、残骸を残す方を選ぶ（残骸は呼び出し側が案内する）
 merge_agents_md() { # block_file dest
   local block="$1" dest="$2" tmp
   tmp="$(mktemp)"
   if [ -f "$dest" ] && grep -q "$BEGIN_RE" "$dest"; then
     awk -v blk="$block" -v b="$BEGIN_RE" -v e="$END_RE" '
-      index($0,b)==1 { while ((getline l < blk) > 0) print l; skip=1; next }
-      skip && index($0,e)==1 { skip=0; next }
-      !skip { print }' "$dest" >"$tmp"
+      NR==FNR {                                  # 1 周目: 落とす行に印を付ける
+        if (index($0,b)==1) { if (open) del[open]=1; open=FNR }
+        else if (open && index($0,e)==1) { for (i=open;i<=FNR;i++) del[i]=1; open=0 }
+        next
+      }
+      FNR==1 && open { del[open]=1; open=0 }     # 2 周目の頭: end の無い begin は 1 行だけ落とす
+      {
+        if (del[FNR]) { if (!put) { while ((getline l < blk) > 0) print l; put=1 } ; next }
+        print
+      }' "$dest" "$dest" >"$tmp"
   elif [ -f "$dest" ]; then
     { cat "$block"; echo; cat "$dest"; } >"$tmp"
   else
@@ -231,9 +264,10 @@ merge_agents_md() { # block_file dest
   mv "$tmp" "$dest"
 }
 
-# managed ブロックだけを取り出してハッシュ
+# managed ブロックだけを取り出してハッシュ。ブロックが複数あれば全部を連結して見る
+# （先頭だけを見ると、ブロックが重複していても「未変更」になり、status も update も気付かない）。
 block_hash() { # file
-  awk -v b="$BEGIN_RE" -v e="$END_RE" 'index($0,b)==1{p=1} p{print} p&&index($0,e)==1{exit}' "$1" | git hash-object --stdin
+  awk -v b="$BEGIN_RE" -v e="$END_RE" 'index($0,b)==1{p=1} p{print} p&&index($0,e)==1{p=0}' "$1" | git hash-object --stdin
 }
 
 ensure_gitignore() {
@@ -275,7 +309,7 @@ apply_plan() { # agents mode(init|update)
   while IFS=$'\t' read -r p s o h sh; do OLD_HASH["$p"]="$h"; OLD_SRC_HASH["$p"]="$sh"; done < <(manifest_entries)
 
   ENTRIES=()
-  local n_new=0 n_up=0 n_keep=0 n_conf=0 n_seed=0
+  local n_new=0 n_up=0 n_res=0 n_keep=0 n_conf=0 n_seed=0
   local src dest own tmp abs newhash curhash srchash
   while IFS=$'\t' read -r src dest own; do
     abs="$ROOT/$dest"; tmp="$(mktemp)"
@@ -302,51 +336,69 @@ apply_plan() { # agents mode(init|update)
       fi
       ENTRIES+=("$dest"$'\t'"$src"$'\t'"$own"$'\t'"-"$'\t'"-")
     elif [ "$own" = "merge" ]; then
-      # AGENTS.md: ブロックだけ差し替え。ブロックが手で変わっていたら conflict
-      if [ -f "$abs" ] && grep -q "$BEGIN_RE" "$abs"; then
+      # AGENTS.md: managed ブロックだけを現行版に戻す。ブロック外（プロジェクトの記述）は触らない。
+      # ブロックの中を手で直していても conflicts に逃がさず直す（ブロックは harness が正本。決定 0002）。
+      local nbegin=0 nend=0
+      if [ -f "$abs" ]; then
+        nbegin="$(count_lines "$BEGIN_RE" "$abs")"; nend="$(count_lines "$END_RE" "$abs")"
+      fi
+      if [ "$nbegin" -eq 1 ] && [ "$nend" -eq 1 ]; then
         curhash="$(block_hash "$abs")"
-        if [ -n "${OLD_HASH[$dest]:-}" ] && [ "$curhash" != "${OLD_HASH[$dest]}" ] && [ "$curhash" != "$newhash" ]; then
-          mkdir -p "$conflicts"; cp "$tmp" "$conflicts/AGENTS.core.md.new"; n_conf=$((n_conf + 1))
-          info "  CONFLICT $dest (managed block edited locally) -> .harness/conflicts/AGENTS.core.md.new"
-          ENTRIES+=("$dest"$'\t'"$src"$'\t'"$own"$'\t'"$curhash"$'\t'"-"); rm -f "$tmp"; continue
-        fi
         if [ "$curhash" = "$newhash" ]; then
           n_keep=$((n_keep + 1)); ENTRIES+=("$dest"$'\t'"$src"$'\t'"$own"$'\t'"$newhash"$'\t'"-"); rm -f "$tmp"; continue
         fi
-        mkdir -p "$backup/$(dirname "$dest")"; cp "$abs" "$backup/$dest"
+        backup_file "$backup" "$dest"
+        merge_agents_md "$tmp" "$abs"; n_up=$((n_up + 1))
+        info "  merge $dest (managed ブロックを現行版に戻した。変更前: ${backup#"$ROOT"/}/$dest)"
+      elif [ "$nbegin" -ge 1 ]; then
+        # マーカーが壊れている（ブロックの重複、end の消失）。1 対に畳む。
+        backup_file "$backup" "$dest"
+        merge_agents_md "$tmp" "$abs"; n_up=$((n_up + 1))
+        info "  merge $dest (マーカーが壊れていた: begin=$nbegin end=$nend → 1 対に畳んだ。変更前: ${backup#"$ROOT"/}/$dest)"
+        [ "$nend" -lt "$nbegin" ] && info "        end マーカーの無かったブロックの中身は消さずに残してある。要らなければ手で消す。"
+      else
+        merge_agents_md "$tmp" "$abs"; n_up=$((n_up + 1)); info "  merge $dest"
       fi
-      merge_agents_md "$tmp" "$abs"; n_up=$((n_up + 1)); info "  merge $dest"
-      ENTRIES+=("$dest"$'\t'"$src"$'\t'"$own"$'\t'"$newhash"$'\t'"-")
+      ENTRIES+=("$dest"$'\t'"$src"$'\t'"$own"$'\t'"$(block_hash "$abs")"$'\t'"-")
+    elif [ "$dest" = "CLAUDE.md" ]; then
+      # CLAUDE.md は import スタブ。プロジェクトが書いた内容は残し、@AGENTS.md の行だけを保証する
+      # （managed だが上書きはしない。テンプレを被せると既存の記述が消えるため。決定 0002）。
+      if [ ! -f "$abs" ]; then
+        mkdir -p "$(dirname "$abs")"; cp "$tmp" "$abs"; n_new=$((n_new + 1)); info "  +     $dest"
+      elif ! grep -q '^@AGENTS\.md' "$abs"; then
+        backup_file "$backup" "$dest"
+        { echo "@AGENTS.md"; echo; cat "$abs"; } >"$tmp.new" && mv "$tmp.new" "$abs"
+        n_up=$((n_up + 1)); info "  merge $dest (@AGENTS.md の import を足した。プロジェクトの記述は残す)"
+      else
+        n_keep=$((n_keep + 1))
+      fi
+      ENTRIES+=("$dest"$'\t'"$src"$'\t'"$own"$'\t'"$(hash_of "$abs")"$'\t'"$srchash")
     else
-      # managed / generated
+      # managed / generated: harness が正本。ローカルの変更は元に戻す（変更前は backup へ）
       if [ ! -f "$abs" ]; then
         mkdir -p "$(dirname "$abs")"; cp "$tmp" "$abs"; n_new=$((n_new + 1)); info "  +     $dest"
       else
         curhash="$(hash_of "$abs")"
         if [ "$curhash" = "$newhash" ]; then
           n_keep=$((n_keep + 1))
-        elif [ -z "${OLD_HASH[$dest]:-}" ] && [ "$dest" != "CLAUDE.md" ]; then
-          # manifest に無いのに存在する = プロジェクト側の既存ファイル。壊さず conflict に
+        elif [ -z "${OLD_HASH[$dest]:-}" ]; then
+          # manifest に無いのに存在する = harness が入れたのではないファイル。壊さず conflict に
           mkdir -p "$conflicts/$(dirname "$dest")"; cp "$tmp" "$conflicts/$dest.new"; n_conf=$((n_conf + 1))
           info "  CONFLICT $dest (exists, not from harness) -> .harness/conflicts/$dest.new"
           ENTRIES+=("$dest"$'\t'"$src"$'\t'"$own"$'\t'"$curhash"$'\t'"$srchash")
           rm -f "$tmp"; continue
-        elif [ -z "${OLD_HASH[$dest]:-}" ] && [ "$dest" = "CLAUDE.md" ]; then
-          # 既存 CLAUDE.md には import 行だけ足す
-          if ! grep -q '^@AGENTS.md' "$abs"; then
-            mkdir -p "$backup"; cp "$abs" "$backup/CLAUDE.md"
-            { echo "@AGENTS.md"; echo; cat "$abs"; } >"$tmp"; mv "$tmp" "$abs"; tmp="$(mktemp)"
-            info "  merge CLAUDE.md (+ @AGENTS.md import; project content kept)"
-          fi
-          n_keep=$((n_keep + 1)); curhash="$(hash_of "$abs")"
-          ENTRIES+=("$dest"$'\t'"$src"$'\t'"$own"$'\t'"$curhash"$'\t'"$srchash"); rm -f "$tmp"; continue
-        elif [ "$curhash" = "${OLD_HASH[$dest]:-}" ]; then
-          mkdir -p "$backup/$(dirname "$dest")"; cp "$abs" "$backup/$dest"
+        elif [ "$curhash" = "${OLD_HASH[$dest]}" ]; then
+          backup_file "$backup" "$dest"
           cp "$tmp" "$abs"; n_up=$((n_up + 1)); info "  update $dest"
         else
-          mkdir -p "$conflicts/$(dirname "$dest")"; cp "$tmp" "$conflicts/$dest.new"; n_conf=$((n_conf + 1))
-          info "  CONFLICT $dest (edited locally) -> .harness/conflicts/$dest.new"
-          ENTRIES+=("$dest"$'\t'"$src"$'\t'"$own"$'\t'"$curhash"$'\t'"$srchash"); rm -f "$tmp"; continue
+          # 導入時から変わっている（手で編集、CRLF 化、生成物の drift）。正本の内容に戻す。
+          backup_file "$backup" "$dest"
+          cp "$tmp" "$abs"; n_res=$((n_res + 1))
+          if [ "$own" = "generated" ]; then
+            info "  restore $dest (生成物。直すなら生成元 docs/roles/ を直す。変更前: ${backup#"$ROOT"/}/$dest)"
+          else
+            info "  restore $dest (ローカルの変更を戻した。変更前: ${backup#"$ROOT"/}/$dest)"
+          fi
         fi
       fi
       newhash="$(hash_of "$abs")"
@@ -362,7 +414,8 @@ apply_plan() { # agents mode(init|update)
   git -C "$ROOT" config core.hooksPath .githooks 2>/dev/null || true
 
   echo
-  info "$mode done: new=$n_new updated=$n_up unchanged=$n_keep seeded=$n_seed conflicts=$n_conf"
+  info "$mode done: new=$n_new updated=$n_up restored=$n_res unchanged=$n_keep seeded=$n_seed conflicts=$n_conf"
+  [ "$n_res" -gt 0 ] && info "restored: managed / generated は harness が正本なので正本の内容に戻した。残したい変更があるなら .harness/backup/ から拾い、harness upstream で正本へ戻してから update する"
   [ "$n_conf" -gt 0 ] && info "conflicts: .harness/conflicts/ を見て、新版を採るか harness upstream で戻すか決める"
   [ -d "$backup" ] && info "backup: ${backup#"$ROOT"/}"
   return 0
@@ -538,7 +591,7 @@ cmd_diff() {
     render_src "$s" "$tmp"
     echo "── $p  (source: $s)"
     if [ "$o" = "merge" ]; then
-      diff -u "$tmp" <(awk -v b="$BEGIN_RE" -v e="$END_RE" 'index($0,b)==1{q=1} q{print} q&&index($0,e)==1{exit}' "$ROOT/$p") || true
+      diff -u "$tmp" <(awk -v b="$BEGIN_RE" -v e="$END_RE" 'index($0,b)==1{q=1} q{print} q&&index($0,e)==1{q=0}' "$ROOT/$p") || true
     else
       diff -u "$tmp" "$ROOT/$p" || true
     fi
@@ -570,7 +623,7 @@ cmd_upstream() {
         info "WARN: $p に秘密情報らしき語がある。共有物になるので確認する"
       fi
       if [ "$o" = "merge" ]; then
-        awk -v b="$BEGIN_RE" -v e="$END_RE" 'index($0,b)==1{q=1} q{print} q&&index($0,e)==1{exit}' "$ROOT/$p" >"$src/harness/$s"
+        awk -v b="$BEGIN_RE" -v e="$END_RE" 'index($0,b)==1{q=1} q{print} q&&index($0,e)==1{q=0}' "$ROOT/$p" >"$src/harness/$s"
       else
         cp "$ROOT/$p" "$src/harness/$s"
       fi

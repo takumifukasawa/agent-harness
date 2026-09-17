@@ -257,7 +257,7 @@ break_nothing() { return 0; }
 expect_idempotent() {
   run_update
   expect_code 0
-  expect_out 'updated=0 unchanged=[0-9]+ seeded=0 conflicts=0'
+  expect_out 'updated=0 restored=0 unchanged=[0-9]+ seeded=0 conflicts=0'
   expect_not_out 'restore '
   expect_not_out 'CONFLICT'
   expect_no_backup
