@@ -10,3 +10,4 @@
 | 3 | macOS / Linux で未検証（`realpath` / `date -d` / `mktemp` の差） | CLI 全体 | 2026-09-17 | 未着手 |
 | 4 | GitHub からの `curl \| bash` init を実機で未確認（`file://` のみ） | 配布 | 2026-09-17 | 未着手 |
 | 5 | このリポジトリに導入コピー（`.agents/` 等）とペイロード（`harness/`）が同居して二重に見える | 可読性 | 2026-09-17 | 受容（dogfood のため。`docs/architecture.md` に境界を明記） |
+| 6 | `tests/doctor.sh` の下限が `doctor` 呼び出し 1 回 ≒ 3 秒（外部コマンドを多数呼ぶ）。T13 でフィクスチャ共有により 6m51s → 2m10s まで縮めたが、目標の 20〜40 秒には `harness/scripts/doctor.sh` 側の最適化が要る | テスト時間 | 2026-09-18 | 未着手（「外部コマンド数を減らせばさらに 3〜4 倍」は未検証の推定） |

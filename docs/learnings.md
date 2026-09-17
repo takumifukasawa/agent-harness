@@ -48,3 +48,23 @@
 - 症状: `--no-filters` を付けずに `git hash-object` で 2 ファイルの内容一致を判定すると、CRLF 化されただけの LF 管理ファイルが「一致（未変更）」と誤判定される。`status` の MODIFIED 判定・`update` の上書き/復元判断・検査 "installed copies in sync" の 3 経路が同時にこれで壊れていた（`docs/decisions/0002-update-repairs-managed-files.md`）。
 - 原因: 素の `git hash-object` は `.gitattributes` の `text eol=lf` と環境の `core.autocrlf` によるフィルタを通してから hash を取る。CRLF 化されたファイルもフィルタで LF に正規化されてから hash されるため、ハッシュだけ比べると「同じ」に見える。
 - 対処 / 再発したら: 2 つのファイルの内容が同じかを判定する処理はすべて `git hash-object --no-filters` を使う（素の `git hash-object` を使っている箇所が無いか grep する）。`harness/scripts/doctor.sh` の `content_eq` と `bin/harness` の `hash_of()` がその形。
+
+## 2026-09-18 worktree 内の `harness update` が main tree の未コミット変更を取り込む [harness候補]
+- 症状: 複数の実装役を git worktree で並列に動かし、各自が `harness/` を直して `bash bin/harness update` で同期する運用にしたところ、worktree 側の update が **main tree で別の実装役が編集中だった未コミットの `harness/skills/harness/SKILL.md`** を `.agents/skills/` 等に取り込みかけた。
+- 原因: `.harness/manifest.json` の `source` に **main tree の絶対パス**が入っており、`cmd_update` はそれしか見ない（`--source` 上書きが無い）。worktree はコミット済みの manifest をそのまま持つので、自分ではなく main tree を指す。
+- 対処 / 再発したら: worktree で update する前に `source` が自分の worktree を指しているか確認する。当座は `source` を自分の worktree パスへ書き換えて update し、元に戻す。恒久対策は `source` を機械ローカルの上書き（環境変数 `HARNESS_SOURCE` / `.harness/source.local`）へ逃がすこと（T09、決定は `docs/plans/active/harness-doctor.md` の決定ログ）。
+
+## 2026-09-18 worktree は古い分岐点で払い出されることがある [harness候補]
+- 症状: サブエージェント用に払い出した worktree が、main の最新ではなく**かなり古いコミット**（このときは 14 コミット前）で止まっていた。spec も実装も無い状態で作業を始めかけた。
+- 原因: worktree の作成元が最新の main とは限らない。払い出し側（エージェント基盤）の都合で決まる。
+- 対処 / 再発したら: worktree で着手する前に `git merge-base --is-ancestor <branch> main` で確認し、独自コミットが無ければ `git merge --ff-only main` で追いつく。統括は払い出し直後に一度確認する。
+
+## 2026-09-18 レビュアーを全部上位モデルで並列起動するとセッションのレート上限に当たる [harness候補]
+- 症状: `task-orchestrate` §3 の最終レビューで観点別レビュアー 4 体を全部 opus で同時起動したところ、3 体が起動直後に 429（session limit）で停止。レポートは 1 件も書かれなかった。
+- 原因: 1 体あたり 10〜18 万トークン読む役を 4 体同時に走らせると、5 時間枠の残量を一度に食い潰す。
+- 対処 / 再発したら: **レビュアーと反証役は既定で下位モデル**にする（根拠を「コードの該当行かテストの出力」に縛ってあるので足りる）。統括だけ上位を保つ。停止した体は破棄せず、上限リセット後に同じエージェントへ「中断地点から再開」を送れば文脈を保ったまま続きから書かせられる。
+
+## 2026-09-18 下位モデルに落としても壁時計時間は短くならない [harness候補]
+- 症状: コスト削減のため実装役を opus → sonnet に下げたが、所要時間が縮まらなかった。
+- 原因: 実測 — T06(opus) 39 分 / 40 ツール往復 / 116k トークン、T07(sonnet) 45 分 / **344 ツール往復** / **462k トークン**。下位モデルは試行回数で補うのでツール往復が桁で増える。単価差でコストは下がるが、往復ぶん時間は延びる。
+- 対処 / 再発したら: モデルを下げるのは**コスト**のため。ETA を縮めたいならモデルではなく、検査の実行時間・タスクの並列化・スコープで削る。
