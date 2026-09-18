@@ -346,25 +346,48 @@ case ",$mf_agents," in
 esac
 
 # ---------------------------------------------------------------- B10. 版（source の新版）
-# source がローカルディレクトリのときだけ VERSION を比べる。URL のときはネットワークに触らない。
+# source の解決順は bin/harness と同じ: 環境変数 HARNESS_SOURCE > .harness/source.local >
+# manifest.json の source（決定 0004）。manifest はコミットされる共有ファイルなので機械依存の
+# 絶対パスを置かない。ここは診断だけなので、どの経路でもネットワークには触らない。
+SOURCE_LOCAL="$ROOT/.harness/source.local"
+eff_source=""; eff_source_from=""
+if [ -n "${HARNESS_SOURCE:-}" ]; then
+  eff_source="$HARNESS_SOURCE"; eff_source_from="環境変数 HARNESS_SOURCE"
+elif [ -f "$SOURCE_LOCAL" ]; then
+  eff_source="$(sed -e 's/\r$//' -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' "$SOURCE_LOCAL" 2>/dev/null | head -1)"
+  [ -n "$eff_source" ] && eff_source_from=".harness/source.local"
+fi
+if [ -z "$eff_source" ]; then eff_source="$mf_source"; eff_source_from="manifest.json の source"; fi
+
 if [ "$manifest_ok" = 1 ]; then
-  if [ -n "$mf_source" ] && [ -d "$mf_source" ] && [ -f "$mf_source/VERSION" ]; then
-    src_version="$(tr -d '\r\n' < "$mf_source/VERSION")"
+  # manifest（共有ファイル）に機械依存の絶対パスが残っていたら、それ自体が問題。
+  # 他の PC / 他の worktree で clone すると、update / diff / upstream が他人のツリーを見に行く。
+  case "$mf_source" in
+    http://*|https://*|ssh://*|git://*|git@*|"") ;;
+    *) report WARN "manifest の source が機械依存の絶対パス（$mf_source）。コミットされる共有ファイルなので、他の PC や worktree では辿れない" \
+         "bash .harness/bin/harness update で manifest を共有値に直し、このパスを .harness/source.local（gitignore 対象）へ移す";;
+  esac
+
+  if [ -n "$eff_source" ] && [ -d "$eff_source" ] && [ -f "$eff_source/VERSION" ]; then
+    src_version="$(tr -d '\r\n' < "$eff_source/VERSION")"
     if [ -n "$src_version" ] && [ "$src_version" != "$mf_version" ]; then
-      report INFO "source（$mf_source）に新版 $src_version がある（導入済みは $mf_version）" \
+      report INFO "source（$eff_source。$eff_source_from）に新版 $src_version がある（導入済みは $mf_version）" \
         "bash .harness/bin/harness update で追従する（別 ref を使うときは --ref を付ける）"
     else
-      report OK "source の版は導入済みと同じ（$mf_version）"
+      report OK "source の版は導入済みと同じ（$mf_version。$eff_source_from = $eff_source）"
     fi
   else
-    report OK "source はローカルディレクトリではない、または VERSION が無い（新版チェックはネットワークに触らないため省略）"
+    # ここを OK と言い切らない。source が辿れないと update / diff / upstream が動かない（または
+    # 毎回 clone しに行く）ので、直し方まで出す。診断側からネットワークへは出ない。
+    report WARN "source（$eff_source。$eff_source_from）がこの PC のローカルディレクトリとして辿れず、新版を確認できない（診断はネットワークに触らない）" \
+      "agent-harness を clone し、その絶対パスを機械ローカルの上書きに書く: echo '<clone した絶対パス>' > .harness/source.local （gitignore 対象＝コミットしない）／一度きりなら HARNESS_SOURCE=<絶対パス> を付けて実行する"
   fi
 fi
 
 # ---------------------------------------------------------------- B11. gitignore
 GITIGNORE="$ROOT/.gitignore"
 gi_missing=""
-for entry in ".harness/state/" ".harness/backup/" ".harness/conflicts/"; do
+for entry in ".harness/state/" ".harness/backup/" ".harness/conflicts/" ".harness/source.local"; do
   if [ -f "$GITIGNORE" ] && grep -qxF "$entry" "$GITIGNORE"; then
     :
   else
@@ -373,7 +396,7 @@ for entry in ".harness/state/" ".harness/backup/" ".harness/conflicts/"; do
 done
 gi_missing="${gi_missing# }"
 if [ -z "$gi_missing" ]; then
-  report OK ".gitignore に .harness/state|backup|conflicts/ がある"
+  report OK ".gitignore に .harness/state|backup|conflicts/ と source.local がある"
 else
   report WARN ".gitignore に無いエントリ: $gi_missing" \
     ".gitignore に「$gi_missing」を追記する"

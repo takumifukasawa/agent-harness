@@ -52,12 +52,12 @@
 ## 2026-09-18 worktree 内の `harness update` が main tree の未コミット変更を取り込む [harness候補]
 - 症状: 複数の実装役を git worktree で並列に動かし、各自が `harness/` を直して `bash bin/harness update` で同期する運用にしたところ、worktree 側の update が **main tree で別の実装役が編集中だった未コミットの `harness/skills/harness/SKILL.md`** を `.agents/skills/` 等に取り込みかけた。
 - 原因: `.harness/manifest.json` の `source` に **main tree の絶対パス**が入っており、`cmd_update` はそれしか見ない（`--source` 上書きが無い）。worktree はコミット済みの manifest をそのまま持つので、自分ではなく main tree を指す。
-- 対処 / 再発したら: worktree で update する前に `source` が自分の worktree を指しているか確認する。当座は `source` を自分の worktree パスへ書き換えて update し、元に戻す。恒久対策は `source` を機械ローカルの上書き（環境変数 `HARNESS_SOURCE` / `.harness/source.local`）へ逃がすこと（T09、決定は `docs/plans/active/harness-doctor.md` の決定ログ）。
+- 対処 / 再発したら: **worktree の中で update / diff / upstream を回すときは `HARNESS_SOURCE=$(pwd)` を付ける**（`HARNESS_SOURCE=$(pwd) bash bin/harness update`）。manifest を書き換えて戻す手順は要らない。T09（決定 0004）で解決順が 環境変数 `HARNESS_SOURCE` > `.harness/source.local` > `manifest.source` になり、manifest には機械依存の絶対パスを書かなくなった。どこを見ているかは `bash .harness/bin/harness status` の見出し行（`source=... [由来]`）で確認できる。`harness doctor` の B10 も辿れなければ WARN を出す。
 
 ## 2026-09-18 worktree は古い分岐点で払い出されることがある [harness候補]
 - 症状: サブエージェント用に払い出した worktree が、main の最新ではなく**かなり古いコミット**（このときは 14 コミット前）で止まっていた。spec も実装も無い状態で作業を始めかけた。
 - 原因: worktree の作成元が最新の main とは限らない。払い出し側（エージェント基盤）の都合で決まる。
-- 対処 / 再発したら: worktree で着手する前に `git merge-base --is-ancestor <branch> main` で確認し、独自コミットが無ければ `git merge --ff-only main` で追いつく。統括は払い出し直後に一度確認する。
+- 対処 / 再発したら: **worktree で着手する前にまず `git merge-base --is-ancestor <branch> main` を見る**（`main` がこの worktree の祖先か = 追いついているか）。追いついていなければ、独自コミットが無いうちに `git merge --ff-only main` で追いつく。spec や前提のタスクの成果物が「無い」ように見えたら、ファイルを探す前にこれを疑う。統括は払い出し直後に一度確認する。
 
 ## 2026-09-18 レビュアーを全部上位モデルで並列起動するとセッションのレート上限に当たる [harness候補]
 - 症状: `task-orchestrate` §3 の最終レビューで観点別レビュアー 4 体を全部 opus で同時起動したところ、3 体が起動直後に 429（session limit）で停止。レポートは 1 件も書かれなかった。

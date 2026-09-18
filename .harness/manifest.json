@@ -1,14 +1,14 @@
 {
   "harness_version": "0.3.0",
-  "source": "/d/Developments/agent-harness",
+  "source": "https://github.com/takumifukasawa/agent-harness.git",
   "source_ref": "",
   "installed_at": "2026-09-18",
   "agents": "claude,codex",
   "files": [
-    {"path":".harness/bin/harness","src":"@self","ownership":"managed","sha256":"293cc994db50f79aa587cbe08a3b8f6f141dfffe","source_sha256":""},
+    {"path":".harness/bin/harness","src":"@self","ownership":"managed","sha256":"1d8baf797570aa746d29e4f56b4095d879e2225e","source_sha256":""},
     {"path":".harness/bin/harness.cmd","src":"@self-cmd","ownership":"managed","sha256":"59de6078cfcf46f4941194220ffd48aa2e8400c5","source_sha256":""},
     {"path":".harness/scripts/check.sh","src":"scripts/check.sh","ownership":"managed","sha256":"3aa2eda18cf19301cea86fb5c3ca37dc619e5425","source_sha256":""},
-    {"path":".harness/scripts/doctor.sh","src":"scripts/doctor.sh","ownership":"managed","sha256":"7335b0d94afb2d39a1c5ad2e582996c04e150340","source_sha256":""},
+    {"path":".harness/scripts/doctor.sh","src":"scripts/doctor.sh","ownership":"managed","sha256":"e895cbdb21d7ed96f1bb35d75ef0983ef39aa02e","source_sha256":""},
     {"path":".harness/scripts/gc.sh","src":"scripts/gc.sh","ownership":"managed","sha256":"27fcfc6b403f20d001f67de919202c6d4af1e946","source_sha256":""},
     {"path":".harness/scripts/session-start.sh","src":"scripts/session-start.sh","ownership":"managed","sha256":"c2b68ba5a93a87cc1105a1d7a7f5878cb7a3fe03","source_sha256":""},
     {"path":".harness/checks.sh","src":"checks.seed.sh","ownership":"seed","sha256":"-","source_sha256":"-"},

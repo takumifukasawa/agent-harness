@@ -1,3 +1,4 @@
 .harness/state/
 .harness/backup/
 .harness/conflicts/
+.harness/source.local

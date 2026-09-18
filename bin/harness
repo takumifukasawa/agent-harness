@@ -12,6 +12,10 @@
 #   harness self-install [--dir <dir>]   # `harness` を PATH に置く（Windows は harness.cmd も）
 #   harness version
 #
+# source の解決順: 環境変数 HARNESS_SOURCE > .harness/source.local > .harness/manifest.json の source
+#   manifest はコミットされる共有ファイル。機械依存の絶対パスは書かず、この PC / この worktree 用の
+#   source は .harness/source.local（gitignore 対象）か HARNESS_SOURCE で与える。
+#
 # 設計: DESIGN.md §6（所有権）, §8（コマンド）。依存は git と bash だけ。
 # この CLI 自身も .harness/bin/harness（+ harness.cmd）としてプロジェクトに同梱されるので、
 # clone した PC では `.harness/bin/harness update` がそのまま動く。
@@ -20,6 +24,7 @@ set -euo pipefail
 
 DEFAULT_SOURCE="https://github.com/takumifukasawa/agent-harness.git"
 MANIFEST_REL=".harness/manifest.json"
+SOURCE_LOCAL_REL=".harness/source.local"
 BEGIN_RE='<!-- harness:begin'
 END_RE='<!-- harness:end -->'
 
@@ -95,6 +100,49 @@ resolve_source() {
     git -C "$cache" checkout --quiet "$def" >&2 && git -C "$cache" pull --quiet --ff-only origin "$def" >&2 || true
   fi
   echo "$cache"
+}
+
+# ---------------------------------------------------------------- source の解決順
+# manifest.json は**コミットされる共有ファイル**なので、機械依存の絶対パスを置かない（決定 0004）。
+# その PC / その worktree だけの source は gitignore 対象の上書きへ逃がす。
+#   解決順: 環境変数 HARNESS_SOURCE > .harness/source.local > manifest.json の source
+# これを外すと、worktree の中の update が manifest（= main tree の絶対パス）を見に行き、
+# main tree の未コミット変更を取り込む（2026-09-18 に実害。docs/learnings.md）。
+read_source_local() { # file → 先頭の実効行（# で始まる行と空行は読み飛ばす）
+  local v
+  v="$(sed -e 's/\r$//' -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' "$1" 2>/dev/null | head -1 || true)"
+  printf '%s' "$v"
+}
+
+# 実効 source を "値<TAB>由来" で返す（ROOT が決まってから呼ぶ）
+effective_source() {
+  local v
+  if [ -n "${HARNESS_SOURCE:-}" ]; then printf '%s\t%s' "$HARNESS_SOURCE" "env HARNESS_SOURCE"; return 0; fi
+  if [ -f "$ROOT/$SOURCE_LOCAL_REL" ]; then
+    v="$(read_source_local "$ROOT/$SOURCE_LOCAL_REL")"
+    [ -n "$v" ] && { printf '%s\t%s' "$v" "$SOURCE_LOCAL_REL"; return 0; }
+  fi
+  printf '%s\t%s' "$(manifest_get source)" "manifest"
+}
+
+# 機械ローカルの source を書く。gitignore 対象なのでコミットされない。
+write_source_local() { # path
+  mkdir -p "$ROOT/.harness"
+  {
+    echo "# harness の source の機械ローカル上書き。gitignore 対象＝コミットしない。"
+    echo "# manifest.json の source は共有値（既定は公開リポジトリの URL）。この PC の clone や"
+    echo "# worktree を使いたいときだけ、その絶対パスを 1 行書く（# で始まる行と空行は無視する）。"
+    echo "# 解決順: 環境変数 HARNESS_SOURCE > .harness/source.local > manifest.json の source"
+    printf '%s\n' "$1"
+  } >"$ROOT/$SOURCE_LOCAL_REL"
+}
+
+# manifest に書いてよい共有値か（URL なら共有できる。ローカル絶対パスは機械依存なので不可）
+is_shared_source() { # value
+  case "$1" in
+    http://*|https://*|ssh://*|git://*|git@*) return 0;;
+    *) return 1;;
+  esac
 }
 
 # ---------------------------------------------------------------- manifest
@@ -272,7 +320,7 @@ block_hash() { # file
 
 ensure_gitignore() {
   local gi="$ROOT/.gitignore" line
-  for line in ".harness/state/" ".harness/backup/" ".harness/conflicts/"; do
+  for line in ".harness/state/" ".harness/backup/" ".harness/conflicts/" "$SOURCE_LOCAL_REL"; do
     grep -qxF "$line" "$gi" 2>/dev/null || echo "$line" >>"$gi"
   done
 }
@@ -507,10 +555,19 @@ cmd_init() {
   PAYLOAD="$srcdir/harness"; SELF_PATH="$srcdir/bin/harness"
   [ -d "$PAYLOAD" ] || die "ペイロードが無い: $PAYLOAD"
   local version; version="$(tr -d '\r\n' <"$srcdir/VERSION")"; HVER="$version"
+  # manifest に書くのは共有値だけ。ローカルパス（--source でも self_repo() でも）は機械依存なので
+  # .harness/source.local へ逃がす（決定 0004）。既定は公開リポジトリの URL。
+  local shared_source="$source" local_source=""
+  if ! is_shared_source "$source"; then shared_source="$DEFAULT_SOURCE"; local_source="$source"; fi
   info "init  project=$ROOT"
   info "      source=$source ref=${ref:-default} version=$version agents=$agents"
   apply_plan "$agents" init
-  write_manifest "$version" "$source" "$ref" "$agents"
+  write_manifest "$version" "$shared_source" "$ref" "$agents"
+  if [ -n "$local_source" ]; then
+    write_source_local "$local_source"
+    info "  + $SOURCE_LOCAL_REL ($local_source。この PC 用。gitignore 対象＝コミットしない)"
+    info "      manifest の source は共有値 $shared_source（機械依存の絶対パスは共有ファイルに書かない）"
+  fi
   merge_claude_settings "$agents"
   echo
   info "次: docs/spec/ に何を作るかを書き、.harness/checks.sh に検査を登録する。セッション開始は session-catchup。"
@@ -536,31 +593,50 @@ cmd_update() {
     case "$1" in --ref) ref="$2"; shift 2;; *) die "unknown option: $1";; esac
   done
   [ -f "$(manifest_path)" ] || die "未導入（$MANIFEST_REL が無い）。harness init を使う"
-  local source agents oldver
-  source="$(manifest_get source)"; agents="$(manifest_get agents)"; oldver="$(manifest_get harness_version)"
+  local source source_from agents oldver
+  IFS=$'\t' read -r source source_from <<<"$(effective_source)"
+  agents="$(manifest_get agents)"; oldver="$(manifest_get harness_version)"
   [ -z "$ref" ] && ref="$(manifest_get source_ref)"
   local srcdir; srcdir="$(resolve_source "$source" "$ref")"
   PAYLOAD="$srcdir/harness"; SELF_PATH="$srcdir/bin/harness"
   local version; version="$(tr -d '\r\n' <"$srcdir/VERSION")"; HVER="$version"
-  info "update $oldver -> $version  (source=$source ref=${ref:-default})"
+  # manifest に書き戻すのは共有値だけ。旧形式（source に機械依存の絶対パス）で導入された
+  # プロジェクトは、ここでその値を .harness/source.local へ移し、manifest を共有値へ直す。
+  local shared_source; shared_source="$(manifest_get source)"
+  [ -z "$shared_source" ] && shared_source="$DEFAULT_SOURCE"
+  if ! is_shared_source "$shared_source"; then
+    if [ "$source_from" = "manifest" ]; then
+      write_source_local "$shared_source"
+      info "  + $SOURCE_LOCAL_REL ($shared_source。manifest にあった機械依存のパスを移した。gitignore 対象)"
+      source_from="$SOURCE_LOCAL_REL"
+    fi
+    shared_source="$DEFAULT_SOURCE"
+  fi
+  info "update $oldver -> $version  (source=$source [$source_from] ref=${ref:-default})"
   if [ "$oldver" != "$version" ] && [ -f "$srcdir/CHANGELOG.md" ]; then
     echo; echo "── CHANGELOG（$oldver より新しい分）"
     awk -v old="## [$oldver]" 'index($0,old)==1{exit} /^## \[/{p=1} p' "$srcdir/CHANGELOG.md" | sed 's/^/   /'
     echo
   fi
   apply_plan "$agents" update
-  write_manifest "$version" "$source" "$ref" "$agents"
+  write_manifest "$version" "$shared_source" "$ref" "$agents"
   merge_claude_settings "$agents"
 }
 
 cmd_status() {
   ROOT="$(project_root)"
   [ -f "$(manifest_path)" ] || die "未導入（$MANIFEST_REL が無い）"
-  local ver src ref; ver="$(manifest_get harness_version)"; src="$(manifest_get source)"; ref="$(manifest_get source_ref)"
-  echo "harness $ver  source=$src ref=${ref:-default}  installed=$(manifest_get installed_at)"
+  local ver src src_from ref; ver="$(manifest_get harness_version)"; ref="$(manifest_get source_ref)"
+  IFS=$'\t' read -r src src_from <<<"$(effective_source)"
+  echo "harness $ver  source=$src [$src_from] ref=${ref:-default}  installed=$(manifest_get installed_at)"
+  # source がローカルディレクトリのときだけ版を比べる。URL のときはネットワークに触らない
+  # （status は読み取りだけの表示。clone は update の仕事）。
   if [ -d "$src" ] && [ -f "$src/VERSION" ]; then
     local latest; latest="$(cat "$src/VERSION")"
     [ "$latest" != "$ver" ] && echo "  latest at source: $latest  (harness update で取り込む)"
+  elif [ "$src_from" = "manifest" ]; then
+    echo "  source はこの PC のローカルディレクトリではない。clone を使うなら機械ローカルの上書きを置く:"
+    echo "    echo '<agent-harness を clone した絶対パス>' > $SOURCE_LOCAL_REL   (gitignore 対象＝コミットしない)"
   fi
   echo
   local p s o h sh cur state n_mod=0 n_miss=0
@@ -585,7 +661,8 @@ cmd_status() {
 cmd_diff() {
   ROOT="$(project_root)"
   [ -f "$(manifest_path)" ] || die "未導入"
-  local src ref; src="$(manifest_get source)"; ref="$(manifest_get source_ref)"
+  local src src_from ref; ref="$(manifest_get source_ref)"
+  IFS=$'\t' read -r src src_from <<<"$(effective_source)"
   local srcdir; srcdir="$(resolve_source "$src" "$ref")"
   PAYLOAD="$srcdir/harness"; SELF_PATH="$srcdir/bin/harness"; HVER="$(tr -d '\r\n' <"$srcdir/VERSION")"
   local p s o h sh cur tmp any=0
@@ -613,8 +690,13 @@ cmd_upstream() {
   ROOT="$(project_root)"
   [ -f "$(manifest_path)" ] || die "未導入"
   [ $# -gt 0 ] || die "usage: harness upstream <path>..."
-  local src; src="$(manifest_get source)"
-  [ -d "$src" ] || die "source が git URL ($src)。agent-harness を clone し、manifest の source をそのローカルパスに書き換えてから実行する"
+  local src src_from; IFS=$'\t' read -r src src_from <<<"$(effective_source)"
+  # upstream は正本のツリーに書き戻すので、ローカルの clone が要る。manifest（共有ファイル）には
+  # 機械依存のパスを書かせない。指す先は機械ローカルの上書きで与える（決定 0004）。
+  [ -d "$src" ] || die "source がこの PC のローカルディレクトリではない（$src。由来: $src_from）。
+  直し方: agent-harness を clone し、その絶対パスを機械ローカルの上書きに置く（gitignore 対象＝コミットしない）
+          echo '<clone した絶対パス>' > $SOURCE_LOCAL_REL
+  一度きりなら: HARNESS_SOURCE=<clone した絶対パス> bash .harness/bin/harness upstream $*"
   local p s o h sh target
   for target in "$@"; do
     target="${target#./}"
@@ -703,7 +785,7 @@ cmd_self_install() {
   esac
 }
 
-usage() { sed -n '2,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 # PATH 上の harness から呼ばれ、プロジェクトに同梱コピーがあれば、そちらへ委譲する（版をプロジェクトに固定）
 maybe_delegate() {
