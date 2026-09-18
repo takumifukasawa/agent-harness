@@ -87,3 +87,9 @@
 - 原因: 指示が「回す」としか書いておらず、前面／裏を決めていなかった。検査は数分かかるので、裏に回したくなる動機がある。
 - 対処 / 再発したら: 実装役が黙り込んだら、まず**検査を裏で回していないか**を疑う（report が空のまま時間だけ経っているのが徴候）。指示テンプレに「前面（フォアグラウンド）で回す」と明記する。
 - → **harness v0.5.0 へ昇格**（`harness/skills/task-orchestrate/SKILL.md` §2.1 の指示テンプレ）。
+
+## 2026-09-18 checks.sh に inline で `$(...)` を書くと harness check が無限再帰する [harness候補]
+- 症状: `.harness/checks.sh` に検査を 1 行足したら、`harness check` が終わらなくなった。5 時間で **bash プロセスが 1833 個**に増え、14 秒おきに 1 段ずつ親子関係が伸びていた（全部同じ PGID）。使い捨てディレクトリも増え続ける。
+- 原因: `checks.sh` は check.sh に **source される**シェルファイルで、`check "名前" "コマンド"` の第 2 引数は二重引用符の文字列。ここに `$(...)` や `$VAR` を**エスケープせずに**書くと、**checks.sh を読み込んだ瞬間に展開される**（検査が実行される時ではない）。展開された中身が `harness check` だったため、checks.sh のロード → harness check → checks.sh のロード → … と再帰した。`\"` は正しくエスケープできていたのに `$` だけ落としていた、という 1 文字の取りこぼしで起きる。
+- 対処 / 再発したら: **`harness check` が返ってこない / プロセスが増え続けるときは、まず `checks.sh` の各行で `$` がエスケープされているかを見る**（`grep -n '[^\]$' .harness/checks.sh`）。暴走を止めるには `ps -W | awk '$3==<PGID>'` で群を特定して `kill -9 -<PGID>`。
+- **予防（これが本質）**: 数行を超える検査、特に**使い捨てプロジェクトを作る・`harness` 自身を呼ぶ**検査は、inline で書かず `tests/<name>.sh` に逃がして `check "名前" "bash tests/<name>.sh"` で登録する。エスケープの問題が構造的に消え、`trap` で後片付けも書ける。既存の `doctor scenarios` / `update scenarios` / `seed checks are green` がその形。

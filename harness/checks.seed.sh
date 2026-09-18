@@ -20,3 +20,4 @@
 # check      "NEEDS HUMAN: shared tables" "git diff --name-only origin/main | grep -q '^db/schema' && { echo '要確認: 共有テーブルの変更あり。人間がレビュー。'; exit 1; } || true"
 
 check fast "docs index exists" "test -f docs/README.md || { echo 'docs/README.md が無い。docs の索引。agent-harness の docs-template/README.md から作る。'; exit 1; }"
+check      "doctor: FAIL 0"    "bash .harness/bin/harness doctor || { echo 'doctor が FAIL を報告した。上の FAIL 行の「→」に従って直す。'; exit 1; }"

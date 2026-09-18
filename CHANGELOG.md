@@ -3,6 +3,11 @@
 各版に「プロジェクト側で必要な作業」を必ず書く。`harness update` はこの節を表示する。
 semver: managed ファイルの移動・マーカー形式変更は major、ルール/スキルの追加は minor、文言修正は patch。
 
+## [Unreleased]
+
+- 追加（決定 0005）: `harness init` が配る `.harness/checks.sh`（seed）に `doctor: FAIL 0` を最初から入れる。seed の検査が実質 1 件（docs の索引の存在確認）しか無く、**プロジェクトが自分で書くまで `harness check` がほぼ無条件に pass する**＝統括の完了判定の 1 本が最初から機能しない状態だった（`task-orchestrate` §1.7 が自分で警告している）。`doctor` はプロジェクトのコードではなくハーネスの導入状態を見るので言語やスタックに依存せず、init 直後は必ず FAIL 0 で通る（`tests/doctor.sh` の D1 が保証）。実測 4.7 秒で、`fast` は付けないので pre-commit は従来どおり。
+- プロジェクト側で必要な作業: **既存のプロジェクトには自動では入らない**（`.harness/checks.sh` は seed なので `harness update` は触らない。触るとプロジェクトが書いた検査が消えるため）。取り込むなら次の 1 行を自分の `.harness/checks.sh` に足す: `check      "doctor: FAIL 0"    "bash .harness/bin/harness doctor || { echo 'doctor が FAIL を報告した。上の FAIL 行の「→」に従って直す。'; exit 1; }"`
+
 ## [0.5.0] - 2026-09-18
 
 `harness doctor` を題材にした dogfood で見つかった、**統括の手順の穴 3 件**を `task-orchestrate` と `reviewer` の役割文へ昇格させた版。コードの変更は無い。
