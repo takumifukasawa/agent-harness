@@ -1,4 +1,4 @@
-<!-- harness:begin v=0.4.0 -->
+<!-- harness:begin v=0.5.0 -->
 # エージェント運用の共通ルール（agent-harness 管理領域）
 
 このブロックは agent-harness が管理する。直したい場合は直してよいが、`harness diff` で差分を確認し上流へ戻すこと（詳細: `.agents/skills/harness-maintain/SKILL.md`）。
@@ -82,6 +82,7 @@ AI エージェントにプロジェクトを進めさせるワークフロー�
 - 依存は git と bash だけ。node / jq は「あれば使う」に留め、無くても動く経路を残す。
 - ペイロード（`harness/`）に Claude / Codex 固有の依存を入れない。固有部分は `harness/adapters/` に。
 - 版を上げるときは `VERSION` と `CHANGELOG.md` の見出しを一致させ、「プロジェクト側で必要な作業」を書く。managed ファイルの移動やマーカー形式の変更は major。
+- **版を上げたら `bash bin/harness update` でこのリポジトリ自身の導入コピーを追従させる。** 上げ忘れると `harness doctor` が INFO（source に新版がある）を出し続ける。
 - bash スクリプトは LF、`*.cmd` は CRLF（`.gitattributes`）。
 - Windows のパスは `C:/`・`/c/`・`/tmp` が混在する。ファイルの同一性は内容ハッシュで判定する（`docs/learnings.md`）。
 - 各エージェントの仕様に依存する記述には確認日と確認元を書く（`harness/adapters/*/README.md`）。

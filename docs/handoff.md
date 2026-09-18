@@ -25,8 +25,8 @@
 ## NEXT（依存順。順序制約があれば明記）
 
 1. **`harness/checks.seed.sh`（新規プロジェクトに配られる雛形）に `doctor: FAIL 0` 相当の検査を入れるか**を決める。v0.4.0 ではこのリポジトリの `.harness/checks.sh` にだけ入れた。seed は「docs の存在確認 1 件」しか無く、`AGENTS.md` 自身が「このままだと検査は常に pass し、完了判定が空洞化する」と書いている。**入れるなら決定を `docs/decisions/` に残す。**
-3. `agent-skills` 側の `context-catchup` / `context-handoff` の description に「ハーネス未導入のリポジトリで使う」と書き、発火の重なりを解消する（別リポジトリの作業）。
-4. 次の題材を選ぶなら、**1 セッションで終わらない規模のもの**にする。今回の doctor は 810 行で `task-orchestrate` §5「1 セッションで終わる変更には使わない」に該当しており、ワークフローの価値を測る題材としては小さすぎた（`docs/plans/completed/harness-doctor.md` の「結果」を参照）。
+2. `agent-skills` 側の `context-catchup` / `context-handoff` の description に「ハーネス未導入のリポジトリで使う」と書き、発火の重なりを解消する（別リポジトリの作業）。
+3. 次の題材を選ぶなら、**1 セッションで終わらない規模のもの**にする。今回の doctor は 810 行で `task-orchestrate` §5「1 セッションで終わる変更には使わない」に該当しており、ワークフローの価値を測る題材としては小さすぎた（`docs/plans/completed/harness-doctor.md` の「結果」を参照）。
 
 ## 未確定事項（人間の判断待ち）
 
@@ -36,5 +36,5 @@
 
 - `harness/adapters/codex/README.md`: Codex 側の事実は公式 docs 確認済みだが、**Codex 実機での `.agents/skills/` 読み込みは未確認のまま**。dogfood で Codex を使うなら最初に確認する。
 - `docs/README.md`: 索引は `docs/plans/` と `docs/decisions/` を既に指しているので変更不要。
-- git tag: v0.4.0 は**打っていない**（v0.1.0 / v0.2.0 は打ってある）。push もしていない。origin より先行している。
+- git tag: **v0.1.0 〜 v0.5.0 をすべて origin に push 済み**（main も追いついている）。
 - `.harness/state/reports/` の各タスク report とレビュー報告全文（gitignore 対象）。要約はすべて `docs/plans/completed/harness-doctor.md` に転記済みなので、**state を捨てても経緯は追える**。
