@@ -13,3 +13,5 @@ check      "installed copies in sync"     "out=\$(bash .harness/bin/harness stat
 check      "init smoke test"              "T=\$(mktemp -d); mkdir -p \"\$T/p\" && cd \"\$T/p\" && git init -q . && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init && bash \"\$OLDPWD/bin/harness\" init --source \"\$OLDPWD\" >/dev/null 2>&1 && bash .harness/bin/harness status | grep -qE '^  (managed|merge|generated) +MODIFIED' && { echo 'init 直後に MODIFIED がある'; rm -rf \"\$T\"; exit 1; }; rm -rf \"\$T\""
 check      "doctor scenarios"             "bash tests/doctor.sh"
 check      "update scenarios"             "bash tests/update.sh"
+check      "doctor: FAIL 0"               "bash .harness/bin/harness doctor || { echo 'doctor が FAIL を報告した。上の FAIL 行の「→」に従って直す。'; exit 1; }"
+check fast "manifest source is shared value" "src=\$(sed -n 's/^  \"source\": \"\([^\"]*\)\".*/\1/p' .harness/manifest.json | head -1); case \"\$src\" in http://*|https://*|ssh://*|git://*|git@*) ;; *) echo \"manifest.json の source が機械ローカルの絶対パス（\$src）。bash .harness/bin/harness update で共有値に戻す（決定 0004。機械ローカルのパスは .harness/source.local へ）\"; exit 1 ;; esac"
