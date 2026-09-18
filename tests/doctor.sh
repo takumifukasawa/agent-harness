@@ -80,6 +80,21 @@ run_doctor_without_path() { # PATH を潰して doctor.sh を直接回す（git 
 run_doctor_with_broken_git() { # git だけが使えない PATH で doctor.sh を直接回す（git 無しでも内容比較が効くか）
   OUT="$(cd "$PROJ" && PATH="$WORK/nogit:$PATH" "$BASH_BIN" .harness/scripts/doctor.sh 2>&1)"; CODE=$?
 }
+run_doctor_without_node_jq() { # node/jq を含むディレクトリだけを PATH から外して doctor を回す（C3 の検証）
+  # PATH=/nonexistent（run_doctor_without_path）は git/sed/awk まで消してしまい、C3（node/jq が
+  # 無くても「全項目」が動く）の検証にならない（manifest が読めず B4/B5/B8 が丸ごとスキップされる）。
+  # node/jq のディレクトリだけを取り除き、他のツールは素通しする。
+  local dir clean="" skip="" p
+  p="$(command -v node 2>/dev/null || true)"; [ -n "$p" ] && skip="$skip$(dirname "$p")"$'\n'
+  p="$(command -v jq   2>/dev/null || true)"; [ -n "$p" ] && skip="$skip$(dirname "$p")"$'\n'
+  local IFS=':'
+  for dir in $PATH; do
+    if [ -n "$skip" ] && printf '%s' "$skip" | grep -qxF "$dir"; then continue; fi
+    clean="$clean:$dir"
+  done
+  clean="${clean#:}"
+  OUT="$(cd "$PROJ" && PATH="$clean" bash .harness/bin/harness doctor 2>&1)"; CODE=$?
+}
 apply_fix() { # <直し方どおりのコマンド文字列> — $PROJ の中でコピペしたのと同じように実行する
   ( cd "$PROJ" && eval "$1" ) >/dev/null 2>&1
 }
@@ -88,6 +103,9 @@ apply_fix() { # <直し方どおりのコマンド文字列> — $PROJ の中で
 # SHARED はスイート全体で使う一時置き場。フィクスチャ本体はこの下に作り、個々のシナリオの
 # $WORK（scenario ごとに作って rm -rf する）とは別に、最後にまとめて消す。
 SHARED="$(mktemp -d)" || { echo "tests/doctor.sh: mktemp -d に失敗した（フィクスチャ置き場）"; exit 2; }
+# Ctrl-C / CI のタイムアウト kill / 途中の exit のいずれでも使い捨てディレクトリを残さない
+# （$WORK は scenario() が毎回作り直すので、trap 発火時点の最新値をそのまま参照すればよい）。
+trap 'rm -rf "$WORK" "$SHARED" 2>/dev/null' EXIT INT TERM
 
 FIXTURE_DONE=0; FIXTURE=""
 ensure_fixture() { # 使い捨てプロジェクトに harness init した雛形ツリーを 1 回だけ作る
@@ -132,7 +150,10 @@ ensure_warn_bundle() {
     { errors+=("setup: .gitattributes の書き換えに失敗した"); return 1; }
   git -C "$WARN_BUNDLE_DIR" config --unset core.hooksPath ||
     { errors+=("setup: core.hooksPath の解除に失敗した"); return 1; }
-  ( grep -vxF '.harness/state/' "$WARN_BUNDLE_DIR/.gitignore" >"$WARN_BUNDLE_DIR/.gitignore.tmp" &&
+  # B11 は state/ backup/ conflicts/ の 3 つを見る。3 つとも消してから doctor に通す
+  # （以前は state/ だけを消しており、backup/ conflicts/ の欠落検知は未検証だった。low 指摘）。
+  ( grep -vxF '.harness/state/' "$WARN_BUNDLE_DIR/.gitignore" | grep -vxF '.harness/backup/' | grep -vxF '.harness/conflicts/' \
+      >"$WARN_BUNDLE_DIR/.gitignore.tmp" &&
     mv "$WARN_BUNDLE_DIR/.gitignore.tmp" "$WARN_BUNDLE_DIR/.gitignore" ) ||
     { errors+=("setup: .gitignore の書き換えに失敗した"); return 1; }
   rm -f "$WARN_BUNDLE_DIR/docs/tech-debt.md"
@@ -176,7 +197,15 @@ scenario() { # <名前> <setup関数> <expect関数>
   fi
   errors=(); PROJ=""; OUT=""; CODE=0
   WORK="$(mktemp -d)" || { echo "tests/doctor.sh: mktemp -d に失敗した"; exit 2; }
-  if "$setup"; then "$expect"; fi
+  # setup が非ゼロで返ったら expect を丸ごと飛ばす（従来どおり）が、その場合を明示的な失敗として
+  # 記録する。以前は「setup 失敗 → expect 未実行 → errors が空 → PASS」という表明ゼロの緑があった。
+  local setup_rc=0
+  "$setup" || setup_rc=$?
+  if [ "$setup_rc" -eq 0 ]; then
+    "$expect"
+  else
+    errors+=("setup が失敗した（戻り値 ${setup_rc}）。expect は実行していない")
+  fi
   rm -rf "$WORK"
   if [ "${#errors[@]}" -eq 0 ]; then
     printf 'PASS  %s\n' "$name"; passed=$((passed + 1))
@@ -198,7 +227,7 @@ expect_fresh_install() {
   run_doctor
   expect_code 0
   expect_out '^(OK|WARN|FAIL) '
-  expect_out '^harness doctor: OK=[0-9]+ WARN=[0-9]+ FAIL=0$'
+  expect_out '^harness doctor: OK=[0-9]+ WARN=[0-9]+ FAIL=0 INFO=[0-9]+$'
   expect_not_out '^FAIL '
   # WARN / FAIL 行には直し方（→）が付く
   if printf '%s\n' "$OUT" | grep -E '^(WARN|FAIL) ' | grep -qv '→'; then
@@ -214,6 +243,19 @@ expect_help_has_doctor() {
   expect_out 'harness doctor'
 }
 scenario "A1: help に doctor の usage 行がある" setup_init expect_help_has_doctor
+
+# low 指摘: doctor はオプションを取らない。--fix / --json を黙って無視すると「指定どおり動いた」
+# と誤解されうる（spec: --fix は範囲外、--json は要望が出るまで未実装）。usage を出して非 0 で終わる。
+expect_unknown_option() {
+  run_doctor_in "$PROJ" --fix
+  expect_code 2
+  expect_out '未知の引数'
+  expect_out 'harness doctor'
+  run_doctor_in "$PROJ" --json
+  expect_code 2
+  expect_out '未知の引数'
+}
+scenario "doctor は未知のオプション（--fix / --json 等）を usage 付きで拒否する" setup_init expect_unknown_option
 
 # D3 / A3. 未導入ディレクトリでは導入コピーが無い旨と harness init の案内を出して exit 2。
 expect_not_installed() {
@@ -231,9 +273,26 @@ expect_missing_git() {
   run_doctor_without_path
   expect_code 1
   expect_out '^FAIL .*git'
-  expect_out '^harness doctor: OK=[0-9]+ WARN=[0-9]+ FAIL=[1-9][0-9]*$'
+  expect_out '^harness doctor: OK=[0-9]+ WARN=[0-9]+ FAIL=[1-9][0-9]* INFO=[0-9]+$'
 }
 scenario "B1: git 不在なら FAIL / exit 1" setup_init expect_missing_git
+
+# C3. node / jq が無くても「全項目」が実行できる。PATH 全潰し（B1 のシナリオ）は git/sed/awk も
+# 道連れにして manifest が読めなくなり、B4/B5/B7/B11 が丸ごとスキップされるため C3 の検証にならない
+# （最終レビュー low 指摘）。node/jq のディレクトリだけを外し、他の診断が一通り動くことを見る。
+expect_no_node_jq() {
+  run_doctor_without_node_jq
+  expect_code 0
+  expect_out '^WARN .*node'
+  expect_out '^WARN .*jq'
+  expect_not_out '^FAIL '
+  # node/jq を隠しても他の診断（B4/B5/B7/B11）は最後まで実行される。
+  expect_out '^OK .*manifest 記載ファイル'
+  expect_out '^OK .*改行'
+  expect_out '^OK .*AGENTS\.md'
+  expect_out '^OK .*gitignore'
+}
+scenario "C3: node / jq が無くても全項目が実行できる（PATH から node/jq のディレクトリだけを外す）" setup_init expect_no_node_jq
 
 # B3. manifest が壊れていれば FAIL（存在はするが harness_version 等が読めない形にする）。
 # version/source/agents の見出しごと読めないケース: harness update は source を解決できず
@@ -468,7 +527,7 @@ expect_agents_marker_duplicated() {
 }
 scenario "B7: AGENTS.md のマーカーが 2 組あれば FAIL（update で直る）" setup_agents_marker_duplicated expect_agents_marker_duplicated
 
-# B11. .gitignore から .harness/state/ を消すと WARN。
+# B11. .gitignore から .harness/state/ .harness/backup/ .harness/conflicts/ を消すと WARN。
 # 束ね: 上の B4/B5/B6 と同じ ensure_warn_bundle のキャッシュを読む。
 setup_missing_gitignore_state() { ensure_warn_bundle && PROJ="$WARN_BUNDLE_DIR"; }
 expect_missing_gitignore_state() {
@@ -476,12 +535,14 @@ expect_missing_gitignore_state() {
   expect_code 0
   expect_out '^WARN .*gitignore'
   expect_out '\.harness/state/'
+  expect_out '\.harness/backup/'
+  expect_out '\.harness/conflicts/'
   OUT="$WARN_BUNDLE_OUT_AFTER"; CODE="$WARN_BUNDLE_CODE_AFTER"
   expect_code 0
   expect_not_out '^WARN .*gitignore'
   expect_out '^OK .*gitignore'
 }
-scenario "B11: .gitignore に .harness/state/ が無ければ WARN（update で直る）" setup_missing_gitignore_state expect_missing_gitignore_state
+scenario "B11: .gitignore に state|backup|conflicts/ が無ければ WARN（update で直る）" setup_missing_gitignore_state expect_missing_gitignore_state
 
 # B8. CLAUDE.md から @AGENTS.md の import を消すと FAIL。
 setup_claude_md_no_import() {
@@ -550,11 +611,21 @@ expect_claude_agent_missing() {
   OUT="$FAIL_BUNDLE_OUT_BEFORE"; CODE="$FAIL_BUNDLE_CODE_BEFORE"
   expect_code 1
   expect_out '^FAIL .*implementer\.md'
+  # low 指摘: 欠落時に B8 自身も報告する（従来は B4 の汎用行任せで、B8 の項目が消えて見えた）。
+  expect_out '^FAIL .*Claude アダプタの役割ファイルが足りない'
   OUT="$FAIL_BUNDLE_OUT_AFTER"; CODE="$FAIL_BUNDLE_CODE_AFTER"
   expect_code 0
   expect_not_out '^FAIL .*implementer\.md'
+  expect_not_out 'Claude アダプタの役割ファイルが足りない'
+  # T10 #12: 「FAIL が消えた」だけでなく、generated 所有ファイルの中身が実際に再生成されている
+  # ところまで確認する（生成元コメントが無ければ、空ファイルや退避コピーで消えたのかもしれない）。
+  if [ ! -f "$FAIL_BUNDLE_DIR/.claude/agents/implementer.md" ]; then
+    errors+=(".claude/agents/implementer.md が harness update で復元されなかった")
+  elif ! grep -q 'generated by agent-harness' "$FAIL_BUNDLE_DIR/.claude/agents/implementer.md"; then
+    errors+=("復元された .claude/agents/implementer.md に生成元コメントが無い（中身が正しく再生成されていない）")
+  fi
 }
-scenario "B8: .claude/agents/implementer.md が無ければ FAIL（update で直る）" setup_claude_agent_missing expect_claude_agent_missing
+scenario "B8: .claude/agents/implementer.md が無ければ FAIL（B8 自身も報告し、update で中身ごと直る）" setup_claude_agent_missing expect_claude_agent_missing
 
 # B8. manifest の agents に claude を含まないとき（--agents codex で init）は CLAUDE.md 系の診断をしない。
 setup_init_codex_only() {
@@ -569,7 +640,7 @@ setup_init_codex_only() {
 expect_no_claude_adapter_check() {
   run_doctor
   expect_code 0
-  expect_out '^harness doctor: OK=[0-9]+ WARN=[0-9]+ FAIL=0$'
+  expect_out '^harness doctor: OK=[0-9]+ WARN=[0-9]+ FAIL=0 INFO=[0-9]+$'
   expect_not_out 'CLAUDE\.md'
   expect_not_out '\.claude/skills'
   expect_not_out '\.claude/agents'
@@ -609,6 +680,8 @@ expect_source_version_bump() {
   run_doctor
   expect_code 0
   expect_out '^INFO .*9\.9\.9'
+  # INFO 行もヘッダ契約どおり「INFO  項目  →  直し方」の形（直し方が付く）。
+  expect_out '^INFO .*→'
   # 回帰: 導入先に存在しない「bash bin/harness」を案内していないこと（この行が過去の実バグ）。
   expect_not_out 'bash bin/harness'
   expect_out 'bash \.harness/bin/harness update'
@@ -619,6 +692,43 @@ expect_source_version_bump() {
   expect_out '^OK .*source の版は'
 }
 scenario "B10: source（ローカル）に新版があれば INFO（直し方どおりに update すると追従して消える）" setup_source_version_bump expect_source_version_bump
+
+# low 指摘: $mf_source/VERSION は書式検証・長さ制限をせずに出力へ載せると、無関係な内容や
+# 長文がそのまま診断ログに出る。版番号の形式でなければ WARN に倒し、内容は出力に丸ごと出さない。
+setup_source_version_malformed() {
+  local src="$WORK/src"
+  mkdir -p "$src" &&
+    cp -r "$REPO/harness" "$src/harness" &&
+    cp -r "$REPO/bin" "$src/bin" &&
+    cp "$REPO/VERSION" "$src/VERSION" || { errors+=("setup: source コピーに失敗した"); return 1; }
+  PROJ="$WORK/p"; mkdir -p "$PROJ"
+  (
+    cd "$PROJ" &&
+    git init -q . &&
+    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init &&
+    bash "$src/bin/harness" init --source "$src"
+  ) >/dev/null 2>&1 || { errors+=("setup: harness init に失敗した"); return 1; }
+  # 版番号らしくない・長い内容（誤って別ファイルの中身が VERSION に入った場合を模す）
+  local i=0
+  { while [ "$i" -lt 50 ]; do
+      echo "this is not a version string, it is a long unrelated line of text"
+      i=$((i + 1))
+    done
+  } > "$src/VERSION"
+}
+expect_source_version_malformed() {
+  run_doctor
+  expect_code 0
+  expect_out '^WARN .*VERSION'
+  expect_out '版番号の形式ではない'
+  expect_not_out 'this is not a version string, it is a long unrelated line of text'
+  # 出力のどの行も極端に長くならない（内容を丸ごと 1 行に潰して出していないか）
+  local maxlen
+  maxlen="$(printf '%s\n' "$OUT" | awk '{ print length }' | sort -rn | head -1)"
+  [ "$maxlen" -le 500 ] || errors+=("doctor の出力に長さ ${maxlen} の行がある（VERSION の内容が検証なしで出力に載っている）")
+  return 0
+}
+scenario "B10: source の VERSION が版番号の形式でなければ WARN（内容は出力に丸ごと出さない）" setup_source_version_malformed expect_source_version_malformed
 
 # B10. source が URL のときはネットワークに触らない（manifest の source を到達不能な URL に差し替えて確認）。
 setup_source_is_url() {
@@ -830,6 +940,33 @@ expect_no_bare_bin_harness_path() {
   fi
 }
 scenario "回帰: doctor.sh の直し方に「bash bin/harness」(存在しないパス) が残っていない" setup_repo_source expect_no_bare_bin_harness_path
+
+# 回帰（最終レビュー medium 指摘）: manifest 由来のパス（空白・シェルメタ文字を含みうる外部入力）が、
+# 直し方（→ の右側。コピペ実行を想定する箇所）にクオートなしでそのまま埋め込まれると、コピペ実行で
+# 壊れる／危険になる（過去の実例: CRLF の直し方にあった `git checkout -- $f_path`）。T14 で CRLF の
+# 直し方が固定文字列の `bash .harness/bin/harness update` に変わり実害は無くなっているが、退行を
+# 機械的に検知できるよう、manifest の path に注入した文字列が直し方に生で出ないことを表明する。
+setup_manifest_path_injection() {
+  setup_init || return 1
+  local inj='docs/my file *.md; touch CANARY-injected'
+  sed "s#\"path\":\"\.harness/scripts/gc\.sh\"#\"path\":\"$inj\"#" "$PROJ/.harness/manifest.json" \
+    > "$PROJ/.harness/manifest.json.tmp" &&
+    mv "$PROJ/.harness/manifest.json.tmp" "$PROJ/.harness/manifest.json"
+}
+expect_manifest_path_injection() {
+  run_doctor
+  expect_code 1
+  # ラベル側（→ の左）に生で出るのは許容する（実際そこに出る。診断対象を特定するため）。
+  # 直し方（→ の右）にさえ出なければコピペ実行で壊れないので、右側だけを取り出して見る。
+  local after_arrow
+  after_arrow="$(printf '%s\n' "$OUT" | grep -F '→' | sed -E 's/.*→//')"
+  if printf '%s' "$after_arrow" | grep -qF 'CANARY'; then
+    errors+=("manifest 由来のパスが直し方（→ の右側）にクオートなしで埋め込まれている")
+  fi
+  [ -f "$PROJ/CANARY-injected" ] && errors+=("doctor が manifest 由来の文字列をコマンドとして実行してしまった")
+  return 0
+}
+scenario "認可回帰: manifest 由来のパスは直し方にクオートなしで埋め込まれない" setup_manifest_path_injection expect_manifest_path_injection
 
 # ================================================================ 集計
 rm -rf "$SHARED" 2>/dev/null
