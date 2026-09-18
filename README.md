@@ -57,7 +57,7 @@ harness status
 
 ### ハーネスの中身を更新する
 
-**プロジェクト側から**: 管理ファイル（スキル、スクリプト）を直す → `/harness diff` → `/harness upstream <path>`。source が git URL のプロジェクトでは、このリポジトリを clone して manifest の `source` をそのパスに書き換えてから実行する。
+**プロジェクト側から**: 管理ファイル（スキル、スクリプト）を直す → `/harness diff` → `/harness upstream <path>`。source が git URL のプロジェクトでは、このリポジトリを clone し、その絶対パスを `.harness/source.local`（gitignore 対象。1 行に書く）に置くか、`HARNESS_SOURCE=<clone した絶対パス>` を付けて一度だけ実行する。manifest の `source` は共有値（コミットされる）なので書き換えない。解決順は 環境変数 `HARNESS_SOURCE` > `.harness/source.local` > manifest の `source`（決定 0004）。
 
 **このリポジトリで**:
 

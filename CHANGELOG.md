@@ -10,7 +10,8 @@ semver: managed ファイルの移動・マーカー形式変更は major、ル�
 - 修正: 内容の比較をフィルタ無し（生バイト）の `git hash-object --no-filters` に統一。素の `git hash-object` は `.gitattributes` の `text eol=lf` と `core.autocrlf` を通すため、CRLF 化しただけの導入コピーを「未変更」と誤判定していた（`harness status` の MODIFIED 判定、`update` の上書き判断、検査 "installed copies in sync" が揃って騙されていた）。
 - 修正: `AGENTS.md` の `end` マーカーが失われていると、`update` が begin から末尾までを managed ブロックと見なしてプロジェクトの記述ごと消していた。今は begin の 1 行だけを落とし、残骸はファイルに残して案内する。
 - 追加: `tests/update.sh`（このリポジトリ専用の検査 "update scenarios"、12 シナリオ）。所有権の規則の回帰を押さえる。
-- プロジェクト側で必要な作業: `harness update` で `doctor.sh` が入る。**次回の `update` は、これまで「未変更」と誤判定されていた CRLF のファイルと、手で直した managed / generated を正本の内容に戻す**（変更前は `.harness/backup/<ts>/` に残る）。残したいローカルの変更があるなら、先に `harness diff` で確認し `harness upstream <path>` で正本へ戻してから `update` する。manifest の `sha256` は自動で書き直されるので手作業は不要。
+- 変更（挙動。決定 0004）: `.harness/manifest.json` の `source` は共有値（既定は公開リポジトリの URL）に固定し、機械依存の絶対パスは書かない。その PC / その worktree だけの source は `.harness/source.local`（gitignore 対象）か環境変数 `HARNESS_SOURCE` に置く。解決順は 環境変数 `HARNESS_SOURCE` > `.harness/source.local` > `manifest.json` の `source`。旧形式（`source` に絶対パス）で導入されたプロジェクトは、`harness update` が自動でその値を `.harness/source.local` へ移し、manifest を共有値に直す。`harness doctor` の B10 は解決結果を診断し、source が辿れなければ WARN、manifest に絶対パスが残っていれば別途 WARN。
+- プロジェクト側で必要な作業: `harness update` で `doctor.sh` が入る。**次回の `update` は、これまで「未変更」と誤判定されていた CRLF のファイルと、手で直した managed / generated を正本の内容に戻す**（変更前は `.harness/backup/<ts>/` に残る）。残したいローカルの変更があるなら、先に `harness diff` で確認し `harness upstream <path>` で正本へ戻してから `update` する。manifest の `sha256` は自動で書き直されるので手作業は不要。ローカル clone を `source` にしていたプロジェクトは、次回の `update` が自動でその絶対パスを `.harness/source.local` に逃がすので追加の作業は無い。ただし別 PC や worktree などその絶対パスが存在しない環境で `update` するときは、先に `.harness/source.local` に自分の clone の絶対パスを書くか、`HARNESS_SOURCE=<clone した絶対パス>`（worktree で作業するときは `HARNESS_SOURCE=$(pwd)`）を付けて実行する。
 
 ## [0.3.0] - 2026-09-17
 
