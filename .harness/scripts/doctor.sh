@@ -2,18 +2,29 @@
 # harness doctor — 導入先の環境とハーネス導入状態を機械的に診断して一覧にする。
 # 報告のみ（自動修復はしない）。gc が docs の健康診断なら、doctor は環境の健康診断。LLM は使わない。
 #
-# 使い方:  bash .harness/scripts/doctor.sh
+# 使い方:  bash .harness/scripts/doctor.sh   （オプションは取らない。--fix / --json は未実装）
 #
-# 各行:  OK|WARN|FAIL  項目  →  直し方     （OK 行に直し方は付かない）
-# 最後に集計行（OK / WARN / FAIL の件数）。
+# 各行:  OK|WARN|FAIL|INFO  項目  →  直し方     （OK 行に直し方は付かない）
+#   INFO は参考情報（例: source に新版がある）。OK/WARN/FAIL の判定・終了コードには数えない。
+#   集計行には参考として件数だけ添える（B10 だけが出す）。
+# 最後に集計行（OK / WARN / FAIL の件数。参考として INFO の件数も添える）。
 #
 # 終了コード:
 #   0  問題なし、または WARN のみ
 #   1  FAIL あり
-#   2  診断自体ができない環境不備（未導入ディレクトリなど）
+#   2  診断自体ができない環境不備（未導入ディレクトリ、未知の引数など）
 #
 # 診断は bash と git だけで動く。node / jq が無くても全項目が実行できる（あれば使う、で留める）。
 set -u
+
+# doctor はオプションを取らない。--fix / --json 等の未知の引数を黙って無視すると「指定どおり
+# 動いた」と誤解されうる（spec: --fix は範囲外、--json は要望が出るまで未実装）。usage を出して
+# 「診断自体ができない環境不備」と同じ 2 で終わる。
+if [ "$#" -gt 0 ]; then
+  echo "harness doctor: 未知の引数: $*（doctor はオプションを取らない。--fix / --json は未実装）" >&2
+  echo "  使い方: bash .harness/bin/harness doctor" >&2
+  exit 2
+fi
 
 # git が無い環境でも診断できるよう、ROOT の決定は git に依存しすぎない
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -77,6 +88,23 @@ as_int() { # 文字列 → 先頭の整数（空や非整数は 0）
 }
 count_matches() { # 正規表現 ファイル → マッチした行数（整数）
   as_int "$(grep -c "$1" "$2" 2>/dev/null || true)"
+}
+
+# manifest 由来のディレクトリ（source）の VERSION は外部ファイル。書式・長さを検証せずに出力へ
+# 載せると、無関係な内容や長文がそのまま診断ログ（≒ CI ログやエージェントの文脈）に出る
+# （最終レビュー low 指摘）。使う前にこの 2 つを通す。
+looks_like_version() { # 文字列 → 版番号らしい形式か（例: 0.3.0, 1.2.3-rc1）。長さも制限する
+  case "$1" in
+    [0-9]*.[0-9]*)
+      [ "${#1}" -le 32 ] || return 1
+      case "$1" in *[!0-9A-Za-z.-]*) return 1;; esac
+      return 0
+      ;;
+    *) return 1 ;;
+  esac
+}
+printable_snippet() { # 文字列 長さ → 印字可能文字だけに絞った先頭 N 文字（制御文字・ANSI 混入を防ぐ）
+  printf '%s' "$1" | tr -cd '[:print:]' | cut -c "1-${2:-24}"
 }
 
 os_name="$(uname -s 2>/dev/null || echo unknown)"
@@ -314,14 +342,20 @@ case ",$mf_agents," in
       done <<<"$mf_entries"
       [ "$skill_mismatch" -eq 0 ] && report OK ".claude/skills/* は .agents/skills/* と内容が一致する"
 
-      # .claude/agents/*.md の欠落は B4 が個別に報告する。ここでは集計だけ添える。
+      # .claude/agents/*.md の欠落。B4 も個別に FAIL を出すが、B9（Codex）と同じ形で B8 としても
+      # まとめて報告する（最終レビュー low 指摘: 欠落時に B8 が何も言わないと項目そのものが消えて見える）。
       claude_agents_missing=0
       while IFS=$'\t' read -r f_path f_src f_own f_sha f_srcsha; do
         [ -z "$f_path" ] && continue
         case "$f_path" in .claude/agents/*.md) ;; *) continue;; esac
         [ -f "$ROOT/$f_path" ] || claude_agents_missing=$((claude_agents_missing + 1))
       done <<<"$mf_entries"
-      [ "$claude_agents_missing" -eq 0 ] && report OK ".claude/agents/*.md は manifest どおりに揃っている"
+      if [ "$claude_agents_missing" -eq 0 ]; then
+        report OK ".claude/agents/*.md は manifest どおりに揃っている"
+      else
+        report FAIL "Claude アダプタの役割ファイルが足りない（.claude/agents/*.md が ${claude_agents_missing} 件欠落）" \
+          "bash .harness/bin/harness update で復元する（復元できなければ bash .harness/bin/harness init をやり直す）"
+      fi
     fi
   ;;
 esac
@@ -369,9 +403,14 @@ if [ "$manifest_ok" = 1 ]; then
   esac
 
   if [ -n "$eff_source" ] && [ -d "$eff_source" ] && [ -f "$eff_source/VERSION" ]; then
-    src_version="$(tr -d '\r\n' < "$eff_source/VERSION")"
-    if [ -n "$src_version" ] && [ "$src_version" != "$mf_version" ]; then
-      report INFO "source（$eff_source。$eff_source_from）に新版 $src_version がある（導入済みは $mf_version）" \
+    # VERSION の中身は書式検証・長さ制限をしてから使う（最終レビュー low 指摘）。読み取り自体も
+    # 200 バイトで打ち切り、版らしい形式でなければ内容を出力に載せずスキップする。
+    src_version_raw="$(head -c 200 "$eff_source/VERSION" 2>/dev/null | tr -d '\r\n')"
+    if ! looks_like_version "$src_version_raw"; then
+      report WARN "source（$eff_source。$eff_source_from）の VERSION が版番号の形式ではない（先頭: $(printable_snippet "$src_version_raw" 24)）。新版の確認をスキップした" \
+        "source の VERSION ファイルの中身を確認する（1 行に版番号だけを書く形が正しい）"
+    elif [ "$src_version_raw" != "$mf_version" ]; then
+      report INFO "source（$eff_source。$eff_source_from）に新版 $src_version_raw がある（導入済みは $mf_version）" \
         "bash .harness/bin/harness update で追従する（別 ref を使うときは --ref を付ける）"
     else
       report OK "source の版は導入済みと同じ（$mf_version。$eff_source_from = $eff_source）"
@@ -404,7 +443,7 @@ fi
 
 # ---------------------------------------------------------------- 集計
 echo
-echo "harness doctor: OK=$n_ok WARN=$n_warn FAIL=$n_fail"
+echo "harness doctor: OK=$n_ok WARN=$n_warn FAIL=$n_fail INFO=$n_info"
 if [ "$n_fail" -gt 0 ]; then
   echo "  FAIL の行の「→」に従って直す。直せたらもう一度 harness doctor を回す。"
   exit 1
