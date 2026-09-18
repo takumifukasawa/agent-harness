@@ -13,6 +13,11 @@
 #   expect 関数: run_doctor / run_doctor_no_path などを呼び、expect_* で表明する
 # シナリオを足すときは、先に落ちるシナリオを書いてから doctor.sh に診断項目を足す（TDD）。
 #
+# doctor の診断だけでなく、B10 が前提にする source の解決順（環境変数 HARNESS_SOURCE >
+# .harness/source.local > manifest.json の source。決定 0004）も、末尾の「T09」節でまとめて表明する。
+# init / update / status / diff / upstream がその順を通ることと、上書きが無いときに status / doctor が
+# ネットワークへ出ないことが対象。
+#
 # 直し方が単一の実行可能なコマンドである項目は、expect 関数の中で
 # 「壊す → doctor で当該行が出る → apply_fix で直し方どおりに実行 → doctor で当該行が消える」
 # まで表明する。T14 時点でこの枠に乗っているのは B3（manifest 破損。決定 0003 のとおり、
@@ -618,6 +623,7 @@ scenario "B10: source（ローカル）に新版があれば INFO（直し方ど
 # B10. source が URL のときはネットワークに触らない（manifest の source を到達不能な URL に差し替えて確認）。
 setup_source_is_url() {
   setup_init || return 1
+  rm -f "$PROJ/.harness/source.local"   # 機械ローカルの上書きを外し、manifest の URL だけが残る状態にする
   sed -i 's#"source": "[^"]*"#"source": "https://example.invalid/agent-harness.git"#' "$PROJ/.harness/manifest.json"
 }
 expect_source_is_url() {
@@ -626,6 +632,188 @@ expect_source_is_url() {
   expect_not_out 'Could not resolve|clone に失敗|fetch に失敗'
 }
 scenario "B10: source が URL ならネットワークに触らず完走する" setup_source_is_url expect_source_is_url
+
+# ================================================================ T09: source の解決順（B10 の前提）
+# .harness/manifest.json はコミットされる共有ファイルなので、機械依存の絶対パスを置かない。
+# 機械ローカルの source は gitignore 対象の上書き（環境変数 HARNESS_SOURCE / .harness/source.local）へ逃がす。
+# 解決順: 環境変数 HARNESS_SOURCE > .harness/source.local > manifest.json の source（決定 0004）。
+# doctor B10 はこの解決結果を診断するので、解決そのものの表明もここに置く。
+
+run_cli() { # <サブコマンド...> — $PROJ で導入コピーの CLI を回す
+  OUT="$(cd "$PROJ" && bash .harness/bin/harness "$@" 2>&1)"; CODE=$?
+}
+run_cli_env() { # <VAR=VAL> <サブコマンド...> — 環境変数を足して回す
+  local kv="$1"; shift
+  OUT="$(cd "$PROJ" && env "$kv" bash .harness/bin/harness "$@" 2>&1)"; CODE=$?
+}
+manifest_source_of() { # <PROJ> → manifest.json の source
+  sed -n 's/^  "source": *"\(.*\)",$/\1/p' "$1/.harness/manifest.json" | head -1
+}
+
+# init は manifest に共有値（既定の公開リポジトリ URL）を書き、--source で渡されたローカルパスは
+# .harness/source.local（gitignore 対象）へ逃がす。self_repo() 由来でも manifest には書かない。
+expect_init_source_is_shared() {
+  CODE=0; OUT="$(manifest_source_of "$PROJ")"
+  printf '%s\n' "$OUT" | grep -qE '^(https?|git|ssh)://|^git@' ||
+    errors+=("manifest の source が共有値（URL）でない: $OUT")
+  if [ ! -f "$PROJ/.harness/source.local" ]; then
+    errors+=(".harness/source.local が作られていない（機械ローカルの source の置き場）")
+  elif ! grep -qxF "$REPO" "$PROJ/.harness/source.local"; then
+    errors+=(".harness/source.local に導入元のローカルパス（$REPO）が書かれていない")
+  fi
+  grep -qxF '.harness/source.local' "$PROJ/.gitignore" ||
+    errors+=(".gitignore に .harness/source.local が無い（コミットされてしまう）")
+  return 0
+}
+scenario "T09: init は manifest に共有値を書き、ローカルパスは .harness/source.local へ逃がす" setup_init expect_init_source_is_shared
+
+# 解決順: 環境変数 > .harness/source.local > manifest.json の source。status の見出し行で確認する。
+expect_source_resolution_order() {
+  local a="$WORK/src-a" b="$WORK/src-b"
+  mkdir -p "$a" "$b"
+  printf '%s\n' "$a" > "$PROJ/.harness/source.local"
+  run_cli status
+  expect_code 0
+  expect_out "source=$a"
+  run_cli_env "HARNESS_SOURCE=$b" status
+  expect_code 0
+  expect_out "source=$b"
+  rm -f "$PROJ/.harness/source.local"
+  run_cli status
+  expect_code 0
+  expect_out 'source=(https?|git|ssh)://|source=git@'
+  return 0
+}
+scenario "T09: source の解決順は 環境変数 > .harness/source.local > manifest" setup_init expect_source_resolution_order
+
+# 事故の再現と解（docs/learnings.md 2026-09-18）: worktree の中で update を回すと、manifest の
+# source（= main tree の絶対パス）を見に行き、main tree の未コミット変更を取り込んでしまった。
+# HARNESS_SOURCE で自分の worktree を指せば、そちらのペイロードだけが入る。
+setup_worktree_source() {
+  setup_init || return 1
+  FAKE_SRC="$WORK/worktree"
+  mkdir -p "$FAKE_SRC" &&
+    cp -r "$REPO/harness" "$FAKE_SRC/harness" &&
+    cp -r "$REPO/bin" "$FAKE_SRC/bin" &&
+    cp "$REPO/VERSION" "$FAKE_SRC/VERSION" ||
+    { errors+=("setup: 疑似 worktree の作成に失敗した"); return 1; }
+  printf '\n<!-- T09-WORKTREE-MARKER -->\n' >> "$FAKE_SRC/harness/skills/harness/SKILL.md"
+}
+expect_worktree_source() {
+  local synced="$PROJ/.agents/skills/harness/SKILL.md"
+  run_cli update
+  expect_code 0
+  if grep -q 'T09-WORKTREE-MARKER' "$synced" 2>/dev/null; then
+    errors+=("上書きが無いのに疑似 worktree のペイロードが入った")
+  fi
+  run_cli_env "HARNESS_SOURCE=$FAKE_SRC" update
+  expect_code 0
+  if ! grep -q 'T09-WORKTREE-MARKER' "$synced" 2>/dev/null; then
+    errors+=("HARNESS_SOURCE で worktree を指しても、そのペイロードが入らない")
+  fi
+  if [ "$(manifest_source_of "$PROJ")" = "$FAKE_SRC" ]; then
+    errors+=("manifest の source に機械ローカルのパスが書き戻された（共有ファイルが汚れる）")
+  fi
+  return 0
+}
+scenario "T09: update は上書きを通る（worktree 事故の解。manifest は汚さない）" setup_worktree_source expect_worktree_source
+
+# diff / upstream はローカル source が要る。manifest が URL でも、上書きがあれば die せず動く。
+setup_upstream_override() {
+  setup_init || return 1
+  UP_SRC="$WORK/src"
+  mkdir -p "$UP_SRC" &&
+    cp -r "$REPO/harness" "$UP_SRC/harness" &&
+    cp -r "$REPO/bin" "$UP_SRC/bin" &&
+    cp "$REPO/VERSION" "$UP_SRC/VERSION" ||
+    { errors+=("setup: 上流コピーの作成に失敗した"); return 1; }
+  rm -f "$PROJ/.harness/source.local"
+  # 回帰しても、このリポジトリの harness/ に書き込まないようにしておく（実際に一度やらかした）:
+  # manifest の source を到達不能な URL に固定してから、上書きの有無で挙動を見る。
+  sed "s#^  \"source\": \"[^\"]*\",#  \"source\": \"https://example.invalid/agent-harness.git\",#" \
+    "$PROJ/.harness/manifest.json" > "$PROJ/.harness/manifest.tmp" &&
+    mv "$PROJ/.harness/manifest.tmp" "$PROJ/.harness/manifest.json" ||
+    { errors+=("setup: manifest の source 書き換えに失敗した"); return 1; }
+  printf '\n<!-- T09-UPSTREAM-MARKER -->\n' >> "$PROJ/.agents/skills/harness/SKILL.md"
+}
+expect_upstream_override() {
+  run_cli upstream .agents/skills/harness/SKILL.md
+  expect_code 1
+  expect_out 'source\.local|HARNESS_SOURCE'
+  run_cli_env "HARNESS_SOURCE=$UP_SRC" diff
+  expect_code 0
+  expect_out 'T09-UPSTREAM-MARKER'
+  run_cli_env "HARNESS_SOURCE=$UP_SRC" upstream .agents/skills/harness/SKILL.md
+  expect_code 0
+  grep -q 'T09-UPSTREAM-MARKER' "$UP_SRC/harness/skills/harness/SKILL.md" ||
+    errors+=("upstream が上書きで指した source へ書いていない")
+  return 0
+}
+scenario "T09: manifest が URL でも上書きがあれば diff / upstream は die しない" setup_upstream_override expect_upstream_override
+
+# B10. source が辿れないとき（manifest の共有値だけで、この PC に上書きが無い）は OK と言い切らず WARN。
+# 直し方どおりに .harness/source.local を置くと WARN が消える。ネットワークには触らない。
+setup_source_not_reachable() {
+  setup_init || return 1
+  rm -f "$PROJ/.harness/source.local"
+}
+expect_source_not_reachable() {
+  run_doctor
+  expect_code 0
+  expect_out '^WARN .*source'
+  expect_out 'source\.local'
+  expect_not_out 'Could not resolve|clone に失敗|fetch に失敗'
+  apply_fix "printf '%s\n' \"$REPO\" > .harness/source.local"
+  run_doctor
+  expect_code 0
+  expect_not_out '^WARN .*source'
+  expect_out '^OK .*source の版は'
+  return 0
+}
+scenario "B10: source が辿れなければ WARN（.harness/source.local を置くと消える）" setup_source_not_reachable expect_source_not_reachable
+
+# B10. manifest に機械依存の絶対パスが残っている（この形式より前に導入した）プロジェクトは WARN。
+# harness update が manifest を共有値へ直し、そのパスを .harness/source.local へ移す。
+setup_manifest_source_is_local_path() {
+  setup_init || return 1
+  rm -f "$PROJ/.harness/source.local"
+  sed "s#^  \"source\": \"[^\"]*\",#  \"source\": \"$REPO\",#" \
+    "$PROJ/.harness/manifest.json" > "$PROJ/.harness/manifest.tmp" &&
+    mv "$PROJ/.harness/manifest.tmp" "$PROJ/.harness/manifest.json" ||
+    { errors+=("setup: manifest の source 書き換えに失敗した"); return 1; }
+}
+expect_manifest_source_is_local_path() {
+  run_doctor
+  expect_code 0
+  expect_out '^WARN .*manifest.*絶対パス'
+  apply_fix "bash .harness/bin/harness update"
+  run_doctor
+  expect_code 0
+  expect_not_out '^WARN .*manifest.*絶対パス'
+  grep -qxF "$REPO" "$PROJ/.harness/source.local" 2>/dev/null ||
+    errors+=("update が manifest のローカルパスを .harness/source.local へ移していない")
+  return 0
+}
+scenario "B10: manifest の source が機械依存の絶対パスなら WARN（update で共有値へ移る）" setup_manifest_source_is_local_path expect_manifest_source_is_local_path
+
+# 絶対に壊してはいけないこと: 上書きが無く manifest が URL でも、status / doctor はネットワークに触らない
+# （CI や clone 直後がこの状態）。resolve_source の clone キャッシュが作られないことで確認する。
+expect_no_network_without_override() {
+  local home="$WORK/home"; mkdir -p "$home"
+  OUT="$(cd "$PROJ" && HOME="$home" GIT_ALLOW_PROTOCOL=none bash .harness/bin/harness status 2>&1)"; CODE=$?
+  expect_code 0
+  expect_out 'source=(https?|git|ssh)://|source=git@'
+  if [ -e "$home/.cache/agent-harness" ]; then
+    errors+=("status が clone キャッシュ（~/.cache/agent-harness）を作った＝ネットワークに触っている")
+  fi
+  OUT="$(cd "$PROJ" && HOME="$home" GIT_ALLOW_PROTOCOL=none bash .harness/bin/harness doctor 2>&1)"; CODE=$?
+  expect_code 0
+  if [ -e "$home/.cache/agent-harness" ]; then
+    errors+=("doctor が clone キャッシュ（~/.cache/agent-harness）を作った＝ネットワークに触っている")
+  fi
+  return 0
+}
+scenario "T09: 上書きが無く manifest が URL でも status / doctor はネットワークに触らない" setup_source_not_reachable expect_no_network_without_override
 
 # 回帰: spec C1（直し方はそのまま実行できるコマンド）/ A1（導入先の CLI は .harness/bin/harness）。
 # ソース（harness/scripts/doctor.sh。正本。導入コピーの .harness/scripts/doctor.sh ではない）に、
