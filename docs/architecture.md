@@ -35,7 +35,7 @@ harness/               ペイロード。プロジェクトに配られる中身
 | 空のプロジェクトに init して直後の status が全部 unchanged | checks.sh "init smoke test" | 強制済 |
 | ペイロードに Claude / Codex 固有の依存を入れない（アダプタ以外） | 未強制（レビューで見る） | 未強制 |
 | manifest は 1 エントリ 1 行（bash の sed で読める） | `harness doctor` の B3（エントリ行数と `"path"` キー数を照合し、ズレを FAIL で報告。`.harness/checks.sh` "doctor scenarios" が検出ロジックの回帰を防ぐ） | 検出のみ（`doctor` の実行が前提。`harness check` に自動接続はしていない） |
-| manifest に機械依存の絶対パスを書かない（決定 0004。共有値は URL、その PC / worktree だけの source は `.harness/source.local` か `HARNESS_SOURCE` へ） | `harness doctor` の B10（解決順で source が辿れなければ WARN、manifest に絶対パスが残っていれば別途 WARN。`tests/doctor.sh` の T09 節のシナリオが検出ロジックの回帰を防ぐ） | 検出のみ（`doctor` の実行が前提。`.harness/checks.sh` への fast 検査の追加は別途進行中） |
+| manifest に機械依存の絶対パスを書かない（決定 0004。共有値は URL、その PC / worktree だけの source は `.harness/source.local` か `HARNESS_SOURCE` へ） | `harness doctor` の B10（解決順で source が辿れなければ WARN、manifest に絶対パスが残っていれば別途 WARN。`tests/doctor.sh` の T09 節のシナリオが検出ロジックの回帰を防ぐ） | 強制済（`.harness/checks.sh` の fast 検査 "manifest source is shared value"） |
 
 ## 意図的に許している自由
 

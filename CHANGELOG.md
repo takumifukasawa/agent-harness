@@ -3,7 +3,9 @@
 各版に「プロジェクト側で必要な作業」を必ず書く。`harness update` はこの節を表示する。
 semver: managed ファイルの移動・マーカー形式変更は major、ルール/スキルの追加は minor、文言修正は patch。
 
-## [Unreleased]
+## [0.4.0] - 2026-09-18
+
+`harness doctor` の追加と、`update` の復元・`source` の機械ローカル化を仕上げた版。
 
 - 追加: `harness doctor`（`scripts/doctor.sh`）。環境とハーネス導入状態を機械的に診断する（bash/git/node/jq、manifest、改行、git hooks、AGENTS.md マーカー、Claude/Codex アダプタ、source の新版、`.gitignore`）。LLM は使わず報告のみ、自動修復はしない。終了コードは 0=問題なし/WARN のみ、1=FAIL あり、2=未導入。`harness init` の最後の案内にも `harness doctor` を促す 1 行を追加。
 - 変更（挙動。決定 0002）: `harness update` が、変更済みの managed / generated を `.harness/conflicts/` へ退避するだけで放置せず、**正本の内容に復元する**（変更前は `.harness/backup/<ts>/` へ退避し、`restore <path>` と退避先を出力。集計に `restored=N` を追加）。`AGENTS.md` は managed ブロックだけを現行版に戻し、ブロック外のプロジェクトの記述は触らない。重複した managed ブロックは 1 対に畳む。`CLAUDE.md` は import スタブ扱いで、`@AGENTS.md` の行だけを保証して中身は残す。`seed` と「manifest に無いのに存在するファイル」の扱いは従来どおり（触らない / conflicts）。
