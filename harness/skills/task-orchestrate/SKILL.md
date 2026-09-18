@@ -63,7 +63,8 @@ title: <タイトル>
   - ...
 触ってよい範囲: src/api/**, spec/api/**
 やり方: TDD（失敗するテスト → 通す最小実装 → 整える）。各段階でコミット。コミットメッセージに task_id を入れる。
-検査: 終わったら `bash .harness/bin/harness check` を回し、出力を report に貼る。
+検査: 終わったら `bash .harness/bin/harness check` を**前面（フォアグラウンド）で**回し、出力を report に貼る。裏プロセスで走らせて自分の完了待ちにすると止まる。
+CHANGELOG: 利用者に影響する変更を入れたら `CHANGELOG.md` の `[Unreleased]` に書く（挙動変更と「プロジェクト側で必要な作業」）。不要なら report に「不要」と書く。
 返すもの（これ以外は report に書く）: status(done|blocked|failed), commit, questions[], report_path, note_for_next
 report_path: .harness/state/reports/T03.md
 質問はしない: 疑問は questions に書いて返す。
@@ -109,8 +110,9 @@ report_path: .harness/state/reports/T03.md
 ## 3. 最終レビュー（全タスク完了後に 1 回だけ）
 
 1. 全タスクが `done` であることを確認する。`blocked` が 1 つでも残っていればレビューに入らず、ユーザーに返す。`phase: "review"`。
-2. **観点別に起動**する（毎タスクでは起動しない）。既定の 4 観点は `docs/roles/reviewer.md`: 仕様突合 / 並行性 / 認可 / 機能の完結性。各レビュアーに渡すのは「観点」「差分範囲 `base_commit..HEAD`」「spec の該当節」「報告の形式（場所・問題・コード上の証拠・再現手順・重大度・修正コスト高/低）」「報告の書き先 `.harness/state/reports/review-<spec|concurrency|authz|completeness>.md`」。統括が受け取るのは**要約（件数・重大度・場所）だけ**。
-   - Claude Code: `reviewer` サブエージェントを観点ごとに 1 体、1 メッセージで並列起動。
+2. **観点別に起動**する（毎タスクでは起動しない）。既定の 4 観点は `docs/roles/reviewer.md`: 仕様突合 / 並行性 / 認可 / 機能の完結性。各レビュアーに渡すのは「観点」「差分範囲 `base_commit..HEAD`」「spec の該当節」「報告の形式（場所・問題・コード上の証拠・再現手順・重大度・修正コスト高/低）」「報告の書き先 `.harness/state/reports/review-<spec|concurrency|authz|completeness>.md`」。統括が受け取るのは**要約（件数・重大度・場所・見出し・修正コスト高/低）だけ**。**修正コストを要約に含めるのは、4 の反証の条件を統括が report 本文を開かずに判定するため**（入っていなければ本文を開かず当人に聞き返す）。
+   - **モデルは既定で下位**（統括だけ上位を保つ）。レビュアーも反証役も根拠を「コードの該当行かテストの出力」に縛ってあるので下位で足りる。**上位モデルを観点ぶん並列に起動するとセッションのレート上限に当たり、途中で止まる**（実測: 4 体中 3 体が起動直後に停止し、報告は 1 件も残らなかった）。
+   - Claude Code: `reviewer` サブエージェントを観点ごとに 1 体、1 メッセージで並列起動。止まったら破棄せず、上限のリセット後に同じエージェントへ「中断地点から再開」を送る（文脈を保ったまま続きを書かせられる）。
    - Codex: 観点ごとに別スレッドで `$role-reviewer`。
    - 機構が無い環境: ユーザーに 4 セッションの起動を依頼。
 3. **重複排除**: 同じ場所・同じ問題を複数のレビュアーが報告していたら 1 件にまとめ、「報告者数」を付ける。

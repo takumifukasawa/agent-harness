@@ -1,6 +1,6 @@
 # handoff — 現在地
 
-最終更新: 2026-09-18（`harness doctor` の題材が完了。**VERSION 0.4.0 で出荷**）
+最終更新: 2026-09-18（`harness doctor` の題材が完了し **v0.4.0** で出荷。学びの昇格まで済ませて **v0.5.0** を切った。どちらも push 済み）
 
 ## いま何をしているか（1〜3 行）
 
@@ -10,7 +10,7 @@
 
 | 項目 | 状態 | 出典 |
 |---|---|---|
-| VERSION | **0.4.0**（2026-09-18） | `VERSION`, `CHANGELOG.md` |
+| VERSION | **0.5.0**（2026-09-18）。v0.1.0〜v0.5.0 すべて origin に push 済み | `VERSION`, `CHANGELOG.md`, git tags |
 | 検査 | **12 件 pass**（`doctor scenarios` 38 / `update scenarios` 13 を含む） | `.harness/checks.sh` |
 | `harness doctor` | OK=16 WARN=1 FAIL=0（WARN は開発機に jq が無いだけ） | `harness doctor` |
 | 導入コピーの drift | なし（`modified=0 missing=0`） | `harness status` |
@@ -20,13 +20,11 @@
 | 決定 | 0001〜0004 | `docs/decisions/` |
 | 技術負債 | #6（テストの下限は doctor 呼び出し ≒3 秒）、#7（source のテストが `tests/doctor.sh` に同居） | `docs/tech-debt.md` |
 
+**v0.5.0 で昇格済み**（`docs/learnings.md` の該当項目に「→ harness v0.5.0 へ昇格」と印がある）: レビュアーと反証役は既定で下位モデル / 統括が受け取る要約に修正コストを入れる / 実装役の指示テンプレに「検査は前面で回す」と「`CHANGELOG` の `[Unreleased]` に書く」。残りの `[harness候補]` 9 件は Windows 固有の罠が中心で、`harness/scripts/` の実装側に既に織り込み済みのものが多い。
+
 ## NEXT（依存順。順序制約があれば明記）
 
-1. **`[harness候補]` を `harness/` へ昇格する**（`harness-maintain` の手順）。`docs/learnings.md` に 8 件ある。**効果が大きい順に 3 件**:
-   - **レビュアーと反証役は既定で下位モデル** → `harness/skills/task-orchestrate/SKILL.md` §3 と `harness/roles/reviewer.md`。根拠: opus 4 体を並列起動してレート上限に当たり 3 体が停止した（2026-09-17 の実測）
-   - **実装役の指示テンプレに「検査は前面で回す」と「利用者に影響する変更なら `CHANGELOG` の `[Unreleased]` に書く」を足す** → §2.1。後者が無かったせいで T10 の変更を版切りで取りこぼしかけた
-   - **レビュアーに返させる要約に「修正コスト（高/低）」を入れる** → §3.2。統括はレビュー本文を開かない規律なので、これが無いと §3.4 の反証条件（単独報告かつコスト高）を判定できない
-2. `harness/checks.seed.sh`（新規プロジェクトに配られる雛形）に **`doctor: FAIL 0` 相当の検査を入れるか**を決める。今回このリポジトリの `.harness/checks.sh` にだけ入れた。seed は「docs の存在確認 1 件」しか無く、`AGENTS.md` 自身が「このままだと検査は常に pass し、完了判定が空洞化する」と書いている。**入れるなら決定を `docs/decisions/` に残す。**
+1. **`harness/checks.seed.sh`（新規プロジェクトに配られる雛形）に `doctor: FAIL 0` 相当の検査を入れるか**を決める。v0.4.0 ではこのリポジトリの `.harness/checks.sh` にだけ入れた。seed は「docs の存在確認 1 件」しか無く、`AGENTS.md` 自身が「このままだと検査は常に pass し、完了判定が空洞化する」と書いている。**入れるなら決定を `docs/decisions/` に残す。**
 3. `agent-skills` 側の `context-catchup` / `context-handoff` の description に「ハーネス未導入のリポジトリで使う」と書き、発火の重なりを解消する（別リポジトリの作業）。
 4. 次の題材を選ぶなら、**1 セッションで終わらない規模のもの**にする。今回の doctor は 810 行で `task-orchestrate` §5「1 セッションで終わる変更には使わない」に該当しており、ワークフローの価値を測る題材としては小さすぎた（`docs/plans/completed/harness-doctor.md` の「結果」を参照）。
 
