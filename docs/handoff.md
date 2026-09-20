@@ -27,6 +27,25 @@
 
 1. 次の題材を選ぶなら、**1 セッションで終わらない規模のもの**にする。今回の doctor は 810 行で `task-orchestrate` §5「1 セッションで終わる変更には使わない」に該当しており、ワークフローの価値を測る題材としては小さすぎた（`docs/plans/completed/harness-doctor.md` の「結果」を参照）。
 
+## 別の PC で再開するとき
+
+git に乗らないものが 4 つある。**再作成が要るのは 1 つだけ**で、残りは無くても困らない。
+
+| 乗らないもの | どうするか |
+|---|---|
+| `.harness/source.local` | **再作成する**: `echo '<clone した絶対パス>' > .harness/source.local`。無くても FAIL にはならず、`harness doctor` が WARN で同じコマンドを案内する（実測: OK=15 WARN=2 FAIL=0）。一度きりなら `HARNESS_SOURCE=<絶対パス>` を付けて実行する。これが無いと `update` / `diff` / `upstream` が公開 URL を見に行き、手元の編集ではなく GitHub の内容を取り込む |
+| `.harness/state/` | 不要。`harness doctor` の題材は完了済み（`phase: done`、計画は `docs/plans/completed/`）。新しい題材は `task-orchestrate` §1 がゼロから作る |
+| `.harness/backup/` `.harness/conflicts/` | 不要。`update` が作る退避先 |
+| assistant memory（エージェント固有のメモリ） | 不要。中身は `docs/learnings.md` と `docs/decisions/` に書き戻してあり、v0.5.0 でスキル本体にも昇格済み |
+
+手順:
+
+1. `git clone https://github.com/takumifukasawa/agent-harness.git`（ワークフローのスキルを他プロジェクトでも使うなら `agent-skills` も）
+2. `echo '<clone した絶対パス>' > .harness/source.local`
+3. `bash .harness/bin/harness doctor` で FAIL 0 を確認（`jq` が無ければ WARN が 1 件出るが任意依存）
+4. `bash .harness/bin/harness check` で 13 件 pass を確認（6〜8 分かかる）
+5. セッションの入口は `session-catchup`
+
 ## 未確定事項（人間の判断待ち）
 
 - なし。
