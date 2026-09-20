@@ -9,7 +9,8 @@
 
 | ファイル | 範囲 | 状態 |
 |---|---|---|
-| [harness-doctor.md](harness-doctor.md) | `harness doctor`: 導入先の環境と導入状態の診断 | 合意済 |
+| [harness-doctor.md](harness-doctor.md) | `harness doctor`: 導入先の環境と導入状態の診断 | 合意済（v0.4.0 で出荷） |
+| [cross-env-support.md](cross-env-support.md) | エージェント（Claude / Codex）と OS（Windows / macOS）を問わず同じように動く | **未合意（草案）** |
 
 ## 1 つの spec の書き方
 

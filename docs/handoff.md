@@ -1,10 +1,12 @@
 # handoff — 現在地
 
-最終更新: 2026-09-20（`harness doctor` の題材が完了し **v0.4.0** で出荷。学びの昇格まで済ませて **v0.5.0** を切った。どちらも push 済み。その後 seed の検査強化（決定 0005）と agent-skills の棲み分けまで完了）
+最終更新: 2026-09-20（次の題材を cross-env に決定。作業は macOS へ移す）
 
 ## いま何をしているか（1〜3 行）
 
-`harness doctor` を題材にした `task-orchestrate` の dogfood が**完了した**。実装 5 タスク → 最終レビュー（4 観点 + 反証 1 回）→ 修正 10 タスクで、high 4 件を含む指摘をすべて処理し、VERSION 0.4.0 を切った。記録は `docs/plans/completed/harness-doctor.md`（結果と実測値つき）。**`.harness/state/` の進行状態はもう使っていないので捨ててよい。**
+次の題材は **cross-env**（エージェントと OS を問わず同じに動く）で、草案は `docs/spec/cross-env-support.md`。**未合意なので準備フェーズ（`task-orchestrate` §1）から始める。** 作業機は macOS へ移す。
+
+前の題材（`harness doctor` を使った dogfood）は**完了した**。実装 5 タスク → 最終レビュー（4 観点 + 反証 1 回）→ 修正 10 タスクで、high 4 件を含む指摘をすべて処理し、VERSION 0.4.0 を切った。記録は `docs/plans/completed/harness-doctor.md`（結果と実測値つき）。**`.harness/state/` の進行状態はもう使っていないので捨ててよい。**
 
 ## 状態
 
@@ -25,7 +27,12 @@
 
 ## NEXT（依存順。順序制約があれば明記）
 
-1. 次の題材を選ぶなら、**1 セッションで終わらない規模のもの**にする。今回の doctor は 810 行で `task-orchestrate` §5「1 セッションで終わる変更には使わない」に該当しており、ワークフローの価値を測る題材としては小さすぎた（`docs/plans/completed/harness-doctor.md` の「結果」を参照）。
+**作業機を macOS に移す。下の「別の PC で再開するとき」の手順を先に済ませること。**
+
+1. **macOS で `harness doctor` を回し、本物の FAIL を見る。** 静的走査では 4 箇所（`docs/tech-debt.md` #3）だが、動かせばさらに出る前提。**ここで出た FAIL が spec の受け入れ条件 A の実体になる**ので、潰す前に出力を控える
+2. **`docs/spec/cross-env-support.md` の未確定事項 3 件をユーザーと 1 件ずつ詰める**（`task-orchestrate` §1.3。まとめて聞かない）。特に **1 件目（bash 3.2 を切るか）は影響範囲が大きく、これが決まらないとタスク分解ができない**
+3. 合意したら §1.6 でタスク分解 → `.harness/state/` を作って §2 の反復へ。**検査（§1.7）は「macOS で `harness check` が全件 pass」を判定できる形にする**
+4. Codex の実機確認（spec の B）は、Codex CLI が入った環境が要る。無ければ A（macOS）だけ先に進める
 
 ## 別の PC で再開するとき
 
@@ -47,6 +54,19 @@
 | `.harness/state/` `.harness/backup/` `.harness/conflicts/` | 不要。題材は完了済み（`phase: done`、計画は `docs/plans/completed/`）。新しい題材は `task-orchestrate` §1 がゼロから作る |
 | `.install.local.sh` / `.install.local.ps1`（agent-skills） | 導入先を複数指定している場合だけ再作成する。無ければ `~/.claude/skills` 1 か所が既定 |
 | assistant memory（エージェント固有のメモリ） | 不要。中身は `docs/learnings.md` と `docs/decisions/` に書き戻してあり、v0.5.0 でスキル本体にも昇格済み |
+
+### macOS の場合は先にこれ
+
+**`bin/harness` の `declare -A` と `doctor.sh` の `mapfile` は bash 4+ を要求するが、macOS の既定 bash は 3.2**（GPLv3 を避けて更新されていない）。そのままでは `harness` 自体が動かない。
+
+```bash
+brew install bash          # 5.x が /opt/homebrew/bin/bash に入る（Intel Mac は /usr/local/bin/bash）
+/opt/homebrew/bin/bash --version | head -1
+```
+
+以降 `harness` を叩くときはその bash を使う（`/opt/homebrew/bin/bash .harness/bin/harness doctor`）。**doctor の B1 が「bash の版が 4 未満」を FAIL で検出する**ので、間違えれば黙って壊れるのではなく止まる。そもそも 3.2 を切るのか 3.2 でも動く形に直すのかは、`docs/spec/cross-env-support.md` の未確定事項 1 件目（ユーザーと決める）。
+
+macOS では他に 3 箇所の既知のブロッカーがある（`sha256sum` が無い / `date -d` が違う / `sed -i` に引数が要る）。詳細は `docs/tech-debt.md` #3。**これらは直す対象であって回避する対象ではない**（それが次の題材）。
 
 ### 手順
 
