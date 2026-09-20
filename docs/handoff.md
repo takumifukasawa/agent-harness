@@ -29,22 +29,45 @@
 
 ## 別の PC で再開するとき
 
-git に乗らないものが 4 つある。**再作成が要るのは 1 つだけ**で、残りは無くても困らない。
+**スキルには 2 系統あり、配られ方が違う。**
 
-| 乗らないもの | どうするか |
+| 系統 | 置き場 | 別 PC へは |
+|---|---|---|
+| ハーネスのスキル（`session-catchup` / `session-handoff` / `task-orchestrate` / `harness` / `harness-maintain`） | **各プロジェクトの `.claude/skills/`**（コミット対象。`harness init` が置く） | **clone で付いてくる。作業不要** |
+| 汎用スキル（`context-catchup` / `task-eta` / `skill-creator` / `blog-review` / `game-*` など） | **マシン全体の `~/.claude/skills/`** | **`agent-skills` を clone して installer を回す** |
+
+`.claude/settings.json`（SessionStart フック、`git push --force` 等の deny）と `.claude/agents/`（implementer / reviewer）も**コミット対象なので clone で付いてくる**。
+
+### git に乗らないもの（再作成が要るのは 2 つ）
+
+| | どうするか |
 |---|---|
-| `.harness/source.local` | **再作成する**: `echo '<clone した絶対パス>' > .harness/source.local`。無くても FAIL にはならず、`harness doctor` が WARN で同じコマンドを案内する（実測: OK=15 WARN=2 FAIL=0）。一度きりなら `HARNESS_SOURCE=<絶対パス>` を付けて実行する。これが無いと `update` / `diff` / `upstream` が公開 URL を見に行き、手元の編集ではなく GitHub の内容を取り込む |
-| `.harness/state/` | 不要。`harness doctor` の題材は完了済み（`phase: done`、計画は `docs/plans/completed/`）。新しい題材は `task-orchestrate` §1 がゼロから作る |
-| `.harness/backup/` `.harness/conflicts/` | 不要。`update` が作る退避先 |
+| **`.harness/source.local`** | **再作成する**: `echo '<clone した絶対パス>' > .harness/source.local`。無いと `update` / `diff` / `upstream` が公開 URL を見に行き、**手元の編集ではなく GitHub の内容を取り込む**。FAIL にはならず `harness doctor` が WARN で直し方のコマンドごと案内する（実測: OK=15 WARN=2 FAIL=0） |
+| **`core.hooksPath`** | **再設定する**: `git config core.hooksPath .githooks`。`.git/config` はリポジトリに乗らないので、`harness init` ではなく `git clone` で持ってくると未設定になり、pre-commit の fast 検査が走らない。`doctor` の B6 が WARN で同じコマンドを案内する |
+| `.harness/state/` `.harness/backup/` `.harness/conflicts/` | 不要。題材は完了済み（`phase: done`、計画は `docs/plans/completed/`）。新しい題材は `task-orchestrate` §1 がゼロから作る |
+| `.install.local.sh` / `.install.local.ps1`（agent-skills） | 導入先を複数指定している場合だけ再作成する。無ければ `~/.claude/skills` 1 か所が既定 |
 | assistant memory（エージェント固有のメモリ） | 不要。中身は `docs/learnings.md` と `docs/decisions/` に書き戻してあり、v0.5.0 でスキル本体にも昇格済み |
 
-手順:
+### 手順
 
-1. `git clone https://github.com/takumifukasawa/agent-harness.git`（ワークフローのスキルを他プロジェクトでも使うなら `agent-skills` も）
-2. `echo '<clone した絶対パス>' > .harness/source.local`
-3. `bash .harness/bin/harness doctor` で FAIL 0 を確認（`jq` が無ければ WARN が 1 件出るが任意依存）
-4. `bash .harness/bin/harness check` で 13 件 pass を確認（6〜8 分かかる）
-5. セッションの入口は `session-catchup`
+```bash
+# 1. agent-harness
+git clone https://github.com/takumifukasawa/agent-harness.git
+cd agent-harness
+echo "$(pwd)" > .harness/source.local     # 機械ローカルの source（gitignore 対象）
+git config core.hooksPath .githooks       # clone では引き継がれない
+bash .harness/bin/harness doctor          # FAIL 0 を確認（jq が無ければ WARN 1 件。任意依存）
+bash .harness/bin/harness check           # 13 件 pass（6〜8 分）
+
+# 2. agent-skills（汎用スキルをマシン全体に入れる）
+git clone https://github.com/takumifukasawa/agent-skills.git
+cd agent-skills
+./install.sh                              # bash: symlink。編集は即反映、追加時だけ再実行
+```
+
+Windows で PowerShell から使う場合は `./install.ps1 -Link`（junction。管理者権限も開発者モードも不要、ドライブを跨いでも動く）。`-Link` を付けないと**コピー**になり、スキルを編集するたびに再実行が要る。導入先を複数にするなら `-Dest 'C:one','C:	wo'` か、gitignore 対象の `.install.local.ps1` に `$Dest = @(...)` を書く。
+
+**スキルはセッション開始時に読み込まれる。** 入れ直したら新しいセッションを開くか `/clear` する。
 
 ## 未確定事項（人間の判断待ち）
 
