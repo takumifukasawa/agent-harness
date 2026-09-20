@@ -5,6 +5,10 @@
 # 使い方:  bash .harness/scripts/check.sh [--fast]
 #   --fast : pre-commit 用。checks.sh で `fast` と印を付けた検査だけ実行する。
 #
+# 各検査の所要時間（秒）と、遅い順の要約を最後に出す。どこが遅いかを推定でなく実測で掴むため
+# （`docs/spec/check-speed.md` の A）。粒度は秒。macOS 既定の bash 3.2 と BSD date には
+# ミリ秒を外部プロセス無しで取る手段が無いので、組み込みの $SECONDS を使う（決定 0006）。
+#
 # .harness/checks.sh の書き方（seed ファイル。プロジェクトが編集する）:
 #   check fast "lint"        "npm run lint"
 #   check      "unit tests"  "npm test"
@@ -28,6 +32,7 @@ fi
 
 pass=0; fail=0; skipped=0
 failed_names=()
+timings=""   # "<秒>\t<表示名>" の行を貯める。遅い順の要約に使う（配列だと空のとき set -u で落ちる）
 
 check() {
   local speed="" name cmd
@@ -41,18 +46,34 @@ check() {
     skipped=$((skipped + 1)); return
   fi
   printf '── %s\n' "$name"
+  local start=$SECONDS sec
   if (cd "$ROOT" && bash -c "$cmd"); then
-    echo "   PASS"; pass=$((pass + 1))
+    sec=$((SECONDS - start))
+    printf '   PASS (%ss)\n' "$sec"; pass=$((pass + 1))
   else
-    echo "   FAIL ($cmd)"; fail=$((fail + 1)); failed_names+=("$name")
+    sec=$((SECONDS - start))
+    printf '   FAIL (%ss) (%s)\n' "$sec" "$cmd"; fail=$((fail + 1)); failed_names+=("$name")
   fi
+  timings="${timings}${sec}	${name}
+"
 }
 
 # shellcheck disable=SC1090
 source "$CHECKS"
 
 echo
-echo "harness check: pass=$pass fail=$fail skipped=$skipped"
+echo "harness check: pass=$pass fail=$fail skipped=$skipped  (${SECONDS}s)"
+
+# 遅い順の要約。どの検査を直せば効くかを、推定ではなく実測で決めるための材料
+# （`docs/spec/check-speed.md` の A3）。秒未満は 0s と出るので、合計と食い違う分は
+# 「1 秒未満の検査の積み上げ」と読む。
+if [ -n "$timings" ]; then
+  slow="$(printf '%s' "$timings" | sort -rn | head -5 | awk -F'\t' '{ printf "    %ss  %s\n", $1, $2 }')"
+  if [ -n "$slow" ]; then
+    echo "  遅い順（上位 5 件）:"
+    printf '%s\n' "$slow"
+  fi
+fi
 if [ "$fail" -gt 0 ]; then
   printf '  failed: %s\n' "${failed_names[@]}"
   echo "  失敗した検査の出力を読み、修復手順があればそれに従う。無ければ直した後に検査側へ手順を足す。"
