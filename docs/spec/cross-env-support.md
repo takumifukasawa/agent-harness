@@ -27,7 +27,7 @@ macOS           フェーズ 1        フェーズ 2
 ### A. macOS で動く（フェーズ 1）
 
 - A1. `/bin/bash .harness/bin/harness doctor` が **FAIL 0**（WARN は任意依存のみ）。**`LC_ALL=C` を付けず `ja_JP.UTF-8` のまま**通ること
-- A2. `/bin/bash .harness/bin/harness check` が **全件 pass**（T01 で禁止検査 2 件が増えて 15 件）。同じくロケールを細工しない
+- A2. `/bin/bash .harness/bin/harness check` が **全件 pass**（T01 で禁止検査 2 件、T02 で `githooks are executable` / `gc scenarios` / `stdin (curl \| bash) install` の 3 件が増えて **18 件**）。同じくロケールを細工しない
 - A3. `harness init` が公開 URL からも動く
 - A4. **bash 3.2 を切らない**。macOS 既定の bash でそのまま動く形に落とす（**決定 0006**）
 - A5. 環境差で壊れた箇所は、直すと同時に**その環境で落ちるテスト・検査**を足す（`tests/` に OS 分岐を持ち込むのではなく、両方で通る書き方に直すのが既定）
