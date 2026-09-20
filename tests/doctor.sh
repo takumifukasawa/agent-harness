@@ -80,26 +80,56 @@ run_doctor_without_path() { # PATH を潰して doctor.sh を直接回す（git 
 run_doctor_with_broken_git() { # git だけが使えない PATH で doctor.sh を直接回す（git 無しでも内容比較が効くか）
   OUT="$(cd "$PROJ" && PATH="$WORK/nogit:$PATH" "$BASH_BIN" .harness/scripts/doctor.sh 2>&1)"; CODE=$?
 }
-run_doctor_without_node_jq() { # node/jq の実行ファイルだけを隠して doctor を回す（C3 の検証）
-  # PATH=/nonexistent（run_doctor_without_path）は git/sed/awk まで消してしまい、C3（node/jq が
-  # 無くても「全項目」が動く）の検証にならない（manifest が読めず B4/B5/B8 が丸ごとスキップされる）。
-  # 「node/jq を含むディレクトリごと PATH から外す」だと、macOS 15+ のように jq が /usr/bin に
-  # git・sed・tr 等と同居している実機で、それらまで道連れに消えてしまう（実測。tech-debt #3）。
-  # ディレクトリ単位ではなく実行ファイル単位で隠す: 元の PATH を先頭から辿り、node/jq 以外の
-  # 実行ファイルだけを 1 つのスタブディレクトリへ最初に見つかったものだけ symlink し、
-  # PATH をそのスタブ 1 本に絞る（PATH の優先順位はそのまま保たれる）。
-  local stub="$WORK/stub-no-node-jq" dir f name
-  rm -rf "$stub"; mkdir -p "$stub"
+# ディレクトリ単位ではなく実行ファイル単位で隠す: <探索元 PATH> を先頭から辿り、node/jq 以外の
+# 実行ファイルだけを <出力先> へ最初に見つかったものだけスタブ化する（PATH の優先順位はそのまま
+# 保たれる）。symlink が使えない環境（例: 非特権ユーザー・Developer Mode 無効の Windows Git
+# Bash/MSYS2）では ln -s が黙って失敗し、出力先が git/sed 等を欠いたほぼ空のディレクトリになる。
+# T01 が macOS の PATH 丸ごと除外方式で踏んだのと同型の「node/jq と無関係な理由で診断が総崩れ」
+# が今度は Windows で再発しうる（最終レビュー指摘）。ln -s が失敗したら cp にフォールバックする。
+#
+# 1 ファイル単位で両方失敗しても、それだけで即失敗にはしない。実測（この macOS 機。実際の
+# 開発機の $PATH で run_doctor_without_node_jq を素通しした際に発覚）で /usr/bin/sudo が
+# `-r-s--x--x`（所有者以外は読めない setuid）のため、symlink を強制的に使えなくして cp だけに
+# フォールバックさせると cp 自体が Permission denied で失敗した。sudo は doctor の診断に無関係で、
+# それを理由にスタブ化全体を失敗させるのは過検知（sudo に限らず、読み取り制限つきの setuid
+# バイナリが PATH 上にあるだけで再現しうる）。「握り潰さない」対象は個々のファイルの読み取り
+# 権限ではなく、フォールバック機構そのものが効いていない状態（T01 が踏んだのと同型の、ほぼ何も
+# stub 化できない総崩れ）。そこでファイルごとの失敗はスキップしつつ件数を数え、1 件も stub 化
+# できなかったときだけ失敗を返す（呼び出し元が errors に積む）。
+build_exe_stub() { # <探索元 PATH（コロン区切り）> <出力先ディレクトリ>
+  local src_path="$1" dest="$2" dir f name
+  rm -rf "$dest"; mkdir -p "$dest"
   local IFS=':'
-  for dir in $PATH; do
+  local stubbed=0 stub_fail_names=""
+  for dir in $src_path; do
     [ -d "$dir" ] || continue
     for f in "$dir"/*; do
       [ -f "$f" ] && [ -x "$f" ] || continue
       name="$(basename "$f")"
       case "$name" in node|jq) continue;; esac
-      [ -e "$stub/$name" ] || ln -s "$f" "$stub/$name" 2>/dev/null
+      [ -e "$dest/$name" ] && continue
+      if ln -s "$f" "$dest/$name" 2>/dev/null || cp "$f" "$dest/$name" 2>/dev/null; then
+        stubbed=$((stubbed + 1))
+      else
+        stub_fail_names="$stub_fail_names $name"
+      fi
     done
   done
+  if [ -n "$stub_fail_names" ]; then
+    echo "      （setup: ln -s も cp も失敗した実行ファイルをスキップ:${stub_fail_names}）" >&2
+  fi
+  [ "$stubbed" -gt 0 ]
+}
+run_doctor_without_node_jq() { # node/jq の実行ファイルだけを隠して doctor を回す（C3 の検証）
+  # PATH=/nonexistent（run_doctor_without_path）は git/sed/awk まで消してしまい、C3（node/jq が
+  # 無くても「全項目」が動く）の検証にならない（manifest が読めず B4/B5/B8 が丸ごとスキップされる）。
+  # 「node/jq を含むディレクトリごと PATH から外す」だと、macOS 15+ のように jq が /usr/bin に
+  # git・sed・tr 等と同居している実機で、それらまで道連れに消えてしまう（実測。tech-debt #3）。
+  local stub="$WORK/stub-no-node-jq"
+  if ! build_exe_stub "$PATH" "$stub"; then
+    errors+=("setup: PATH 上のどの実行ファイルも stub化できなかった（ln -s も cp も失敗した。symlink 不可と cp 不可が重なっている）")
+    return 1
+  fi
   OUT="$(cd "$PROJ" && PATH="$stub" "$BASH_BIN" .harness/bin/harness doctor 2>&1)"; CODE=$?
 }
 apply_fix() { # <直し方どおりのコマンド文字列> — $PROJ の中でコピペしたのと同じように実行する
@@ -307,6 +337,67 @@ expect_no_node_jq() {
   expect_out '^OK .*gitignore'
 }
 scenario "C3: node / jq が無くても全項目が実行できる（PATH から node/jq のディレクトリだけを外す）" setup_init expect_no_node_jq
+
+# C3. build_exe_stub（旧 run_doctor_without_node_jq に埋め込まれていたスタブ化ロジック）は
+# `ln -s` 失敗を `2>/dev/null` で握り潰すだけでフォールバックが無かった。Windows の Git Bash
+# （MSYS2）は非特権ユーザー・Developer Mode 無効では symlink 作成に失敗するため、その場合
+# スタブ先が git/sed 等を欠いたほぼ空のディレクトリになり、T01 が macOS で直したのと同型の
+# 「node/jq と無関係な理由で診断が総崩れ」が今度は Windows で再発しうる（最終レビュー指摘）。
+#
+# この機の実 $PATH（数千ファイル、うち一部は GB 級のバイナリ）に対して ln を丸ごと壊すと、
+# cp フォールバックが実バイナリを大量にコピーしにかかり非現実的に遅い（実測: 一度タイムアウトで
+# kill された）。実 PATH を汚さない小さな使い捨てのソースディレクトリに対して build_exe_stub を
+# 直接呼び、ln -s 失敗時に cp へフォールバックすることだけを見る（doctor 全体の統合的な確認は
+# 下の「C3: node / jq が無くても全項目が実行できる」が実 PATH の ln -s 経路で担保している）。
+expect_stub_ln_failure_falls_back_to_cp() {
+  local src="$WORK/fake-src" fakebin="$WORK/fake-no-ln" dest="$WORK/fake-dest" saved_path="$PATH" i
+  mkdir -p "$src" "$fakebin"
+  for i in 1 2 3; do
+    printf '#!/bin/sh\necho "tool%s"\n' "$i" > "$src/tool$i"
+    chmod +x "$src/tool$i"
+  done
+  printf '#!/bin/sh\nexit 1\n' > "$fakebin/ln"
+  chmod +x "$fakebin/ln"
+  PATH="$fakebin:$PATH"
+  build_exe_stub "$src" "$dest"
+  local rc=$?
+  PATH="$saved_path"
+  [ "$rc" -eq 0 ] || errors+=("build_exe_stub が ln -s 失敗時に cp へフォールバックしなかった（rc=${rc}）")
+  for i in 1 2 3; do
+    if [ -L "$dest/tool$i" ]; then
+      errors+=("tool${i} が symlink のまま stub 化されている（ln -s は失敗させたはず）")
+    elif [ ! -f "$dest/tool$i" ]; then
+      errors+=("tool${i} が cp フォールバックでも stub 化されなかった")
+    fi
+  done
+}
+scenario "C3: build_exe_stub は ln -s が失敗しても cp にフォールバックする" setup_empty expect_stub_ln_failure_falls_back_to_cp
+
+# C3. ln -s も cp も両方失敗する（フォールバック先まで潰れている）極端な環境では、黙って通さず
+# 検出できることを確認する（握り潰さない。受け入れ条件）。build_exe_stub は 1 ファイル単位の
+# 失敗では失敗にしない（下の setup コメント、または harness/scripts/doctor.sh 相当のコメントに
+# ある sudo の実測どおり、setuid で読み取り制限のあるバイナリなどは無関係な理由で cp が失敗し
+# うるため）。ここでは 1 件も stub 化できない状況（フォールバック機構そのものが効いていない）を
+# 作り、build_exe_stub が失敗を返す（0 件も stub 化しない）ことを見る。
+expect_stub_double_failure_is_detected_not_swallowed() {
+  local src="$WORK/fake-src" fakebin="$WORK/fake-no-ln-cp" dest="$WORK/fake-dest" saved_path="$PATH" i
+  mkdir -p "$src" "$fakebin"
+  for i in 1 2 3; do
+    printf '#!/bin/sh\necho "tool%s"\n' "$i" > "$src/tool$i"
+    chmod +x "$src/tool$i"
+  done
+  printf '#!/bin/sh\nexit 1\n' > "$fakebin/ln"
+  printf '#!/bin/sh\nexit 1\n' > "$fakebin/cp"
+  chmod +x "$fakebin/ln" "$fakebin/cp"
+  PATH="$fakebin:$PATH"
+  build_exe_stub "$src" "$dest"
+  local rc=$?
+  PATH="$saved_path"
+  [ "$rc" -ne 0 ] || errors+=("build_exe_stub が ln -s も cp も失敗する状況で成功（rc=0）を返した（握り潰している）")
+  [ -e "$dest/tool1" ] && errors+=("stub化できていないはずの tool1 が \$dest に存在する")
+}
+scenario "C3: build_exe_stub は ln -s も cp も失敗したら失敗を返す（握り潰さない）" \
+  setup_empty expect_stub_double_failure_is_detected_not_swallowed
 
 # B3. manifest が壊れていれば FAIL（存在はするが harness_version 等が読めない形にする）。
 # version/source/agents の見出しごと読めないケース: harness update は source を解決できず
