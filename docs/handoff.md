@@ -1,12 +1,21 @@
 # handoff — 現在地
 
-最終更新: 2026-09-21（題材 cross-env の**フェーズ 1 をクローズ**。版 0.6.0、最終レビューと指摘修正まで完了。次の題材は `docs/spec/check-speed.md` の A）
+最終更新: 2026-09-21（cross-env フェーズ 1 クローズ・版 0.6.0。続けて **check-speed の A（検査の計測）も完了**し、B の対象が実測で確定した）
 
 ## いま何をしているか（1〜3 行）
 
 題材は **cross-env**（エージェントと OS を問わず同じに動く）。**準備フェーズは完了し、合意はすべて spec と決定 0006 に書き戻してある。** **フェーズ 1（macOS で動く）は完了。** 5 タスク done、版 **0.6.0**、最終レビュー 1 回と指摘 3 件の修正（T05）まで済み、`.harness/state/progress.json` は `phase: done`（**ユーザーの承認待ち**）。残るのは main へのマージとフェーズ 2（Codex）。
 
-**次の題材は `docs/spec/check-speed.md` の A**（検査ごとの所要時間を可視化する）。2026-09-21 にユーザーと範囲を合意済み: **計測を単独で先にやり、実測を見てから tech-debt #6 の返済範囲を決める**。計画と進捗は `docs/plans/active/cross-env.md`、機械可読な状態は `.harness/state/`。
+**`docs/spec/check-speed.md` の A（検査ごとの所要時間を可視化）は完了**（`ac529ff`）。実測:
+
+| 検査 | 秒 | 割合 |
+|---|---|---|
+| `doctor scenarios`（`tests/doctor.sh`） | **58s** | 61% |
+| `update scenarios`（`tests/update.sh`） | **30s** | 32% |
+| 残り 16 件 | 合計 7s | 7% |
+| **`--fast`（pre-commit）** | **1s** | — |
+
+**2 件で 93%。** tech-debt #6 は `tests/doctor.sh` だけを挙げていたが、**`tests/update.sh` の 30 秒は記載が無かった**（測らずに返していたら 3 割取り逃していた）。`--fast` が 1 秒なので、**fast の印を増やす余地**もある（今 18 件中 11 件）。計画と進捗は `docs/plans/active/cross-env.md`、機械可読な状態は `.harness/state/`。
 
 **作業機は macOS（Darwin 24.6 / arm64 / 素の bash 3.2.57）。** 2026-09-20 に初めて実機で回し、`harness check` が **pass=9 fail=4** だったところを **pass=18 fail=0**（検査自体が 13 → 18 件）にした。**`.githooks/pre-commit` は T02 で本当に走るようになった**（index mode 100755）。
 
@@ -30,7 +39,7 @@
 **`task-orchestrate` の反復フェーズの続き。** `.harness/state/progress.json` が `phase: iterate` / `current_task: T03` なので、スキルの §0 から入れば続きから拾える。
 
 1. **フェーズ 1 の成果を main へ載せ、tech-debt #4 を閉じる**（下の 2 と一体）。マージ後に `bash bin/harness init --source https://github.com/takumifukasawa/agent-harness.git` を 1 回回して `doctor` が FAIL 0 になることを確認する。
-2. **次の題材 `docs/spec/check-speed.md` の A**（検査ごとの所要時間を可視化）。`harness/scripts/check.sh`（60 行）の `check()` に数行を足す規模で、**1 タスクで終わる見込み**なので `task-orchestrate` を使うほどではない（スキル §5「1 セッションで終わる変更には使わない」）。A8 で実測を tech-debt #6 に書き戻すところまでが範囲。
+2. **`check-speed` の B**（`tests/doctor.sh` 58s と `tests/update.sh` 30s を速くする）。**対象は実測で確定済み。目標値だけ未確定**（#6 起票時の目標は「20〜40 秒」）。**検査を弱めて速くしない**のが前提（spec の B2）。規模によっては `task-orchestrate` を使う。
 3. **フェーズ 2（Codex）**。今落ちている公開経路は main が T01 前（305d57b）だからで、コード側の欠陥ではない（現ブランチ内容の clone 経路では通る）。
    タスクは spec の B1〜B4。**Codex CLI 0.154.0 がこの機に入っている**（`/opt/homebrew/bin/codex`）ので環境待ちにはならない
    フェーズ 1 とは spec の節も差分範囲も分かれるので、**`.harness/state/` を作り直して新しい反復として起動する**のが素直（今の state はフェーズ 1 の記録として畳む）。
