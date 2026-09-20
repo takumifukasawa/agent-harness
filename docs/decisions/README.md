@@ -9,6 +9,7 @@
 | [0003](0003-doctor-guidance-matches-update-behavior.md) | doctor の「直し方」を実測に合わせる（manifest 復旧経路 / CRLF・版ずれ・マーカー重複の一本化 / 非 git ディレクトリの根本原因） | 採用 | 2026-09-18 |
 | [0004](0004-source-lives-in-machine-local-override.md) | manifest の source は共有値に固定し、機械ローカルのパスは gitignore 対象の上書きへ逃がす | 採用 | 2026-09-18 |
 | [0005](0005-seed-checks-include-doctor.md) | seed の `checks.sh` に `doctor: FAIL 0` を最初から入れる | 採用 | 2026-09-18 |
+| [0006](0006-support-bash-3-2.md) | bash 3.2 を切らない（macOS 既定の bash で動く形に落とす） | 採用 | 2026-09-20 |
 
 配管・ワークフローの個別の決定（配布方式、Windows 対応、再試行の方式 など 11 件）は `../../DESIGN.md` §10 の決定ログにある。新しい決定はここに 1 ファイルずつ足す。
 
