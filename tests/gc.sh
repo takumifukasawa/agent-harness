@@ -136,6 +136,22 @@ expect_unparsable_date() {
 }
 scenario "G4: 解釈できない日付は無言でスキップせず報告する" setup_unparsable_date expect_unparsable_date
 
+# G7. 日付の後ろに一言添える書き方（「最終更新: 2026-09-20（題材 …）」）は実際にある
+# （このリポジトリの docs/handoff.md がそれ）。行の残り全部を日付として扱うと、正しく書かれた
+# handoff に対して G4 の「読めない日付」警告が出る＝偽陽性で診断の信用が落ちる。行頭の
+# YYYY-MM-DD だけを取る。
+setup_dated_with_note() {
+  new_proj || return 1
+  printf '# handoff\n\n最終更新: %s（題材 cross-env のフェーズ 1）\n' "$(days_ago 100)" >"$PROJ/docs/handoff.md"
+}
+expect_dated_with_note() {
+  run_gc
+  expect_out '最終更新が 1[0-9][0-9] 日前'
+  expect_not_out '読めなかった'
+}
+scenario "G7: 日付の後ろに補足が続いても日付として読む（偽陽性を出さない）" \
+  setup_dated_with_note expect_dated_with_note
+
 # G5. 放置された計画（git の最終コミット日で判定）。handoff とは別経路の日付判定。
 setup_stale_plan() {
   new_proj || return 1

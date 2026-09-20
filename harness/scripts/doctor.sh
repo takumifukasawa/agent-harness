@@ -285,11 +285,45 @@ if ! git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     "git init . && git config core.hooksPath .githooks でこのディレクトリを git 管理下に置いたうえで hooksPath も設定する（git を使わない運用なら、この WARN は無視してよい）"
 else
   hooks_path="$(git -C "$ROOT" config --get core.hooksPath 2>/dev/null || true)"
-  if [ "$hooks_path" = ".githooks" ] && [ -f "$ROOT/.githooks/pre-commit" ]; then
-    report OK "git hooks（core.hooksPath=.githooks, .githooks/pre-commit あり）"
-  else
+  if [ "$hooks_path" != ".githooks" ] || [ ! -f "$ROOT/.githooks/pre-commit" ]; then
     report WARN "git hooks（core.hooksPath が .githooks になっていない、または .githooks/pre-commit が無い。現在値: ${hooks_path:-未設定}）" \
       "git config core.hooksPath .githooks"
+  else
+    # 存在（-f）だけでは足りない。git は**実行できないフックを黙って無視する**（hint が 1 行出るだけで
+    # commit は成功する）ので、-f しか見ないと「pre-commit で速い検査が回っている」つもりのまま一度も
+    # 回っていない状態に緑を出す（2026-09-20 に macOS 実機で発覚）。見るのは 2 つ。
+    #   1. git index の mode … clone した先に配られる値。100644 なら、その先では実行ビットが付かない
+    #   2. 作業ツリーの -x  … この PC で今フックが走るか
+    # 2 は Windows の Git では意味を持たない（core.filemode=false が既定で、chmod しても記録されない）。
+    # そこで filemode=false のときは 2 を見ない。1 は OS を問わず git が記録するので常に見る。
+    hook_path="$ROOT/.githooks/pre-commit"
+    hook_problem=""
+    hook_tracked=0
+    hook_index_mode="$(git -C "$ROOT" ls-files -s -- .githooks/pre-commit 2>/dev/null | awk '{print $1; exit}')"
+    [ -n "$hook_index_mode" ] && hook_tracked=1
+    if [ "$hook_tracked" = 1 ] && [ "$hook_index_mode" != "100755" ]; then
+      hook_problem="git index 上の mode が ${hook_index_mode}（clone した先で実行ビットが付かず、そこでフックが黙って無視される）"
+    fi
+    hook_filemode="$(git -C "$ROOT" config --get core.filemode 2>/dev/null || true)"
+    if [ "$hook_filemode" != "false" ] && [ ! -x "$hook_path" ]; then
+      if [ -n "$hook_problem" ]; then
+        hook_problem="作業ツリーに実行ビットが無く、${hook_problem}"
+      else
+        hook_problem="作業ツリーに実行ビットが無い（この PC ではフックが走らない）"
+      fi
+    fi
+    if [ -n "$hook_problem" ]; then
+      # 未追跡のファイルに git update-index は使えない（fatal になる）ので、直し方を場合分けする。
+      if [ "$hook_tracked" = 1 ]; then
+        hook_fix="chmod +x .githooks/pre-commit && git update-index --chmod=+x .githooks/pre-commit"
+      else
+        hook_fix="chmod +x .githooks/pre-commit"
+      fi
+      report WARN "git hooks: .githooks/pre-commit が実行できない状態（${hook_problem}）。git は実行できないフックを黙って無視するので、commit は成功するのに検査が走らない" \
+        "$hook_fix"
+    else
+      report OK "git hooks（core.hooksPath=.githooks, .githooks/pre-commit は実行可能）"
+    fi
   fi
 fi
 

@@ -38,14 +38,39 @@ report() { # severity message hint
 }
 
 today_epoch=$(date +%s)
-days_since() { # YYYY-MM-DD -> days (or empty if unparsable)
-  local e; e=$(date -d "$1" +%s 2>/dev/null) || return 1
+
+# YYYY-MM-DD を epoch 秒（その日の 0 時）にする。date の方言は 2 系統あり、どちらか一方しか通らない:
+#   GNU coreutils … date -d "2026-09-01" +%s
+#   BSD / macOS   … date -j -f '%Y-%m-%d %H:%M:%S' "2026-09-01 00:00:00" +%s
+# 以前は GNU 形式だけを試し、失敗を `|| return 1` で握り潰していた。その結果 macOS では
+# **日付に依存する判定（handoff の鮮度・計画の放置日数・state・references）が全部無言で飛び**、
+# gc が「問題なし」と報告していた（2026-09-20 に実測。tech-debt #8）。両方言に対応したうえで、
+# それでも読めなかった日付は下の集計で必ず報告する（黙って飛ばすのが最大の害だった）。
+date_to_epoch() { # YYYY-MM-DD -> epoch 秒
+  date -d "$1" +%s 2>/dev/null && return 0
+  date -j -f '%Y-%m-%d %H:%M:%S' "$1 00:00:00" +%s 2>/dev/null && return 0
+  return 1
+}
+
+# 読めなかった日付の控えはファイルに貯める。days_since は `d=$(days_since ...)` と
+# コマンド置換（= 別プロセス）で呼ばれるので、変数に貯めても呼び出し元には残らない。
+UNPARSED_FILE="$(mktemp 2>/dev/null || echo "${TMPDIR:-/tmp}/harness-gc-unparsed.$$")"
+: >"$UNPARSED_FILE"
+trap 'rm -f "$UNPARSED_FILE"' EXIT INT TERM
+
+days_since() { # YYYY-MM-DD -> days（読めなければ非ゼロで返し、読めなかった日付を控える）
+  local e
+  e=$(date_to_epoch "$1") || { printf '%s\n' "$1" >>"$UNPARSED_FILE"; return 1; }
   echo $(( (today_epoch - e) / 86400 ))
 }
 
 # 1. handoff の鮮度
 if [ -f "$DOCS/handoff.md" ]; then
-  upd=$(sed -n 's/^最終更新: *//p' "$DOCS/handoff.md" | head -1 | tr -d '\r')
+  upd_raw=$(sed -n 's/^最終更新: *//p' "$DOCS/handoff.md" | head -1 | tr -d '\r')
+  # 「最終更新: 2026-09-20（題材 …）」のように日付の後ろへ一言添える書き方が実際にある。
+  # 行の残り全部を日付として扱うと、正しく書かれた handoff に「読めない日付」の警告が出る。
+  upd=$(printf '%s' "$upd_raw" | grep -oE '^[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -1)
+  [ -z "$upd" ] && upd="$upd_raw"
   if [ -z "$upd" ]; then
     report WARN "docs/handoff.md に「最終更新:」の行が無い" "session-handoff の手順で日付を書く"
   elif [ "$upd" = "YYYY-MM-DD" ]; then
@@ -124,6 +149,14 @@ if [ -f "$DOCS/references/README.md" ]; then
   while IFS= read -r dt; do
     d=$(days_since "$dt") && [ "$d" -gt $((DAYS * 6)) ] && report INFO "docs/references/ に取得から ${d} 日経った知識がある（${dt}）" "元を見直すか、腐っていないか確認する"
   done < <(grep -oE '\| *[0-9]{4}-[0-9]{2}-[0-9]{2} *\|' "$DOCS/references/README.md" | tr -d '| ')
+fi
+
+# 読めなかった日付は必ず出す。日付判定が効いていないまま「問題なし」と言うのが一番害が大きい
+# （gc が仕事の半分をしていないことに誰も気づけない。tech-debt #8 の本体）。
+if [ -s "$UNPARSED_FILE" ]; then
+  bad="$(sort -u "$UNPARSED_FILE" | tr '\n' ' ')"
+  report WARN "日付として読めなかった記述がある: ${bad}" \
+    "YYYY-MM-DD 形式で書く（この日付に依存する鮮度の判定は今回スキップしている）"
 fi
 
 echo
