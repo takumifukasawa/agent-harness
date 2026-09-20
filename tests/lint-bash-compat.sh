@@ -26,6 +26,12 @@ case "$mode" in forbidden-syntax|nonascii-var|all) ;; *) echo "usage: $0 [forbid
 files=()
 [ -f bin/harness ] && files+=("bin/harness")
 for f in harness/scripts/*.sh; do [ -f "$f" ] && files+=("$f"); done
+# harness/checks.seed.sh は harness init が各プロジェクトの .harness/checks.sh として配り、
+# source されて実行される配布ペイロード。harness/scripts/*.sh には含まれず（ディレクトリが
+# 違う）、manifest 上も ownership: seed でドリフト検知の対象外のため、これまでどの検査にも
+# 拾われていなかった（最終レビュー指摘。declare -A を仕込んでも rc=0 のまま通ることを実機で
+# 確認済み）。存在しない環境（配布前の worktree 等）でも壊れないよう -f で確認してから足す。
+[ -f harness/checks.seed.sh ] && files+=("harness/checks.seed.sh")
 for f in tests/*.sh; do
   # この検査スクリプト自身は除く。禁止パターンを「メッセージ文字列として」持たざるを得ない
   # （直し方の説明に実例を出す）ので、対象に含めると自分自身で必ず引っかかる。
