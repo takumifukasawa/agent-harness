@@ -1,10 +1,10 @@
 # handoff — 現在地
 
-最終更新: 2026-09-20（題材 cross-env のフェーズ 1 / T01・T02 完了。決定 0007 で T04 を追加し、残るは T04 → T03）
+最終更新: 2026-09-20（題材 cross-env のフェーズ 1 / T01・T02・T04 完了。残るは T03（版上げ）のみ）
 
 ## いま何をしているか（1〜3 行）
 
-題材は **cross-env**（エージェントと OS を問わず同じに動く）。**準備フェーズは完了し、合意はすべて spec と決定 0006 に書き戻してある。** いま反復フェーズで、**4 タスク中 2 つ（T01・T02）が done**。残るは T04（doctor B6 を FAIL に上げる。決定 0007）→ T03（導入コピー同期・CHANGELOG・版上げ）。計画と進捗は `docs/plans/active/cross-env.md`、機械可読な状態は `.harness/state/`。
+題材は **cross-env**（エージェントと OS を問わず同じに動く）。**準備フェーズは完了し、合意はすべて spec と決定 0006 に書き戻してある。** いま反復フェーズで、**4 タスク中 3 つ（T01・T02・T04）が done**。残るは T03（導入コピー同期・CHANGELOG・版上げ）だけ。計画と進捗は `docs/plans/active/cross-env.md`、機械可読な状態は `.harness/state/`。
 
 **作業機は macOS（Darwin 24.6 / arm64 / 素の bash 3.2.57）。** 2026-09-20 に初めて実機で回し、`harness check` が **pass=9 fail=4** だったところを **pass=18 fail=0**（検査自体が 13 → 18 件）にした。**`.githooks/pre-commit` は T02 で本当に走るようになった**（index mode 100755）。
 
@@ -15,7 +15,7 @@
 | ブランチ | **`cross-env`**（main から分岐。push していない） | `git branch` |
 | VERSION | **0.5.0**。T01・T02 の変更は `CHANGELOG.md` の `[Unreleased]` にあり、版はまだ切っていない（T03 でやる） | `VERSION`, `CHANGELOG.md` |
 | 検査 | **18 件 pass / 0 fail**（約 1.5 分）。T01 で禁止検査 2 件、T02 で `githooks are executable` / `gc scenarios` / `stdin (curl \| bash) install` の 3 件が増えた | `/bin/bash .harness/bin/harness check` |
-| `harness doctor` | **OK=16 WARN=0 FAIL=0** | `/bin/bash .harness/bin/harness doctor` |
+| `harness doctor` | **OK=16 WARN=0 FAIL=0**。**T04 で B6 の重大度が WARN → FAIL になった**（フックが実行不可＝門番が不在。決定 0007）。このリポジトリは index が 100755 なので OK のまま | `/bin/bash .harness/bin/harness doctor` |
 | macOS の素の bash | **3.2.57 のまま動く**（決定 0006 で「3.2 を切らない」と決めた）。`brew install bash` は**もう要らない** | 決定 0006 |
 | 導入コピーの drift | なし（modified=0 missing=0）。**T02 以降 `update` は mode 差分も残さない**（実行ビットを index の正にしたため） | `harness status` |
 | 決定 | 0001〜**0007**（0007: フックが実行不可なら doctor は FAIL） | `docs/decisions/` |
@@ -25,8 +25,7 @@
 
 **`task-orchestrate` の反復フェーズの続き。** `.harness/state/progress.json` が `phase: iterate` / `current_task: T03` なので、スキルの §0 から入れば続きから拾える。
 
-1. **T04 を実装役に渡す**（`stages.json` の T04）。`doctor` の B6 を、フックが実行不可のとき **WARN ではなく FAIL** にする（[決定 0007](decisions/0007-hook-not-executable-is-fail.md)）。Windows（`core.filemode=false`）で偽の FAIL を出さない判定は T02 の形を保つ。配布 seed には実行ビット専用の検査を足さない（決定 0005 の `doctor: FAIL 0` が既にあるので自動的に効く）。
-2. **T03 を実装役に渡す**（`stages.json` の T03 をそのまま指示にする）。導入コピー同期・CHANGELOG・版上げ。**managed の移動もマーカー形式の変更も無いので minor（0.6.0）**。CHANGELOG には既存プロジェクト向けの手順（`git ls-files -s .githooks/pre-commit` が 100644 なら `chmod +x && git update-index --chmod=+x`）が T02 で既に入っている。
+1. **T03 を実装役に渡す**（`stages.json` の T03 をそのまま指示にする）。導入コピー同期・CHANGELOG・版上げ。**managed の移動もマーカー形式の変更も無いので minor（0.6.0）**。CHANGELOG の `[Unreleased]` には T02・T04 の内容（実行ビットの修復手順、B6 が FAIL になったこと）が既に入っているので、**版の見出しを切って VERSION と一致させるのが主な仕事**。
 3. **T03 の後に main へ載せ、tech-debt #4 を閉じる**: `bash bin/harness init --source https://github.com/takumifukasawa/agent-harness.git` を 1 回回して `doctor` が FAIL 0 になることを確認する。**今落ちているのは公開 main が T01 前（305d57b）だからで、コード側の欠陥ではない**（現ブランチ内容の clone 経路では通る）。
 4. **フェーズ 2（Codex）のタスクを `stages.json` に足す**（spec の B1〜B4）。**Codex CLI 0.154.0 がこの機に入っている**（`/opt/homebrew/bin/codex`）ので環境待ちにはならない
 5. 全タスク完了後に最終レビュー 1 回（`task-orchestrate` §3）。**レビュアーは既定で下位モデル**（上位を並列起動するとレート上限に当たる。`docs/learnings.md`）
@@ -82,3 +81,4 @@ git config core.hooksPath .githooks
 - **`harness/adapters/codex/README.md`**: Codex 側の事実は公式 docs 確認済み（2026-09-17）だが、**実機確認はこれから**（spec の B2）。Codex CLI はこの機に入っている。
 - **古い macOS（15 未満）の経路**: `sha256sum` / `jq` が無い前提のコードは、この機では確かめられていない（tech-debt #3 の残り）。
 - **`harness init` の perms**: 新規導入直後が docs=0600 / スクリプト=0711 になる。踏んでいないので直していない（tech-debt #9）。
+- **`core.hooksPath` 未設定 / `.githooks/pre-commit` 自体が無いケース**: B6 の別分岐で、**WARN のまま**（決定 0007 のスコープ外。T04 の申し送り）。clone 直後の正常な途中状態でもあり、直し方も案内済み。「門番が不在なら FAIL」の論理をここまで広げるかは未検討。
