@@ -315,6 +315,28 @@ expect_seed_kept() {
 }
 scenario "U12: seed（.harness/checks.sh）の編集は update で保持される" break_seed_edit expect_seed_kept
 
+# U13. update の後もフックと CLI は実行可能でなければならない。
+# 実行ビットが落ちると git は pre-commit を**黙って無視する**（hint が 1 行出るだけで commit は成功）。
+# update は managed ファイルを一時ファイル経由で書き戻すので、ここが抜けると「update したら検査が
+# 走らなくなる」という気づけない退行になる（2026-09-20、実行ビットが落ちた状態の実例あり）。
+break_exec_bits() {
+  chmod -x "$PROJ/.githooks/pre-commit" "$PROJ/.harness/bin/harness" "$PROJ/.harness/scripts/"*.sh 2>/dev/null
+  return 0
+}
+expect_exec_bits_restored() {
+  # 作業ツリーの実行ビットを落とせない環境（Windows の Git など）では前提が成り立たない
+  if [ -x "$PROJ/.githooks/pre-commit" ]; then
+    echo "      （この環境では chmod -x が効かないためスキップ）"
+    return 0
+  fi
+  run_update
+  expect_code 0
+  for f in ".githooks/pre-commit" ".harness/bin/harness" ".harness/scripts/check.sh" ".harness/scripts/doctor.sh"; do
+    [ -x "$PROJ/$f" ] || errors+=("update の後も ${f} が実行不可のまま（git はフックを黙って無視する）")
+  done
+}
+scenario "U13: update はフックと CLI の実行ビットを立て直す" break_exec_bits expect_exec_bits_restored
+
 # ================================================================ 集計
 echo
 echo "tests/update.sh: pass=$passed fail=$failed"

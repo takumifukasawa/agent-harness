@@ -17,6 +17,11 @@ check      "update scenarios"             "bash tests/update.sh"
 check      "doctor: FAIL 0"               "bash .harness/bin/harness doctor || { echo 'doctor が FAIL を報告した。上の FAIL 行の「→」に従って直す。'; exit 1; }"
 check fast "manifest source is shared value" "src=\$(sed -n 's/^  \"source\": \"\([^\"]*\)\".*/\1/p' .harness/manifest.json | head -1); case \"\$src\" in http://*|https://*|ssh://*|git://*|git@*) ;; *) echo \"manifest.json の source が機械ローカルの絶対パス（\$src）。bash .harness/bin/harness update で共有値に戻す（決定 0004。機械ローカルのパスは .harness/source.local へ）\"; exit 1 ;; esac"
 
+# pre-commit フックが「実際に走る形」でコミットされているか（git は実行ビットの無いフックを黙って無視する）。
+check fast "githooks are executable"      "bash tests/githooks.sh"
+# gc の実行経路（tech-debt #8）。日付判定が環境差で無言でスキップされていないかを見る。
+check fast "gc scenarios"                 "bash tests/gc.sh"
+
 # bash 3.2 互換（決定 0006）。macOS 既定の bash はアップデートされない前提で、この 2 つを機械的に締め出す。
 # 対象は bin/harness・harness/scripts/*.sh・tests/*.sh（tests/lint-bash-compat.sh 自身は自己参照になるため対象外）。
 check fast "bash 3.2: no bash4+-only syntax" "bash tests/lint-bash-compat.sh forbidden-syntax"

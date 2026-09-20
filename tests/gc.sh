@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+# tests/gc.sh — harness gc のシナリオテスト（このリポジトリ専用。ペイロードではない）
+#
+# 使い方:  bash tests/gc.sh [<シナリオ名の部分一致>]
+# 終了コード: 全シナリオ pass で 0、1 つでも落ちれば 1。フィルタに 1 件も一致しなければ 1。
+#
+# なぜ要るか（tech-debt #8）: gc.sh は harness check の経路にも tests/ にも無く、**壊れていても
+# 誰も気づかない**状態だった。実際 2026-09-20 に macOS で、日付に依存する判定（handoff の鮮度、
+# active な計画の放置日数）が `date -d`（GNU 専用）の失敗で**無言でスキップ**され、gc が
+# 「問題なし」と報告していた。エラーも警告も出ないので、仕事の半分をしていないことに気づけない。
+# ここが gc の実行経路そのものなので、日付判定が生きていることを毎回機械で確かめる。
+#
+# 枠: scenario "<名前>" <setup関数> <expect関数>
+#   setup 関数 : ${WORK} に docs ツリーを作り、$PROJ を設定する
+#   expect 関数: run_gc を呼び、expect_* で表明する
+# gc は docs/ と git があれば動くので、harness init（1 回 ≒ 11 秒）は通さない。ペイロード側の
+# harness/scripts/gc.sh を直接叩く（正本を検査する。導入コピーは harness update が同期する）。
+set -u
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+GC="$REPO/harness/scripts/gc.sh"
+FILTER="${1:-}"
+
+passed=0; failed=0
+failed_names=()
+WORK=""; PROJ=""; OUT=""; CODE=0
+errors=()
+
+trap 'rm -rf "$WORK" 2>/dev/null' EXIT INT TERM
+
+# ---------------------------------------------------------------- 表明
+expect_code() { # 期待する終了コード
+  [ "$CODE" = "$1" ] || errors+=("終了コード: 期待 $1 / 実際 ${CODE}")
+}
+expect_out() { # 出力にこの正規表現があること
+  printf '%s\n' "$OUT" | grep -qE "$1" || errors+=("出力に /$1/ が無い")
+}
+expect_not_out() { # 出力にこの正規表現が無いこと
+  if printf '%s\n' "$OUT" | grep -qE "$1"; then errors+=("出力に /$1/ があってはいけない"); fi
+}
+
+run_gc() { # [args...]
+  OUT="$(cd "$PROJ" && bash "$GC" "$@" 2>&1)"; CODE=$?
+}
+
+# ---------------------------------------------------------------- setup 部品
+days_ago() { # N -> YYYY-MM-DD（GNU / BSD 双方で動く。テスト側も date の方言に依存しない）
+  date -d "-$1 days" '+%Y-%m-%d' 2>/dev/null && return 0
+  date -v"-$1"d '+%Y-%m-%d' 2>/dev/null && return 0
+  echo "1970-01-01"
+}
+
+new_proj() { # 最小の docs ツリー（索引 + handoff）を持つ git リポジトリ
+  PROJ="$WORK/p"; mkdir -p "$PROJ/docs" || return 1
+  ( cd "$PROJ" && git init -q . ) >/dev/null 2>&1 || { errors+=("setup: git init に失敗した"); return 1; }
+  printf '# index\n\n- [handoff](handoff.md)\n' >"$PROJ/docs/README.md"
+  printf '# handoff\n\n最終更新: %s\n' "$(days_ago 1)" >"$PROJ/docs/handoff.md"
+}
+
+set_handoff_date() { # <日付文字列>
+  printf '# handoff\n\n最終更新: %s\n' "$1" >"$PROJ/docs/handoff.md"
+}
+
+# ---------------------------------------------------------------- 枠
+scenario() { # <名前> <setup関数> <expect関数>
+  local name="$1" setup="$2" expect="$3"
+  if [ -n "$FILTER" ]; then
+    case "$name" in
+      *"$FILTER"*) ;;
+      *) return 0;;
+    esac
+  fi
+  errors=(); PROJ=""; OUT=""; CODE=0
+  WORK="$(mktemp -d)" || { echo "tests/gc.sh: mktemp -d に失敗した"; exit 2; }
+  local setup_rc=0
+  "$setup" || setup_rc=$?
+  if [ "$setup_rc" -eq 0 ]; then
+    "$expect"
+  else
+    errors+=("setup が失敗した（戻り値 ${setup_rc}）。expect は実行していない")
+  fi
+  rm -rf "$WORK"
+  if [ "${#errors[@]}" -eq 0 ]; then
+    printf 'PASS  %s\n' "$name"; passed=$((passed + 1))
+  else
+    printf 'FAIL  %s\n' "$name"
+    printf '        - %s\n' "${errors[@]}"
+    printf '      直近の出力:\n'
+    printf '%s\n' "$OUT" | sed 's/^/        | /'
+    failed=$((failed + 1)); failed_names+=("$name")
+  fi
+}
+
+# ================================================================ シナリオ
+
+# G1. 日付判定が生きていること。これが落ちるなら gc は日付に依存する判定を**全部**していない。
+# （macOS の date に -d が無いため 2026-09-20 まで実際に無言でスキップしていた。tech-debt #8）
+setup_stale_handoff() { new_proj && set_handoff_date "$(days_ago 100)"; }
+expect_stale_handoff() {
+  run_gc
+  expect_out '最終更新が 1[0-9][0-9] 日前'
+  expect_not_out '問題なし'
+  expect_code 0
+}
+scenario "G1: handoff の最終更新が閾値より古ければ日数つきで報告する（日付判定が生きている）" \
+  setup_stale_handoff expect_stale_handoff
+
+# G2. 閾値内の handoff は報告しない（G1 が「常に報告する」実装で通ってしまわないようにする）
+setup_fresh_handoff() { new_proj && set_handoff_date "$(days_ago 1)"; }
+expect_fresh_handoff() {
+  run_gc
+  expect_not_out '最終更新が'
+  expect_out '問題なし'
+  expect_code 0
+}
+scenario "G2: handoff が閾値内なら鮮度を報告しない" setup_fresh_handoff expect_fresh_handoff
+
+# G3. --days で閾値を動かせる（G1/G2 の境界が固定値でないこと）
+setup_days_option() { new_proj && set_handoff_date "$(days_ago 20)"; }
+expect_days_option() {
+  run_gc --days 30
+  expect_not_out '最終更新が'
+  run_gc --days 10
+  expect_out '最終更新が 20 日前'
+}
+scenario "G3: --days で鮮度の閾値が変わる" setup_days_option expect_days_option
+
+# G4. 日付が読めないときは黙って飛ばさない。tech-debt #8 の本体はここで、
+# 「日付判定に失敗しても gc が緑を返す」ことが最大の害だった（誰も気づけない）。
+setup_unparsable_date() { new_proj && set_handoff_date "2026/09/01"; }
+expect_unparsable_date() {
+  run_gc
+  expect_out '日付'
+  expect_not_out '問題なし'
+  expect_code 0
+}
+scenario "G4: 解釈できない日付は無言でスキップせず報告する" setup_unparsable_date expect_unparsable_date
+
+# G5. 放置された計画（git の最終コミット日で判定）。handoff とは別経路の日付判定。
+setup_stale_plan() {
+  new_proj || return 1
+  mkdir -p "$PROJ/docs/plans/active"
+  printf '# plan\n' >"$PROJ/docs/plans/active/old.md"
+  ( cd "$PROJ" && git add -A &&
+    GIT_AUTHOR_DATE='2020-01-02T00:00:00 +0000' GIT_COMMITTER_DATE='2020-01-02T00:00:00 +0000' \
+      git -c user.email=t@t -c user.name=t commit -q -m plan ) >/dev/null 2>&1 ||
+    { errors+=("setup: 日付を遡らせたコミットに失敗した"); return 1; }
+}
+expect_stale_plan() {
+  run_gc
+  expect_out 'docs/plans/active/old\.md が [0-9]+ 日更新されていない'
+}
+scenario "G5: active な計画の放置日数を git の最終コミット日から出す" setup_stale_plan expect_stale_plan
+
+# G6. --strict は 1 件でも見つかれば exit 1（CI 用）。既定は exit 0。
+setup_strict() { new_proj && set_handoff_date "$(days_ago 100)"; }
+expect_strict() {
+  run_gc --strict
+  expect_code 1
+  run_gc
+  expect_code 0
+}
+scenario "G6: --strict は検出があれば exit 1、既定は exit 0" setup_strict expect_strict
+
+# ================================================================ 集計
+echo
+echo "tests/gc.sh: pass=$passed fail=$failed"
+if [ -n "$FILTER" ] && [ $((passed + failed)) -eq 0 ]; then
+  echo "  フィルタ「${FILTER}」に一致するシナリオが無かった。"
+  exit 1
+fi
+if [ "$failed" -gt 0 ]; then
+  printf '  失敗: %s\n' "${failed_names[@]}"
+  echo "  gc の出力（上の「直近の出力」）と harness/scripts/gc.sh を突き合わせて直す。"
+  echo "  導入コピー（.harness/scripts/gc.sh）ではなく harness/scripts/gc.sh を直し、bash bin/harness update で同期する。"
+  exit 1
+fi
