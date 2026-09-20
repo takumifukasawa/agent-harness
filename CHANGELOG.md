@@ -3,7 +3,9 @@
 各版に「プロジェクト側で必要な作業」を必ず書く。`harness update` はこの節を表示する。
 semver: managed ファイルの移動・マーカー形式変更は major、ルール/スキルの追加は minor、文言修正は patch。
 
-## [Unreleased]
+## [0.6.0] - 2026-09-21
+
+macOS 既定の bash（3.2）で `harness init` / `update` / `check` / `gc` が動くようにし、pre-commit の門番（git hooks の実行ビット）が機能していないケースを検出できるようにした版。コードの互換性修正とバグ修正のみで、managed ファイルの移動もマーカー形式の変更も無い。
 
 - 修正（決定 0006。T01）: macOS 既定の bash（3.2.57、Apple がアップデートしない見込み）で `harness init` / `update` / `check` が動くようにした。`bin/harness:355` の `declare -A`（連想配列）が bash 3.2 に無く、`harness init` が `declare: -A: invalid option` で即死していた（実測 pass=9 fail=4 のうち 3 件の根本原因）。連想配列は使わず、一時ファイル + `awk` で path ごとに旧 manifest の sha256 / source_sha256 を引く `old_manifest_field()` に置き換えた（挙動は変えていない）。`harness/scripts/doctor.sh` の `mapfile`（外部コマンド全滅時のフォールバック）も `while read` に置き換えた。`"$var日本語"`（変数展開の直後に非 ASCII が続く形）は bash 3.2 + UTF-8 ロケールで `unbound variable` になる罠で、`bin/harness`（6）・`harness/scripts/doctor.sh`（7）・`harness/scripts/gc.sh`（3）・`tests/doctor.sh`（5）・`tests/seed.sh`（2）・`tests/update.sh`（1）の 24 行を `${var}` に括り直した。`doctor` の B1 は「bash 4 未満なら FAIL」だったが、3.2 を切らない方針に合わせて「3.2 未満なら FAIL」に変え、案内文（`brew install bash` 一択だった）も実態に合わせた。
 - 修正（T01）: `bin/harness` の `apply_plan` が、`.harness/manifest.json` の `files` が壊れて 0 行になっている状態（B3 が想定する故障）で `set -e` の下、無言で異常終了することがあった。旧コードは `manifest_entries` を `< <(...)`（process substitution）越しに読んでいたため exit 1 の影響を受けなかったが、bash 3.2 対応で直接読む形に変えた際に同じ耐性が失われていた。`manifest_entries >file || true` にして元の耐性へ戻した。
