@@ -319,7 +319,12 @@ else
       else
         hook_fix="chmod +x .githooks/pre-commit"
       fi
-      report WARN "git hooks: .githooks/pre-commit が実行できない状態（${hook_problem}）。git は実行できないフックを黙って無視するので、commit は成功するのに検査が走らない" \
+      # 重大度は FAIL（決定 0007）。「フックが実行不可」は検査の門番が不在という状態であって
+      # 劣化ではない。WARN のままだと doctor の総括行に WARN=1 が出るだけで harness check は
+      # 緑のままになり、このリポジトリ自身が数セッション見逃したのと同じ見落とし方を許してしまう。
+      # 配布 seed（harness/checks.seed.sh）には専用の検査を足さない。決定 0005 で seed に既に
+      # 入っている「doctor: FAIL 0」がこの FAIL を自動的に拾うため（検査を二重に持たない）。
+      report FAIL "git hooks: .githooks/pre-commit が実行できない状態（${hook_problem}）。git は実行できないフックを黙って無視するので、commit は成功するのに検査が走らない" \
         "$hook_fix"
     else
       report OK "git hooks（core.hooksPath=.githooks, .githooks/pre-commit は実行可能）"
