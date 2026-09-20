@@ -7,7 +7,7 @@
 |---|---|---|---|---|
 | 1 | `.claude/settings.json` の自動マージが `node` 前提。無い環境では断片を手で反映 | Claude アダプタ | 2026-09-17 | 未着手（jq 対応か、bash だけで済む簡易マージを検討） |
 | 2 | `harness gc` の判定がヒューリスティック（日付の文字列パース、索引は `(` 前方一致） | gc | 2026-09-17 | 未着手（誤検知が出たら精度を上げる） |
-| 3 | macOS / Linux で未検証（`realpath` / `date -d` / `mktemp` の差） | CLI 全体 | 2026-09-17 | 未着手 |
+| 3 | macOS / Linux で未検証。2026-09-20 にコードを走査して**具体的に 4 箇所**特定した: (a) `bin/harness` の `declare -A` と `doctor.sh` の `mapfile` は **bash 4+ 必須**だが macOS の既定 bash は 3.2（doctor の B1 が FAIL で検出する）(b) `bin/harness:87` の `sha256sum` は macOS に無い（`shasum -a 256`）ので **URL を source にした `init` が壊れる** (c) `gc.sh:42` の `date -d` は BSD で意味が違い日付判定が無言で無効になる (d) `tests/*.sh` の `sed -i`（6 箇所）は BSD で引数必須なので **`harness check` が落ちる** | CLI 全体 / テスト | 2026-09-17 | 未着手（実機未確認。上の 4 箇所は静的な走査で特定したもので、動かせばさらに出る可能性がある） |
 | 4 | GitHub からの `curl \| bash` init を実機で未確認（`file://` のみ） | 配布 | 2026-09-17 | 未着手 |
 | 5 | このリポジトリに導入コピー（`.agents/` 等）とペイロード（`harness/`）が同居して二重に見える | 可読性 | 2026-09-17 | 受容（dogfood のため。`docs/architecture.md` に境界を明記） |
 | 6 | `tests/doctor.sh` の下限が `doctor` 呼び出し 1 回 ≒ 3 秒（外部コマンドを多数呼ぶ）。T13 でフィクスチャ共有により 6m51s → 2m10s まで縮めたが、目標の 20〜40 秒には `harness/scripts/doctor.sh` 側の最適化が要る | テスト時間 | 2026-09-18 | 未着手（「外部コマンド数を減らせばさらに 3〜4 倍」は未検証の推定） |
