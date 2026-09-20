@@ -285,9 +285,17 @@ if ! git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     "git init . && git config core.hooksPath .githooks でこのディレクトリを git 管理下に置いたうえで hooksPath も設定する（git を使わない運用なら、この WARN は無視してよい）"
 else
   hooks_path="$(git -C "$ROOT" config --get core.hooksPath 2>/dev/null || true)"
-  if [ "$hooks_path" != ".githooks" ] || [ ! -f "$ROOT/.githooks/pre-commit" ]; then
-    report WARN "git hooks（core.hooksPath が .githooks になっていない、または .githooks/pre-commit が無い。現在値: ${hooks_path:-未設定}）" \
+  if [ "$hooks_path" != ".githooks" ]; then
+    report WARN "git hooks（core.hooksPath が .githooks になっていない。現在値: ${hooks_path:-未設定}）" \
       "git config core.hooksPath .githooks"
+  elif [ ! -f "$ROOT/.githooks/pre-commit" ]; then
+    # core.hooksPath 自体はすでに .githooks を正しく指している。この分岐で上と同じ
+    # `git config core.hooksPath .githooks` を直し方として出すと no-op になる（設定はもう
+    # 正しいので実行しても何も変わらない）。実際の問題は managed ファイルの欠落なので、
+    # B4（manifest 記載ファイルの存在チェック）と同じ「harness update で復元する」を出す
+    # （最終レビュー指摘: 前置きと直し方が状態と噛み合っていなかった。実機で再現）。
+    report WARN "git hooks（core.hooksPath は .githooks に設定されているが .githooks/pre-commit が無い）" \
+      "bash .harness/bin/harness update で復元する（.githooks/pre-commit は managed ファイル）"
   else
     # 存在（-f）だけでは足りない。git は**実行できないフックを黙って無視する**（hint が 1 行出るだけで
     # commit は成功する）ので、-f しか見ないと「pre-commit で速い検査が回っている」つもりのまま一度も

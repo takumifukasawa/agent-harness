@@ -486,6 +486,34 @@ expect_no_git_repo() {
 }
 scenario "B6: プロジェクトルートが git リポジトリでなければ根本原因を告げる（git init で直る）" setup_no_git_repo expect_no_git_repo
 
+# B6. core.hooksPath は正しく .githooks を指しているのに .githooks/pre-commit 自体が無い状態
+# （clone のされ方や手違いで managed ファイルだけ抜け落ちた等）だと、旧コードは 1 つの if で
+# 「hooksPath が .githooks になっていない、または pre-commit が無い」とまとめて報告していた。
+# 現在値は既に .githooks なので前置きが事実と矛盾し、直し方の `git config core.hooksPath
+# .githooks` も no-op（設定はすでに正しいので何も変わらない）だった（最終レビュー指摘。実機で
+# 再現）。同じ状態は B4（manifest 記載ファイルの存在チェック）が独立に FAIL で捕捉して
+# harness update という有効な直し方を出すため doctor 全体は exit 1 になり黙っては通らないが、
+# ここで直すのは B6 の行そのものが自己矛盾している点。
+setup_hookspath_ok_precommit_missing() {
+  setup_init || return 1
+  ( cd "$PROJ" && git config core.hooksPath .githooks ) >/dev/null 2>&1 ||
+    { errors+=("setup: git config core.hooksPath .githooks に失敗した"); return 1; }
+  rm -f "$PROJ/.githooks/pre-commit"
+}
+expect_hookspath_ok_precommit_missing() {
+  run_doctor
+  # hooksPath 自体は正しいので、「.githooks になっていない」という矛盾した前置きを出さない。
+  expect_not_out 'hooksPathが?\.githooksになっていない'
+  expect_not_out 'hooksPath が \.githooks になっていない'
+  # 状態に合った文言（hooksPath は正しいが pre-commit が無い）を出す。
+  expect_out 'git hooks.*\.githooks.*設定されているが.*pre-commit.*無い'
+  # 直し方は実際にファイルを復元できるもの（harness update）で、no-op の git config 単体ではない。
+  expect_out 'bash \.harness/bin/harness update'
+  expect_not_out '→  git config core\.hooksPath \.githooks$'
+}
+scenario "B6: hooksPath は正しいが pre-commit 自体が無ければ矛盾しない文言と有効な直し方を出す" \
+  setup_hookspath_ok_precommit_missing expect_hookspath_ok_precommit_missing
+
 # B6. フックは「実行ビットが無ければ git に黙って無視される」（commit は成功し、hint が 1 行出るだけ）。
 # -f（存在）しか見ないと、検査が走っていないのに OK を出す＝偽の全快になる（2026-09-20 に macOS 実機で
 # 発覚。このリポジトリ自身の .githooks/pre-commit が index も作業ツリーも 100644 で、pre-commit が
