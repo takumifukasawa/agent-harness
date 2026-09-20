@@ -9,7 +9,7 @@
 # 終了コード: 全シナリオ pass で 0、1 つでも落ちれば 1。フィルタに 1 件も一致しなければ 1。
 #
 # 枠:  scenario "<名前>" <setup関数> <expect関数>
-#   setup 関数 : $WORK（使い捨ての一時ディレクトリ）にプロジェクトを作り、$PROJ を設定する
+#   setup 関数 : ${WORK}（使い捨ての一時ディレクトリ）にプロジェクトを作り、$PROJ を設定する
 #   expect 関数: run_doctor / run_doctor_no_path などを呼び、expect_* で表明する
 # シナリオを足すときは、先に落ちるシナリオを書いてから doctor.sh に診断項目を足す（TDD）。
 #
@@ -80,28 +80,42 @@ run_doctor_without_path() { # PATH を潰して doctor.sh を直接回す（git 
 run_doctor_with_broken_git() { # git だけが使えない PATH で doctor.sh を直接回す（git 無しでも内容比較が効くか）
   OUT="$(cd "$PROJ" && PATH="$WORK/nogit:$PATH" "$BASH_BIN" .harness/scripts/doctor.sh 2>&1)"; CODE=$?
 }
-run_doctor_without_node_jq() { # node/jq を含むディレクトリだけを PATH から外して doctor を回す（C3 の検証）
+run_doctor_without_node_jq() { # node/jq の実行ファイルだけを隠して doctor を回す（C3 の検証）
   # PATH=/nonexistent（run_doctor_without_path）は git/sed/awk まで消してしまい、C3（node/jq が
   # 無くても「全項目」が動く）の検証にならない（manifest が読めず B4/B5/B8 が丸ごとスキップされる）。
-  # node/jq のディレクトリだけを取り除き、他のツールは素通しする。
-  local dir clean="" skip="" p
-  p="$(command -v node 2>/dev/null || true)"; [ -n "$p" ] && skip="$skip$(dirname "$p")"$'\n'
-  p="$(command -v jq   2>/dev/null || true)"; [ -n "$p" ] && skip="$skip$(dirname "$p")"$'\n'
+  # 「node/jq を含むディレクトリごと PATH から外す」だと、macOS 15+ のように jq が /usr/bin に
+  # git・sed・tr 等と同居している実機で、それらまで道連れに消えてしまう（実測。tech-debt #3）。
+  # ディレクトリ単位ではなく実行ファイル単位で隠す: 元の PATH を先頭から辿り、node/jq 以外の
+  # 実行ファイルだけを 1 つのスタブディレクトリへ最初に見つかったものだけ symlink し、
+  # PATH をそのスタブ 1 本に絞る（PATH の優先順位はそのまま保たれる）。
+  local stub="$WORK/stub-no-node-jq" dir f name
+  rm -rf "$stub"; mkdir -p "$stub"
   local IFS=':'
   for dir in $PATH; do
-    if [ -n "$skip" ] && printf '%s' "$skip" | grep -qxF "$dir"; then continue; fi
-    clean="$clean:$dir"
+    [ -d "$dir" ] || continue
+    for f in "$dir"/*; do
+      [ -f "$f" ] && [ -x "$f" ] || continue
+      name="$(basename "$f")"
+      case "$name" in node|jq) continue;; esac
+      [ -e "$stub/$name" ] || ln -s "$f" "$stub/$name" 2>/dev/null
+    done
   done
-  clean="${clean#:}"
-  OUT="$(cd "$PROJ" && PATH="$clean" bash .harness/bin/harness doctor 2>&1)"; CODE=$?
+  OUT="$(cd "$PROJ" && PATH="$stub" "$BASH_BIN" .harness/bin/harness doctor 2>&1)"; CODE=$?
 }
 apply_fix() { # <直し方どおりのコマンド文字列> — $PROJ の中でコピペしたのと同じように実行する
   ( cd "$PROJ" && eval "$1" ) >/dev/null 2>&1
 }
+# GNU sed の `sed -i 'expr' file` は BSD/macOS sed では通らない（-i の直後に空でもバックアップ拡張子の
+# 引数が要る。付けないと sed 側の解釈がずれ、次の引数=ファイルパスをスクリプトとして食って
+# 「invalid command code」で壊れる。実測: macOS 実機）。両方で同じ結果になる tmp+mv に統一する。
+sed_i() { # <sed 式> <file>
+  local tmp; tmp="$(mktemp)"
+  sed "$1" "$2" >"$tmp" && mv "$tmp" "$2"
+}
 
 # ---------------------------------------------------------------- フィクスチャ（init 済みツリーの共有）
 # SHARED はスイート全体で使う一時置き場。フィクスチャ本体はこの下に作り、個々のシナリオの
-# $WORK（scenario ごとに作って rm -rf する）とは別に、最後にまとめて消す。
+# ${WORK}（scenario ごとに作って rm -rf する）とは別に、最後にまとめて消す。
 SHARED="$(mktemp -d)" || { echo "tests/doctor.sh: mktemp -d に失敗した（フィクスチャ置き場）"; exit 2; }
 # Ctrl-C / CI のタイムアウト kill / 途中の exit のいずれでも使い捨てディレクトリを残さない
 # （$WORK は scenario() が毎回作り直すので、trap 発火時点の最新値をそのまま参照すればよい）。
@@ -124,7 +138,7 @@ ensure_fixture() { # 使い捨てプロジェクトに harness init した雛形
 setup_empty() { # 未導入（git リポジトリですらない）ディレクトリ
   PROJ="$WORK/empty"; mkdir -p "$PROJ"
 }
-setup_init() { # 使い捨てプロジェクトをフィクスチャ（$FIXTURE）から複製する。harness init は走らせない
+setup_init() { # 使い捨てプロジェクトをフィクスチャ（${FIXTURE}）から複製する。harness init は走らせない
   ensure_fixture || return 1
   PROJ="$WORK/p"
   cp -a "$FIXTURE" "$PROJ" 2>/dev/null || { errors+=("setup: フィクスチャの複製に失敗した"); return 1; }
@@ -475,7 +489,7 @@ scenario "B6: プロジェクトルートが git リポジトリでなければ�
 # B7. AGENTS.md のマーカーの v= を manifest と食い違わせると WARN（harness update を案内）。
 setup_agents_version_mismatch() {
   setup_init || return 1
-  sed -i 's/<!-- harness:begin v=[^ ]* -->/<!-- harness:begin v=0.0.0-mismatch -->/' "$PROJ/AGENTS.md"
+  sed_i 's/<!-- harness:begin v=[^ ]* -->/<!-- harness:begin v=0.0.0-mismatch -->/' "$PROJ/AGENTS.md"
 }
 expect_agents_version_mismatch() {
   run_doctor
@@ -734,7 +748,7 @@ scenario "B10: source の VERSION が版番号の形式でなければ WARN（�
 setup_source_is_url() {
   setup_init || return 1
   rm -f "$PROJ/.harness/source.local"   # 機械ローカルの上書きを外し、manifest の URL だけが残る状態にする
-  sed -i 's#"source": "[^"]*"#"source": "https://example.invalid/agent-harness.git"#' "$PROJ/.harness/manifest.json"
+  sed_i 's#"source": "[^"]*"#"source": "https://example.invalid/agent-harness.git"#' "$PROJ/.harness/manifest.json"
 }
 expect_source_is_url() {
   run_doctor
@@ -769,7 +783,7 @@ expect_init_source_is_shared() {
   if [ ! -f "$PROJ/.harness/source.local" ]; then
     errors+=(".harness/source.local が作られていない（機械ローカルの source の置き場）")
   elif ! grep -qxF "$REPO" "$PROJ/.harness/source.local"; then
-    errors+=(".harness/source.local に導入元のローカルパス（$REPO）が書かれていない")
+    errors+=(".harness/source.local に導入元のローカルパス（${REPO}）が書かれていない")
   fi
   grep -qxF '.harness/source.local' "$PROJ/.gitignore" ||
     errors+=(".gitignore に .harness/source.local が無い（コミットされてしまう）")
@@ -973,7 +987,7 @@ rm -rf "$SHARED" 2>/dev/null
 echo
 echo "tests/doctor.sh: pass=$passed fail=$failed"
 if [ -n "$FILTER" ] && [ $((passed + failed)) -eq 0 ]; then
-  echo "  フィルタ「$FILTER」に一致するシナリオが無かった。"
+  echo "  フィルタ「${FILTER}」に一致するシナリオが無かった。"
   exit 1
 fi
 if [ "$failed" -gt 0 ]; then

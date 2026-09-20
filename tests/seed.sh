@@ -31,7 +31,7 @@ mkdir -p "$PROJ" || exit 2
 ) >/dev/null 2>&1 || { echo "tests/seed.sh: 使い捨てプロジェクトの作成に失敗した"; exit 2; }
 
 if ! (cd "$PROJ" && bash "$REPO/bin/harness" init --source "$REPO") >/dev/null 2>&1; then
-  echo "tests/seed.sh: harness init に失敗した（bash $REPO/bin/harness init --source $REPO）"
+  echo "tests/seed.sh: harness init に失敗した（bash $REPO/bin/harness init --source ${REPO}）"
   exit 1
 fi
 
@@ -46,7 +46,7 @@ rc=$?
 if [ "$rc" -ne 0 ]; then
   echo "$out"
   echo
-  echo "tests/seed.sh: init 直後のプロジェクトで harness check が落ちた（exit $rc）。"
+  echo "tests/seed.sh: init 直後のプロジェクトで harness check が落ちた（exit ${rc}）。"
   echo "  harness/checks.seed.sh が配る検査が init 直後に通っていない（決定 0005）。"
   echo "  seed の検査を直すか、上の出力が指す診断（doctor の FAIL 行の「→」）に従って実装を直す。"
   exit 1

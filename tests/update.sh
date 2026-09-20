@@ -5,7 +5,7 @@
 # 終了コード: 全シナリオ pass で 0、1 つでも落ちれば 1。
 #
 # 枠:  scenario "<名前>" <setup関数> <expect関数>
-#   setup 関数 : $PROJ（導入済みプロジェクトの使い捨てコピー）を壊す
+#   setup 関数 : ${PROJ}（導入済みプロジェクトの使い捨てコピー）を壊す
 #   expect 関数: run_update などを呼び、expect_* で表明する
 # シナリオを足すときは、先に落ちるシナリオを書いてから bin/harness を直す（TDD）。
 #
@@ -98,6 +98,13 @@ expect_markers_once() { # AGENTS.md の managed マーカーが 1 対だけで�
   [ "$b" = 1 ] || errors+=("AGENTS.md の begin マーカーが $b 個（1 個であるべき）")
   [ "$e" = 1 ] || errors+=("AGENTS.md の end マーカーが $e 個（1 個であるべき）")
 }
+# GNU sed の `sed -i 'expr' file` は BSD/macOS sed では通らない（-i の直後に空でもバックアップ拡張子の
+# 引数が要る。付けないと次の引数=ファイルパスをスクリプトとして食って「invalid command code」で壊れる。
+# 実測: macOS 実機）。両方で同じ結果になる tmp+mv に統一する。
+sed_i() { # <sed 式> <file>
+  local tmp; tmp="$(mktemp)"
+  sed "$1" "$2" >"$tmp" && mv "$tmp" "$2"
+}
 
 # ---------------------------------------------------------------- 実行
 run_update() { # 導入コピーの CLI で update する（プロジェクトでの通常の直し方）
@@ -164,7 +171,7 @@ expect_managed_restored() {
 scenario "U1: 書き換えた managed は正本に戻り、変更前は backup に残る" break_managed_edit expect_managed_restored
 
 # U2. B5: CRLF 化した managed（フィルタ付き git hash-object では「未変更」に見えていた）
-break_crlf() { sed -i 's/$/\r/' "$PROJ/.harness/scripts/check.sh"; }
+break_crlf() { sed_i 's/$/\r/' "$PROJ/.harness/scripts/check.sh"; }
 expect_crlf_fixed() {
   run_status
   expect_out 'MODIFIED.*\.harness/scripts/check\.sh'
@@ -175,7 +182,7 @@ expect_crlf_fixed() {
 scenario "U2(B5): CRLF 化した managed を status が MODIFIED と言い、update が LF に戻す" break_crlf expect_crlf_fixed
 
 # U3. B7: AGENTS.md のマーカーの版ずれ
-break_marker_version() { sed -i 's/<!-- harness:begin v=[^ ]* -->/<!-- harness:begin v=0.0.1 -->/' "$PROJ/AGENTS.md"; }
+break_marker_version() { sed_i 's/<!-- harness:begin v=[^ ]* -->/<!-- harness:begin v=0.0.1 -->/' "$PROJ/AGENTS.md"; }
 expect_marker_version_fixed() {
   run_update
   expect_code 0
@@ -218,7 +225,7 @@ scenario "U5(B8): CLAUDE.md の @AGENTS.md 欠落を update が足し、プロ�
 break_claude_stub_outdated() {
   printf '@AGENTS.md\n\n<!-- 旧い雛形 -->\n' >"$PROJ/CLAUDE.md"
   local h; h="$(cd "$PROJ" && git hash-object --no-filters CLAUDE.md)" || return 1
-  sed -i "s|\(\"path\":\"CLAUDE.md\".*\"sha256\":\"\)[^\"]*|\1$h|" "$PROJ/.harness/manifest.json"
+  sed_i "s|\(\"path\":\"CLAUDE.md\".*\"sha256\":\"\)[^\"]*|\1$h|" "$PROJ/.harness/manifest.json"
 }
 expect_claude_stub_updated() {
   run_update
@@ -289,7 +296,7 @@ expect_generated_regenerated() {
 scenario "U10: generated の drift は update の再生成で戻る" break_generated_drift expect_generated_regenerated
 
 # U11. 同梱 CLI が CRLF 化しても、正本側の bin/harness からの update で直せる（壊れた方へ委譲しない）
-break_vendored_cli_crlf() { sed -i 's/$/\r/' "$PROJ/.harness/bin/harness"; }
+break_vendored_cli_crlf() { sed_i 's/$/\r/' "$PROJ/.harness/bin/harness"; }
 expect_vendored_cli_restored() {
   run_update_from_repo
   expect_code 0
