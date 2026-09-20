@@ -490,6 +490,8 @@ scenario "B6: プロジェクトルートが git リポジトリでなければ�
 # -f（存在）しか見ないと、検査が走っていないのに OK を出す＝偽の全快になる（2026-09-20 に macOS 実機で
 # 発覚。このリポジトリ自身の .githooks/pre-commit が index も作業ツリーも 100644 で、pre-commit が
 # 一度も走っていなかった）。ハーネスの根幹（「check が完了の客観条件」）に関わるので実行可否まで見る。
+# 重大度は FAIL（決定 0007。T02 では WARN に据え置いていたが、検査の門番が不在の状態は劣化ではなく
+# FAIL 相当と判断し直した）。
 setup_hook_not_executable() {
   setup_init || return 1
   chmod -x "$PROJ/.githooks/pre-commit"
@@ -502,22 +504,24 @@ expect_hook_not_executable() {
     return 0
   fi
   run_doctor
-  expect_code 0
-  expect_out '^WARN .*pre-commit'
+  expect_code 1
+  expect_out '^FAIL .*pre-commit'
   expect_out '実行ビット'
   expect_out 'chmod \+x \.githooks/pre-commit'
   apply_fix "chmod +x .githooks/pre-commit"
   run_doctor
   expect_code 0
   expect_out '^OK .*git hooks'
+  expect_not_out '^FAIL .*pre-commit'
   expect_not_out '^WARN .*pre-commit'
 }
-scenario "B6: pre-commit に実行ビットが無ければ WARN（chmod +x で直る）" \
+scenario "B6: pre-commit に実行ビットが無ければ FAIL（決定 0007。chmod +x で直る）" \
   setup_hook_not_executable expect_hook_not_executable
 
 # B6. git index 上の mode（100644 か 100755 か）も見る。作業ツリーだけ chmod +x しても、index が
 # 100644 のままだと **clone した先で実行ビットが付かず**、そちらでフックが黙って無視される。
 # index の mode は core.filemode の設定に関係なく git が記録するので、どの OS でも同じに見える。
+# 重大度は FAIL（決定 0007。受け入れ条件 3(a)）。
 setup_hook_index_mode_644() {
   setup_init || return 1
   ( cd "$PROJ" && git add .githooks/pre-commit && git update-index --chmod=-x .githooks/pre-commit ) >/dev/null 2>&1 ||
@@ -525,23 +529,25 @@ setup_hook_index_mode_644() {
 }
 expect_hook_index_mode_644() {
   run_doctor
-  expect_code 0
-  expect_out '^WARN .*pre-commit'
+  expect_code 1
+  expect_out '^FAIL .*pre-commit'
   expect_out '100644'
   expect_out 'git update-index --chmod=\+x \.githooks/pre-commit'
   apply_fix "chmod +x .githooks/pre-commit && git update-index --chmod=+x .githooks/pre-commit"
   run_doctor
   expect_code 0
   expect_out '^OK .*git hooks'
+  expect_not_out '^FAIL .*pre-commit'
   expect_not_out '^WARN .*pre-commit'
 }
-scenario "B6: pre-commit の index mode が 100644 なら WARN（clone 先で実行ビットが付かない）" \
+scenario "B6: pre-commit の index mode が 100644 なら FAIL（決定 0007。clone 先で実行ビットが付かない）" \
   setup_hook_index_mode_644 expect_hook_index_mode_644
 
 # B6. Windows の Git は core.filemode=false が既定で、作業ツリーの実行ビットに意味が無い
 # （chmod しても git は記録せず、フックは別の経路で実行される）。そこで filemode=false のときは
-# 作業ツリー側の -x を見ない。ここを見ると **Windows で全員に偽の警告**が出る（診断の信用が落ち、
-# 本物の WARN が読み飛ばされる）ので、macOS からその状況を再現して「出ないこと」を表明する。
+# 作業ツリー側の -x を見ない。ここを見ると **Windows で全員に偽の FAIL**が出る（診断の信用が落ち、
+# 本物の FAIL が読み飛ばされる）ので、macOS からその状況を再現して「出ないこと」を表明する
+# （受け入れ条件 3(b)）。
 setup_hook_filemode_false() {
   setup_init || return 1
   ( cd "$PROJ" && git config core.filemode false ) >/dev/null 2>&1 || return 1
@@ -551,9 +557,10 @@ expect_hook_filemode_false() {
   run_doctor
   expect_code 0
   expect_out '^OK .*git hooks'
+  expect_not_out '^FAIL .*pre-commit'
   expect_not_out '^WARN .*pre-commit'
 }
-scenario "B6: core.filemode=false なら作業ツリーの実行ビットで警告しない（Windows の偽警告を出さない）" \
+scenario "B6: core.filemode=false なら作業ツリーの実行ビットで警告しない（Windows で偽の FAIL/WARN を出さない）" \
   setup_hook_filemode_false expect_hook_filemode_false
 
 # B7. AGENTS.md のマーカーの v= を manifest と食い違わせると WARN（harness update を案内）。
