@@ -38,8 +38,75 @@ ts() { date +%Y%m%d-%H%M%S; }
 # 素の `git hash-object` は .gitattributes の text/eol と core.autocrlf を適用するので、CRLF 化しただけの
 # 導入コピーを「未変更」と誤判定する。これに騙されるのは status の MODIFIED 判定、update の上書き判断、
 # 検査 "installed copies in sync" の 3 つ全部（scripts/doctor.sh の content_eq と同じ方針）。
+#
+# ハッシュ 1 件につき `git hash-object` を 1 プロセス起動すると、init / update のようにファイル数ぶん
+# 繰り返す経路で**計算ではなくプロセス起動が支配的**になる（実測 2026-09-21: 82 ファイルを 1 件ずつなら
+# 0.92 秒、`--stdin-paths` でまとめて 1 回なら 0.032 秒）。そこで `git hash-object --stdin-paths` を
+# **1 プロセスだけ常駐**させ、fifo でパスを 1 行送ってハッシュを 1 行読む。`--no-filters` は付けたまま
+# なので、上の CRLF の意味論は変わらない。常駐に失敗した / パスが行指向で渡せない場合は 1 件ずつの
+# 起動へそのまま落ちるので、結果は常に同じ。
+# fifo の fd は 3（パスを書く側）と 4（ハッシュを読む側）で固定する。
+HASH_SRV_DIR=""      # 常駐サーバの fifo 置き場（空なら常駐していない＝1 件ずつ起動する）
+
+# `git hash-object --stdin-paths` に 1 行として渡せるパスか。渡せないものは呼び出し側で 1 件ずつに落とす。
+#   - 改行 / CR を含む: 行区切りが壊れる（git は行末の CR も落とす）
+#   - `"` で始まる: git がその行を C クォートとして解釈し、アンクォートしてしまう
+hash_path_line_safe() { # path
+  case "$1" in
+    ""|'"'*) return 1;;
+    *$'\n'*|*$'\r'*) return 1;;
+  esac
+  return 0
+}
+
+# 常駐サーバを起動する（起動できなければ黙って 1 件ずつの経路のままにする）。
+# ハッシュを何度も取る経路（apply_plan / status / diff）の頭で呼ぶ。hash_of の中から呼んでも、
+# hash_of は `$(...)` の subshell で呼ばれるため fd が親に残らず毎回起動し直しになるので、ここは親で呼ぶ。
+hash_server_start() {
+  [ -n "$HASH_SRV_DIR" ] && return 0
+  command -v mkfifo >/dev/null 2>&1 || return 0
+  # `--stdin-paths` と `--no-filters` を同時に解する git か、空の標準入力で 1 回だけ確かめる。
+  # 解さない git でここを飛ばすと、常駐は起動だけして即死し、最初の 1 件で read の待ち時間を丸ごと
+  # 捨てることになる（実測: 待ち時間ぶん init が 1.5 秒 → 12 秒に伸びた）。プロセス 1 つで防げる。
+  git hash-object --no-filters --stdin-paths </dev/null >/dev/null 2>&1 || return 0
+  local d h; d="$(mktemp -d 2>/dev/null)" || return 0
+  mkfifo "$d/in" "$d/out" 2>/dev/null || { rm -rf "$d"; return 0; }
+  # fifo は `<>`（読み書き）で開く。片側だけで開くと相手が開くまでブロックするので、git の起動に
+  # 失敗した場合にここで永久に止まる。両端を自分で持てば open は必ず即座に返る。
+  exec 3<>"$d/in" 4<>"$d/out" 2>/dev/null || { rm -rf "$d"; return 0; }
+  # 子からは fifo の fd 3 / 4 を落とす。子が in の書き側を持ったままだと、親が fd 3 を閉じても
+  # git に EOF が届かず終了しない。
+  git hash-object --no-filters --stdin-paths <"$d/in" >"$d/out" 2>/dev/null 3>&- 4>&- &
+  HASH_SRV_DIR="$d"
+  # 疎通確認。既知の 1 件で往復できることをここで一度だけ確かめ、駄目なら常駐をやめて 1 件ずつに戻す
+  # （上の能力確認を通っていれば普通は通る。標準出力が行ごとに流れない git 実装への保険）。
+  printf 'harness hash probe\n' >"$d/probe"
+  h="$(hash_ask "$d/probe")" || h=""
+  case "$h" in ""|*[!0-9a-f]*) hash_server_stop;; esac
+  return 0
+}
+
+hash_server_stop() {
+  [ -n "$HASH_SRV_DIR" ] || return 0
+  exec 3>&- 4>&- 2>/dev/null || true
+  rm -rf "$HASH_SRV_DIR" 2>/dev/null || true
+  HASH_SRV_DIR=""
+  return 0
+}
+
+# 常駐サーバに 1 件聞く。返らなければ空を返す（呼び出し側が 1 件ずつの経路へ落ちる）。
+# `read -t` はサーバが死んだ場合の保険。bash 3.2 の -t は整数秒しか取れない（決定 0006）。
+hash_ask() { # path → hash（取れなければ空 + 非 0）
+  local h=""
+  printf '%s\n' "$1" >&3 2>/dev/null && read -t 10 -r h <&4 2>/dev/null || h=""
+  [ -n "$h" ] || return 1
+  printf '%s' "$h"
+}
+
 hash_of() { # file
-  local h; h="$(git hash-object --no-filters "$1" 2>/dev/null || true)"
+  local h=""
+  if [ -n "$HASH_SRV_DIR" ] && hash_path_line_safe "$1"; then h="$(hash_ask "$1")" || h=""; fi
+  [ -n "$h" ] || h="$(git hash-object --no-filters "$1" 2>/dev/null || true)"
   [ -n "$h" ] || die "内容ハッシュを取れない: $1（git が要る）"
   printf '%s' "$h"
 }
@@ -365,6 +432,7 @@ ensure_nested_claude_md() {
 # 各 plan 行を所有権規則で適用し、ENTRIES を組み立てる
 apply_plan() { # agents mode(init|update)
   local agents="$1" mode="$2"
+  hash_server_start   # ファイル数ぶんハッシュを取る経路。1 件ずつ git を起動しない（hash_of 参照）
   local backup="$ROOT/.harness/backup/$(ts)" conflicts="$ROOT/.harness/conflicts"
   # bash 3.2 に連想配列は無い（決定 0006）。path→sha256/source_sha256 の引き当ては
   # old_manifest_field()（一時ファイル + awk）で行う。抜けた古い manifest ("" になる)。
@@ -481,6 +549,7 @@ apply_plan() { # agents mode(init|update)
     rm -f "$tmp"
   done < <(plan "$agents")
   rm -f "$OLD_ENTRIES_FILE"; OLD_ENTRIES_FILE=""
+  hash_server_stop
 
   chmod +x "$ROOT/.harness/bin/harness" "$ROOT/.githooks/pre-commit" "$ROOT/.harness/scripts/"*.sh 2>/dev/null || true
   ensure_gitignore
@@ -660,6 +729,7 @@ cmd_status() {
   fi
   echo
   local p s o h sh cur state n_mod=0 n_miss=0
+  hash_server_start
   while IFS=$'\t' read -r p s o h sh; do
     if [ ! -e "$ROOT/$p" ]; then state="missing"; n_miss=$((n_miss + 1))
     elif [ "$o" = "seed" ]; then state="seed"
@@ -674,6 +744,7 @@ cmd_status() {
     fi
     printf '  %-10s %-9s %s\n' "$o" "$state" "$p"
   done < <(manifest_entries)
+  hash_server_stop
   echo
   echo "modified=$n_mod missing=$n_miss   (MODIFIED な managed は harness diff で確認し、汎用なら harness upstream で戻す)"
 }
@@ -686,6 +757,7 @@ cmd_diff() {
   local srcdir; srcdir="$(resolve_source "$src" "$ref")"
   PAYLOAD="$srcdir/harness"; SELF_PATH="$srcdir/bin/harness"; HVER="$(tr -d '\r\n' <"$srcdir/VERSION")"
   local p s o h sh cur tmp any=0
+  hash_server_start
   while IFS=$'\t' read -r p s o h sh; do
     [ "$o" = "seed" ] && continue
     [ -f "$ROOT/$p" ] || continue
@@ -702,6 +774,7 @@ cmd_diff() {
     fi
     rm -f "$tmp"
   done < <(manifest_entries)
+  hash_server_stop
   [ "$any" = 0 ] && echo "差分なし（managed ファイルは導入時のまま）"
   return 0
 }
