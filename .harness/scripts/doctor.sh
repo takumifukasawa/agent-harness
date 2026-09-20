@@ -71,10 +71,12 @@ content_eq() { # a b
     h2="$(git hash-object --no-filters "$2" 2>/dev/null)"
     [ -n "$h1" ] && [ "$h1" = "$h2" ]
   else
-    # 外部コマンドが一切無くても判定する最後の手段（bash 内蔵の mapfile だけを使う）
+    # 外部コマンドが一切無くても判定する最後の手段。mapfile は bash 4+ 専用（決定 0006）なので
+    # bash 3.2 でも動く while read で読む（最終行に改行が無いファイルも拾えるよう || [ -n "$line" ] を足す）
     local -a lines_a=() lines_b=()
-    mapfile lines_a <"$1" 2>/dev/null || return 1
-    mapfile lines_b <"$2" 2>/dev/null || return 1
+    local line
+    while IFS= read -r line || [ -n "$line" ]; do lines_a+=("$line"); done <"$1"
+    while IFS= read -r line || [ -n "$line" ]; do lines_b+=("$line"); done <"$2"
     [ "${#lines_a[@]}" = "${#lines_b[@]}" ] && [ "${lines_a[*]}" = "${lines_b[*]}" ]
   fi
 }
@@ -112,13 +114,21 @@ is_windows=0
 case "$os_name" in MINGW*|MSYS*|CYGWIN*) is_windows=1;; esac
 
 # ---------------------------------------------------------------- B1. 必須ツール
-# bash の版は BASH_VERSINFO[0] で見る（BASH_VERSINFO は readonly なのでテストから上書きできない。
-# 「bash < 4」のシナリオは自動テストでは再現せず、実機が bash 3 の環境でこの行を見る）
-if [ "${BASH_VERSINFO[0]:-0}" -ge 4 ]; then
-  report OK "bash ${BASH_VERSION:-?}（4 以上）"
+# bash の版は BASH_VERSINFO[0]/[1] で見る（BASH_VERSINFO は readonly なのでテストから上書きできない。
+# 「bash < 3.2」のシナリオは自動テストでは再現せず、実機がその版の環境でこの行を見る）。
+# macOS 既定の bash は 3.2.57 のまま更新されない見込みで、ハーネスはこれを切らない（決定 0006）。
+# 連想配列（declare -A）や mapfile は使わない前提でコードを書き、3.2 以上を最低ラインにする。
+bash_min_ok=0
+if [ "${BASH_VERSINFO[0]:-0}" -gt 3 ]; then
+  bash_min_ok=1
+elif [ "${BASH_VERSINFO[0]:-0}" -eq 3 ] && [ "${BASH_VERSINFO[1]:-0}" -ge 2 ]; then
+  bash_min_ok=1
+fi
+if [ "$bash_min_ok" = 1 ]; then
+  report OK "bash ${BASH_VERSION:-?}（3.2 以上。決定 0006）"
 else
-  report FAIL "bash の版が ${BASH_VERSION:-不明}（4 未満。連想配列などが使えない）" \
-    "bash 4 以上で実行する（macOS: brew install bash して /opt/homebrew/bin/bash から回す。Windows: Git for Windows 同梱の bash）"
+  report FAIL "bash の版が ${BASH_VERSION:-不明}（3.2 未満）" \
+    "bash 3.2 以上を用意する（決定 0006: macOS 既定の 3.2.57 はそのまま使える。3.2 未満の環境は個別に新しい bash を用意する）"
 fi
 
 if have git; then
@@ -147,7 +157,7 @@ if [ "$is_windows" = 1 ]; then
   if have cygpath; then
     report OK "cygpath（Windows）"
   else
-    report WARN "cygpath が無い（$os_name）" \
+    report WARN "cygpath が無い（${os_name}）" \
       "パス形式（C:/ と /c/）の正規化ができない。Git for Windows 同梱の bash から実行する"
   fi
 fi
@@ -398,7 +408,7 @@ if [ "$manifest_ok" = 1 ]; then
   # 他の PC / 他の worktree で clone すると、update / diff / upstream が他人のツリーを見に行く。
   case "$mf_source" in
     http://*|https://*|ssh://*|git://*|git@*|"") ;;
-    *) report WARN "manifest の source が機械依存の絶対パス（$mf_source）。コミットされる共有ファイルなので、他の PC や worktree では辿れない" \
+    *) report WARN "manifest の source が機械依存の絶対パス（${mf_source}）。コミットされる共有ファイルなので、他の PC や worktree では辿れない" \
          "bash .harness/bin/harness update で manifest を共有値に直し、このパスを .harness/source.local（gitignore 対象）へ移す";;
   esac
 
@@ -407,18 +417,18 @@ if [ "$manifest_ok" = 1 ]; then
     # 200 バイトで打ち切り、版らしい形式でなければ内容を出力に載せずスキップする。
     src_version_raw="$(head -c 200 "$eff_source/VERSION" 2>/dev/null | tr -d '\r\n')"
     if ! looks_like_version "$src_version_raw"; then
-      report WARN "source（$eff_source。$eff_source_from）の VERSION が版番号の形式ではない（先頭: $(printable_snippet "$src_version_raw" 24)）。新版の確認をスキップした" \
+      report WARN "source（${eff_source}。${eff_source_from}）の VERSION が版番号の形式ではない（先頭: $(printable_snippet "$src_version_raw" 24)）。新版の確認をスキップした" \
         "source の VERSION ファイルの中身を確認する（1 行に版番号だけを書く形が正しい）"
     elif [ "$src_version_raw" != "$mf_version" ]; then
-      report INFO "source（$eff_source。$eff_source_from）に新版 $src_version_raw がある（導入済みは $mf_version）" \
+      report INFO "source（${eff_source}。${eff_source_from}）に新版 $src_version_raw がある（導入済みは ${mf_version}）" \
         "bash .harness/bin/harness update で追従する（別 ref を使うときは --ref を付ける）"
     else
-      report OK "source の版は導入済みと同じ（$mf_version。$eff_source_from = $eff_source）"
+      report OK "source の版は導入済みと同じ（${mf_version}。$eff_source_from = ${eff_source}）"
     fi
   else
     # ここを OK と言い切らない。source が辿れないと update / diff / upstream が動かない（または
     # 毎回 clone しに行く）ので、直し方まで出す。診断側からネットワークへは出ない。
-    report WARN "source（$eff_source。$eff_source_from）がこの PC のローカルディレクトリとして辿れず、新版を確認できない（診断はネットワークに触らない）" \
+    report WARN "source（${eff_source}。${eff_source_from}）がこの PC のローカルディレクトリとして辿れず、新版を確認できない（診断はネットワークに触らない）" \
       "agent-harness を clone し、その絶対パスを機械ローカルの上書きに書く: echo '<clone した絶対パス>' > .harness/source.local （gitignore 対象＝コミットしない）／一度きりなら HARNESS_SOURCE=<絶対パス> を付けて実行する"
   fi
 fi
@@ -438,7 +448,7 @@ if [ -z "$gi_missing" ]; then
   report OK ".gitignore に .harness/state|backup|conflicts/ と source.local がある"
 else
   report WARN ".gitignore に無いエントリ: $gi_missing" \
-    ".gitignore に「$gi_missing」を追記する"
+    ".gitignore に「${gi_missing}」を追記する"
 fi
 
 # ---------------------------------------------------------------- 集計

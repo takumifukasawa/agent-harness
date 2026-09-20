@@ -161,6 +161,15 @@ manifest_entries() {
     's/.*"path":"([^"]*)".*"src":"([^"]*)".*"ownership":"([^"]*)".*"sha256":"([^"]*)".*"source_sha256":"([^"]*)".*/\1\t\2\t\3\t\4\t\5/'
 }
 
+# bash 3.2 には連想配列（declare -A）が無いので、apply_plan の「更新前の manifest から
+# path ごとに sha256 / source_sha256 を引く」だけを、一時ファイル + awk の検索に置き換える
+# （決定 0006）。apply_plan の開始時に OLD_ENTRIES_FILE へ manifest_entries を書き出しておく。
+OLD_ENTRIES_FILE=""
+old_manifest_field() { # path field(4=sha256|5=source_sha256)
+  [ -n "$OLD_ENTRIES_FILE" ] && [ -f "$OLD_ENTRIES_FILE" ] || return 0
+  awk -F'\t' -v p="$1" -v f="$2" '$1==p{v=$f;found=1} END{if(found)print v}' "$OLD_ENTRIES_FILE"
+}
+
 # 収集したエントリ（配列 ENTRIES、TSV 行）から manifest を書く
 write_manifest() {
   local version="$1" source="$2" ref="$3" agents="$4"
@@ -271,7 +280,7 @@ render_agent() { # role_src_file dest_tmp role_name kind
     echo "---"
     if [ "$kind" = "skill" ]; then
       echo "name: role-$name"
-      echo "description: 役割「$name」として動く。統括（task-orchestrate）から指示を受けて呼ばれる。${desc:-}"
+      echo "description: 役割「${name}」として動く。統括（task-orchestrate）から指示を受けて呼ばれる。${desc:-}"
     else
       echo "name: $name"
       echo "description: ${desc:-agent-harness role $name}"
@@ -352,9 +361,13 @@ ensure_nested_claude_md() {
 apply_plan() { # agents mode(init|update)
   local agents="$1" mode="$2"
   local backup="$ROOT/.harness/backup/$(ts)" conflicts="$ROOT/.harness/conflicts"
-  declare -A OLD_HASH OLD_SRC_HASH
-  local p s o h sh
-  while IFS=$'\t' read -r p s o h sh; do OLD_HASH["$p"]="$h"; OLD_SRC_HASH["$p"]="$sh"; done < <(manifest_entries)
+  # bash 3.2 に連想配列は無い（決定 0006）。path→sha256/source_sha256 の引き当ては
+  # old_manifest_field()（一時ファイル + awk）で行う。抜けた古い manifest ("" になる)。
+  OLD_ENTRIES_FILE="$(mktemp)"
+  # manifest.json が壊れていて "path" 行が 1 つも無い（grep が 0 件で exit 1 を返す）ことがある
+  # （B3 の想定シナリオ）。元は `< <(manifest_entries)` という process substitution 越しに読んでいて
+  # set -e の対象外だったので落ちなかった。ここは直接のコマンドなので || true で同じ耐性を保つ。
+  manifest_entries >"$OLD_ENTRIES_FILE" || true
 
   ENTRIES=()
   local n_new=0 n_up=0 n_res=0 n_keep=0 n_conf=0 n_seed=0
@@ -417,7 +430,7 @@ apply_plan() { # agents mode(init|update)
         curhash="$(hash_of "$abs")"
         if [ "$curhash" = "$newhash" ]; then
           n_keep=$((n_keep + 1))
-        elif [ "$curhash" = "${OLD_HASH[$dest]:-}" ]; then
+        elif [ "$curhash" = "$(old_manifest_field "$dest" 4)" ]; then
           # 導入時のまま = プロジェクトは何も書いていない。新しい雛形に入れ替える
           backup_file "$backup" "$dest"; cp "$tmp" "$abs"; n_up=$((n_up + 1)); info "  update $dest"
         elif ! grep -q '^@AGENTS\.md' "$abs"; then
@@ -437,13 +450,13 @@ apply_plan() { # agents mode(init|update)
         curhash="$(hash_of "$abs")"
         if [ "$curhash" = "$newhash" ]; then
           n_keep=$((n_keep + 1))
-        elif [ -z "${OLD_HASH[$dest]:-}" ]; then
+        elif [ -z "$(old_manifest_field "$dest" 4)" ]; then
           # manifest に無いのに存在する = harness が入れたのではないファイル。壊さず conflict に
           mkdir -p "$conflicts/$(dirname "$dest")"; cp "$tmp" "$conflicts/$dest.new"; n_conf=$((n_conf + 1))
           info "  CONFLICT $dest (exists, not from harness) -> .harness/conflicts/$dest.new"
           ENTRIES+=("$dest"$'\t'"$src"$'\t'"$own"$'\t'"$curhash"$'\t'"$srchash")
           rm -f "$tmp"; continue
-        elif [ "$curhash" = "${OLD_HASH[$dest]}" ]; then
+        elif [ "$curhash" = "$(old_manifest_field "$dest" 4)" ]; then
           backup_file "$backup" "$dest"
           cp "$tmp" "$abs"; n_up=$((n_up + 1)); info "  update $dest"
         else
@@ -462,6 +475,7 @@ apply_plan() { # agents mode(init|update)
     fi
     rm -f "$tmp"
   done < <(plan "$agents")
+  rm -f "$OLD_ENTRIES_FILE"; OLD_ENTRIES_FILE=""
 
   chmod +x "$ROOT/.harness/bin/harness" "$ROOT/.githooks/pre-commit" "$ROOT/.harness/scripts/"*.sh 2>/dev/null || true
   ensure_gitignore
@@ -524,7 +538,7 @@ if (before === after) { console.log('unchanged'); process.exit(0); }
 fs.writeFileSync(dest + '.harness-new', JSON.stringify(s, null, 2) + '\n');
 console.log('changed');
 EOF
-)" || { info "  settings.json のマージに失敗（$changed）。断片を手で反映: .harness/adapters/claude.settings.fragment.json"; return 0; }
+)" || { info "  settings.json のマージに失敗（${changed}）。断片を手で反映: .harness/adapters/claude.settings.fragment.json"; return 0; }
   if [ "$changed" = "changed" ]; then
     if [ -f "$dest" ]; then
       local b="$ROOT/.harness/backup/$(ts)"; mkdir -p "$b/.claude"; cp "$dest" "$b/.claude/settings.json"
@@ -565,8 +579,8 @@ cmd_init() {
   write_manifest "$version" "$shared_source" "$ref" "$agents"
   if [ -n "$local_source" ]; then
     write_source_local "$local_source"
-    info "  + $SOURCE_LOCAL_REL ($local_source。この PC 用。gitignore 対象＝コミットしない)"
-    info "      manifest の source は共有値 $shared_source（機械依存の絶対パスは共有ファイルに書かない）"
+    info "  + $SOURCE_LOCAL_REL (${local_source}。この PC 用。gitignore 対象＝コミットしない)"
+    info "      manifest の source は共有値 ${shared_source}（機械依存の絶対パスは共有ファイルに書かない）"
   fi
   merge_claude_settings "$agents"
   echo
@@ -607,7 +621,7 @@ cmd_update() {
   if ! is_shared_source "$shared_source"; then
     if [ "$source_from" = "manifest" ]; then
       write_source_local "$shared_source"
-      info "  + $SOURCE_LOCAL_REL ($shared_source。manifest にあった機械依存のパスを移した。gitignore 対象)"
+      info "  + $SOURCE_LOCAL_REL (${shared_source}。manifest にあった機械依存のパスを移した。gitignore 対象)"
       source_from="$SOURCE_LOCAL_REL"
     fi
     shared_source="$DEFAULT_SOURCE"
@@ -693,7 +707,7 @@ cmd_upstream() {
   local src src_from; IFS=$'\t' read -r src src_from <<<"$(effective_source)"
   # upstream は正本のツリーに書き戻すので、ローカルの clone が要る。manifest（共有ファイル）には
   # 機械依存のパスを書かせない。指す先は機械ローカルの上書きで与える（決定 0004）。
-  [ -d "$src" ] || die "source がこの PC のローカルディレクトリではない（$src。由来: $src_from）。
+  [ -d "$src" ] || die "source がこの PC のローカルディレクトリではない（${src}。由来: ${src_from}）。
   直し方: agent-harness を clone し、その絶対パスを機械ローカルの上書きに置く（gitignore 対象＝コミットしない）
           echo '<clone した絶対パス>' > $SOURCE_LOCAL_REL
   一度きりなら: HARNESS_SOURCE=<clone した絶対パス> bash .harness/bin/harness upstream $*"
