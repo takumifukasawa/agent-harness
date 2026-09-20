@@ -93,3 +93,13 @@
 - 原因: `checks.sh` は check.sh に **source される**シェルファイルで、`check "名前" "コマンド"` の第 2 引数は二重引用符の文字列。ここに `$(...)` や `$VAR` を**エスケープせずに**書くと、**checks.sh を読み込んだ瞬間に展開される**（検査が実行される時ではない）。展開された中身が `harness check` だったため、checks.sh のロード → harness check → checks.sh のロード → … と再帰した。`\"` は正しくエスケープできていたのに `$` だけ落としていた、という 1 文字の取りこぼしで起きる。
 - 対処 / 再発したら: **`harness check` が返ってこない / プロセスが増え続けるときは、まず `checks.sh` の各行で `$` がエスケープされているかを見る**（`grep -n '[^\]$' .harness/checks.sh`）。暴走を止めるには `ps -W | awk '$3==<PGID>'` で群を特定して `kill -9 -<PGID>`。
 - **予防（これが本質）**: 数行を超える検査、特に**使い捨てプロジェクトを作る・`harness` 自身を呼ぶ**検査は、inline で書かず `tests/<name>.sh` に逃がして `check "名前" "bash tests/<name>.sh"` で登録する。エスケープの問題が構造的に消え、`trap` で後片付けも書ける。既存の `doctor scenarios` / `update scenarios` / `seed checks are green` がその形。
+
+## 2026-09-20 macOS の既定 bash 3.2 + UTF-8 では `"$var日本語"` が unbound variable になる [harness候補]
+- 症状: macOS で `harness doctor` が途中の行で `doctor.sh: line 421: eff_source?: unbound variable` と言って異常終了する。その変数は数行上で普通に代入されている。FAIL 行は出るのに総括行まで届かない。
+- 原因: bash 3.2 はマルチバイト文字を変数名の境界として扱わず、`"$eff_source。"` の「。」の先頭バイトを変数名に食い込ませる。`set -u` があるので未定義として落ちる。Apple は GPLv3 を避けて bash を 3.2.57 のまま置いているので、**この環境は今後も無くならない**。
+- 対処 / 再発したら: 変数展開を `${var}` と波括弧で括る。`bash tests/lint-bash-compat.sh nonascii-var` が `bin/harness`・`harness/scripts/*.sh`・`tests/*.sh` を機械的に締め出しているので、**まずこの検査を回す**。対象外（`harness/adapters/` 等）に書く時は自分で気をつける。日本語でメッセージを書くプロジェクトは必ず踏む。
+
+## 2026-09-20 PATH からディレクトリを丸ごと外すテストは macOS 15+ で誤検知する [harness候補]
+- 症状: 「node / jq が無くても全項目が実行できる」テスト（`tests/doctor.sh` の C3）が macOS でだけ落ちる。`jq` を消したいだけなのに、テストが見ている別の項目まで壊れる。
+- 原因: macOS 15 以降は `jq` が Apple 提供で `/usr/bin/jq` に居る。`git`・`sed`・`grep` と**同じディレクトリ**なので、`jq` のあるディレクトリを PATH から外すとそれらも巻き添えで消える。Linux / Windows では `jq` が `/usr/local/bin` などに単独で居るため表に出ない。
+- 対処 / 再発したら: ディレクトリ単位で PATH を削らず、**実行ファイル単位でスタブ化する**（空のディレクトリを PATH 先頭に置き、消したいコマンド名だけ `exit 127` のスクリプトで覆う）。「任意依存が無い環境」を作るテストが特定の OS でだけ落ちたら、まずそのコマンドが標準ディレクトリに同居していないか `command -v` で見る。

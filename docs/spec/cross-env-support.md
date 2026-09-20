@@ -27,7 +27,7 @@ macOS           フェーズ 1        フェーズ 2
 ### A. macOS で動く（フェーズ 1）
 
 - A1. `/bin/bash .harness/bin/harness doctor` が **FAIL 0**（WARN は任意依存のみ）。**`LC_ALL=C` を付けず `ja_JP.UTF-8` のまま**通ること
-- A2. `/bin/bash .harness/bin/harness check` が **13 件全件 pass**。同じくロケールを細工しない
+- A2. `/bin/bash .harness/bin/harness check` が **全件 pass**（T01 で禁止検査 2 件が増えて 15 件）。同じくロケールを細工しない
 - A3. `harness init` が公開 URL からも動く
 - A4. **bash 3.2 を切らない**。macOS 既定の bash でそのまま動く形に落とす（**決定 0006**）
 - A5. 環境差で壊れた箇所は、直すと同時に**その環境で落ちるテスト・検査**を足す（`tests/` に OS 分岐を持ち込むのではなく、両方で通る書き方に直すのが既定）
@@ -56,16 +56,17 @@ macOS           フェーズ 1        フェーズ 2
 
 | # | ブロッカー | 実体 | 箇所 | 状態 |
 |---|---|---|---|---|
-| 1 | `declare -A` | `declare: -A: invalid option` → **init が即死** | `bin/harness:355`（1） | check の 3 FAIL の唯一の原因 |
-| 2 | `"$var日本語"` | bash 3.2 + UTF-8 で `unbound variable`。`${var}` と書けば通る | **24 行** | doctor が B10 で異常終了。**tech-debt #3 に無い新発見** |
-| 3 | `mapfile` | bash 4+ 専用。外部コマンド全滅時のフォールバック | `doctor.sh:76-77`（2） | 未到達 |
-| 4 | `date -d` | `illegal option -- d` を確認 | — | 未到達 |
-| 5 | `sed -i` | 引数必須。`invalid command code` を確認 | — | 未到達 |
+| 1 | `declare -A` | `declare: -A: invalid option` → **init が即死** | `bin/harness:355`（1） | **T01 で修正済み**（一時ファイル + awk に置換）。check の 3 FAIL の唯一の原因だった |
+| 2 | `"$var日本語"` | bash 3.2 + UTF-8 で `unbound variable`。`${var}` と書けば通る | **24 行** | **T01 で修正済み**。禁止検査で再発を止めている。走査に無かった新発見 |
+| 3 | `mapfile` | bash 4+ 専用。外部コマンド全滅時のフォールバック | `doctor.sh:76-77`（2） | **T01 で修正済み**（`while read` に置換） |
+| 4 | `date -d` | `illegal option -- d` を確認 | `gc.sh:42` | **依然未到達**。`harness gc` は `check` の経路に無く、macOS で壊れているかを機械で検出できない（tech-debt #8 に起票） |
+| 5 | `sed -i` | 引数必須。`invalid command code` を確認 | `tests/doctor.sh`・`tests/update.sh` 計 6 | **T01 で踏んだので修正済み**（`sed_i()` ヘルパーで GNU/BSD 両対応） |
 | 6 | `.githooks/pre-commit` の実行ビット | git index 上で mode **100644**。`harness init` は `chmod +x` する（`bin/harness:466`）が、**`git clone` で持ってくると実行ビットが付かず、git がフックを黙って無視する**（`hint: the '.githooks/pre-commit' hook was ignored because it's not set as executable`）。Windows の Git は `core.filemode=false` が既定なので気づかなかった | `.githooks/pre-commit` | **doctor が偽の OK を出す** |
+| 7 | C3 テストの PATH 操作 | `node` / `jq` のディレクトリを PATH から丸ごと外す作りだったが、macOS 15+ では `jq` が `/usr/bin` に `git`・`sed` と同居しているため**それらも巻き添えで消え**、テストが誤検知する | `tests/doctor.sh` の C3 | **T01 で踏んだので修正済み**（実行ファイル単位のスタブ化に変更） |
 
 **#6 は doctor の穴でもある。** B6 は `core.hooksPath` の値と `-f`（存在）しか見ておらず、フックが実行不可でも `OK git hooks` と報告する。**検査が効いていないのに緑になる**のはハーネスの根幹（`AGENTS.md`「実装後は `check.sh` を回す。これが『完了』の客観条件」）に関わるので、`-x` を見るように直す。`handoff.md` の「別の PC で再開するとき」に書いてある `git config core.hooksPath .githooks` だけでは**不十分だった**ことになる。
 
-**未到達の 4・5 は先回りで直さない。** `init` が通ってから実際に踏んだ時点で直す（踏んでいないなら、その経路が macOS で使われていない可能性があり、直しても検証できない）。
+**未到達のものは先回りで直さない**（当初の方針どおり）。T01 の修正で `init` が通るようになった結果、**`sed -i`（#5）と C3 の PATH 操作（#7）は実際に踏んだので直した**。`date -d`（#4）はまだ踏んでいないので触っていない。ただし**踏まない理由が「`harness gc` に実行経路が無い」ことなら、それは検査の穴**なので tech-debt #8 に起票した。
 
 `sha256sum` と `jq` は **この機には Apple 提供のものが入っていた**（`/sbin/sha256sum` / `/usr/bin/jq`、macOS 15 以降）。`docs/tech-debt.md` #3 の「macOS には無い」という前提はこの機では当たらない。**古い macOS（15 未満）向けの経路は未検証のまま残る**。
 

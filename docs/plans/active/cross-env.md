@@ -1,7 +1,7 @@
 # cross-env — エージェントと OS を問わず同じように動く
 
 - 開始: 2026-09-20
-- 状態: 進行中（フェーズ 1 / T01 着手前）
+- 状態: 進行中（フェーズ 1 / T01 完了、T02 着手前）
 - 関連: [spec](../../spec/cross-env-support.md), [決定 0006](../../decisions/0006-support-bash-3-2.md), `docs/tech-debt.md` #3
 
 ## 目的（何ができれば完了か）
@@ -17,10 +17,10 @@ Windows × Codex は今回の対象外。
 
 フェーズ 1（A）:
 
-- [ ] A1. `/bin/bash .harness/bin/harness doctor` が **FAIL 0**。`LC_ALL=C` を付けず `ja_JP.UTF-8` のまま
-- [ ] A2. `/bin/bash .harness/bin/harness check` が **13 件全件 pass**
+- [x] A1. `/bin/bash .harness/bin/harness doctor` が **FAIL 0**。`LC_ALL=C` を付けず `ja_JP.UTF-8` のまま
+- [x] A2. `/bin/bash .harness/bin/harness check` が **全件 pass**（T01 で禁止検査 2 件が増えて 15 件）
 - [ ] A3. `harness init` が公開 URL からも動く
-- [ ] A4. 決定 0006（bash 3.2 を切らない）に従っている
+- [x] A4. 決定 0006（bash 3.2 を切らない）に従っている
 - [ ] A5. 環境差の修正それぞれに検査・テストが付いている
 
 フェーズ 2（B）: spec の B1〜B4。A 完了時にタスクを足す。
@@ -29,7 +29,7 @@ Windows × Codex は今回の対象外。
 
 | # | タスク | 状態 | 備考 |
 |---|---|---|---|
-| T01 | bash 3.2 で動く形に直す（27 箇所）+ 禁止検査 2 件 | todo | `declare -A` 1 / `mapfile` 2 / `${var}` 化 24。受け入れは「素の `/bin/bash` で `check` 全件 pass」 |
+| T01 | bash 3.2 で動く形に直す（27 箇所）+ 禁止検査 2 件 | **done** | `declare -A` 1 / `mapfile` 2 / `${var}` 化 24。受け入れは「素の `/bin/bash` で `check` 全件 pass」 |
 | T02 | 踏んだ環境差を直す + A1 / A3 を確定 | todo | 未到達だった `date -d` / `sed -i` は**踏んだぶんだけ**直す。**`.githooks/pre-commit` の実行ビット（git index を 100755 に）と、それを見逃す doctor B6 の偽 OK（`-x` を見ていない）もここ。** 公開 URL からの `init`（tech-debt #4）もここ |
 | T03 | 導入コピー同期・CHANGELOG・版上げ | todo | `harness status` drift 0 ／「プロジェクト側で必要な作業」を CHANGELOG に |
 | — | フェーズ 2（B: Codex）のタスク | 未分解 | A 完了時に `stages.json` へ追加 |
@@ -45,6 +45,8 @@ Windows × Codex は今回の対象外。
 
 - **2026-09-20**: 作業機を macOS に移し、初めて実機で計測。`check` は **pass=9 fail=4**、根本原因は `declare -A` による `init` の即死。走査に無かった 5 つ目のブロッカー（bash 3.2 + UTF-8 で `"$var日本語"` が `unbound variable`、24 行）を発見。準備フェーズの未確定 3 件をすべて合意し、決定 0006 を起票、spec と tech-debt #3 を実測に更新、3 タスクに分解した。
 - **2026-09-20（続き）**: 準備フェーズの docs をコミットした際、**6 つ目のブロッカー**が出た。`.githooks/pre-commit` が git index 上で mode 100644 なので、`git clone` で持ってきたこのリポジトリでは **pre-commit が黙って無視されている**（`harness init` は `chmod +x` するが clone には効かない）。さらに `doctor` の B6 は `-f` しか見ていないため **`OK git hooks` と偽の緑を出していた**。T02 のスコープに追加。
+
+- **2026-09-20（T01 完了）**: bash 3.2 対応 27 箇所 + 禁止検査 2 件（`tests/lint-bash-compat.sh`）。**`check` は pass=9 fail=4 → pass=15 fail=0**（検査自体が 13→15 件に増えた）、**`doctor` は OK=16 WARN=0 FAIL=0**、所要 1分27秒。統括が 3 点判定を実施し、禁止検査については**別の git リポジトリに違反を仕込んで実際に捕まることまで確認**した（空洞でない）。`init` が通るようになった結果 `sed -i`（6 箇所）と C3 の PATH 誤検知を新たに踏んだので同時に修正。`date -d`（`gc.sh:42`）は `gc` に実行経路が無く未到達のため未修正 → **tech-debt #8 に「gc に検査の経路が無い」ことを起票**。コミット 5 件（`567c1a5`..`de1e264`）。
 
 ## 未確定事項（人間の判断待ち）
 
