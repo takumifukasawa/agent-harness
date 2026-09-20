@@ -21,6 +21,8 @@ check fast "manifest source is shared value" "src=\$(sed -n 's/^  \"source\": \"
 check fast "githooks are executable"      "bash tests/githooks.sh"
 # gc の実行経路（tech-debt #8）。日付判定が環境差で無言でスキップされていないかを見る。
 check fast "gc scenarios"                 "bash tests/gc.sh"
+# curl <公開 URL>/bin/harness | bash -s -- init の経路（標準入力から実行すると BASH_SOURCE が無い）
+check      "stdin (curl | bash) install"  "bash tests/stdin.sh"
 
 # bash 3.2 互換（決定 0006）。macOS 既定の bash はアップデートされない前提で、この 2 つを機械的に締め出す。
 # 対象は bin/harness・harness/scripts/*.sh・tests/*.sh（tests/lint-bash-compat.sh 自身は自己参照になるため対象外）。

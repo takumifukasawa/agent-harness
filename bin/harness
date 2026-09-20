@@ -71,9 +71,14 @@ same_script() { # a b
 }
 
 # この CLI が agent-harness リポジトリの中から実行されているなら、そのパスを返す
+# 標準入力から実行された（curl <公開 URL>/bin/harness | bash -s -- init）ときは BASH_SOURCE が
+# 設定されない。set -u のもとで素に参照すると "BASH_SOURCE[0]: unbound variable" になり、
+# ここでは subshell が死ぬだけなので**エラーを出しながら処理は続く**という分かりにくい出方をする
+# （2026-09-20、macOS bash 3.2.57 で実測）。その場合は「リポジトリの中からではない」とみなす。
 self_repo() {
-  local here
-  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
+  local src="${BASH_SOURCE[0]:-}" here
+  [ -n "$src" ] || { echo ""; return 0; }
+  here="$(cd "$(dirname "$src")" 2>/dev/null && pwd || echo "")"
   [ -n "$here" ] && [ -f "$here/../VERSION" ] && [ -d "$here/../harness" ] && (cd "$here/.." && pwd) || echo ""
 }
 
@@ -592,7 +597,8 @@ cmd_init() {
 # 読み続けるので、同梱コピーから起動されたときは一時ファイルに自分を写してそこから再実行する。
 reexec_if_vendored() {
   [ -n "${HARNESS_REEXEC:-}" ] && return 0
-  local me="${BASH_SOURCE[0]}" vendored="$ROOT/.harness/bin/harness" tmp
+  # 標準入力から実行中なら BASH_SOURCE が無い（同梱コピーを実行しているはずがないので何もしない）
+  local me="${BASH_SOURCE[0]:-}" vendored="$ROOT/.harness/bin/harness" tmp
   same_script "$me" "$vendored" || return 0
   tmp="$(mktemp)"; cp "$me" "$tmp"
   HARNESS_REEXEC=1 HARNESS_REEXEC_TMP="$tmp" exec bash "$tmp" update "$@"
@@ -776,7 +782,8 @@ cmd_version() {
 cmd_self_install() {
   local dir=""
   while [ $# -gt 0 ]; do case "$1" in --dir) dir="$2"; shift 2;; *) die "unknown option: $1";; esac; done
-  local me="${BASH_SOURCE[0]}"
+  # 標準入力から実行中は BASH_SOURCE が無い。素に参照すると案内の die に届く前に落ちるので :- を付ける
+  local me="${BASH_SOURCE[0]:-}"
   [ -f "$me" ] || die "標準入力から実行中は self-install できない。clone した bin/harness か、導入済みプロジェクトの .harness/bin/harness から実行する"
   local win=0; case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) win=1;; esac
   if [ -z "$dir" ]; then
@@ -799,13 +806,21 @@ cmd_self_install() {
   esac
 }
 
-usage() { sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { # 冒頭のコメントをそのまま usage にする。標準入力から実行中は読み出せないので短縮版を出す
+  local src="${BASH_SOURCE[0]:-}"
+  if [ -n "$src" ] && [ -f "$src" ]; then
+    sed -n '2,18p' "$src" | sed 's/^# \{0,1\}//'
+  else
+    echo "harness <init|update|status|diff|upstream|check|gc|doctor|self-install|version>"
+    echo "  標準入力から実行中のため詳しい usage を読み出せない。clone した bin/harness か、導入済みプロジェクトの .harness/bin/harness から実行する。"
+  fi
+}
 
 # PATH 上の harness から呼ばれ、プロジェクトに同梱コピーがあれば、そちらへ委譲する（版をプロジェクトに固定）
 maybe_delegate() {
   local cmd="${1:-}"
   case "$cmd" in init|self-install|version|--version|-v|""|help|-h|--help) return 0;; esac
-  local root vendored me="${BASH_SOURCE[0]}"
+  local root vendored me="${BASH_SOURCE[0]:-}"
   root="$(project_root)"; vendored="$root/.harness/bin/harness"
   [ -f "$vendored" ] || return 0
   same_script "$me" "$vendored" && return 0   # 既に同梱コピー（と同じ内容）を実行中
