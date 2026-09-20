@@ -30,7 +30,7 @@ Windows × Codex は今回の対象外。
 | # | タスク | 状態 | 備考 |
 |---|---|---|---|
 | T01 | bash 3.2 で動く形に直す（27 箇所）+ 禁止検査 2 件 | todo | `declare -A` 1 / `mapfile` 2 / `${var}` 化 24。受け入れは「素の `/bin/bash` で `check` 全件 pass」 |
-| T02 | 踏んだ環境差を直す + A1 / A3 を確定 | todo | 未到達だった `date -d` / `sed -i` は**踏んだぶんだけ**直す。公開 URL からの `init`（tech-debt #4）もここ |
+| T02 | 踏んだ環境差を直す + A1 / A3 を確定 | todo | 未到達だった `date -d` / `sed -i` は**踏んだぶんだけ**直す。**`.githooks/pre-commit` の実行ビット（git index を 100755 に）と、それを見逃す doctor B6 の偽 OK（`-x` を見ていない）もここ。** 公開 URL からの `init`（tech-debt #4）もここ |
 | T03 | 導入コピー同期・CHANGELOG・版上げ | todo | `harness status` drift 0 ／「プロジェクト側で必要な作業」を CHANGELOG に |
 | — | フェーズ 2（B: Codex）のタスク | 未分解 | A 完了時に `stages.json` へ追加 |
 
@@ -44,6 +44,7 @@ Windows × Codex は今回の対象外。
 ## 進捗ログ（セッションごとに 1〜3 行）
 
 - **2026-09-20**: 作業機を macOS に移し、初めて実機で計測。`check` は **pass=9 fail=4**、根本原因は `declare -A` による `init` の即死。走査に無かった 5 つ目のブロッカー（bash 3.2 + UTF-8 で `"$var日本語"` が `unbound variable`、24 行）を発見。準備フェーズの未確定 3 件をすべて合意し、決定 0006 を起票、spec と tech-debt #3 を実測に更新、3 タスクに分解した。
+- **2026-09-20（続き）**: 準備フェーズの docs をコミットした際、**6 つ目のブロッカー**が出た。`.githooks/pre-commit` が git index 上で mode 100644 なので、`git clone` で持ってきたこのリポジトリでは **pre-commit が黙って無視されている**（`harness init` は `chmod +x` するが clone には効かない）。さらに `doctor` の B6 は `-f` しか見ていないため **`OK git hooks` と偽の緑を出していた**。T02 のスコープに追加。
 
 ## 未確定事項（人間の判断待ち）
 

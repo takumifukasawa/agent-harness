@@ -61,6 +61,9 @@ macOS           フェーズ 1        フェーズ 2
 | 3 | `mapfile` | bash 4+ 専用。外部コマンド全滅時のフォールバック | `doctor.sh:76-77`（2） | 未到達 |
 | 4 | `date -d` | `illegal option -- d` を確認 | — | 未到達 |
 | 5 | `sed -i` | 引数必須。`invalid command code` を確認 | — | 未到達 |
+| 6 | `.githooks/pre-commit` の実行ビット | git index 上で mode **100644**。`harness init` は `chmod +x` する（`bin/harness:466`）が、**`git clone` で持ってくると実行ビットが付かず、git がフックを黙って無視する**（`hint: the '.githooks/pre-commit' hook was ignored because it's not set as executable`）。Windows の Git は `core.filemode=false` が既定なので気づかなかった | `.githooks/pre-commit` | **doctor が偽の OK を出す** |
+
+**#6 は doctor の穴でもある。** B6 は `core.hooksPath` の値と `-f`（存在）しか見ておらず、フックが実行不可でも `OK git hooks` と報告する。**検査が効いていないのに緑になる**のはハーネスの根幹（`AGENTS.md`「実装後は `check.sh` を回す。これが『完了』の客観条件」）に関わるので、`-x` を見るように直す。`handoff.md` の「別の PC で再開するとき」に書いてある `git config core.hooksPath .githooks` だけでは**不十分だった**ことになる。
 
 **未到達の 4・5 は先回りで直さない。** `init` が通ってから実際に踏んだ時点で直す（踏んでいないなら、その経路が macOS で使われていない可能性があり、直しても検証できない）。
 
