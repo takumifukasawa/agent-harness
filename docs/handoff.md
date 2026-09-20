@@ -1,10 +1,12 @@
 # handoff — 現在地
 
-最終更新: 2026-09-21（題材 cross-env のフェーズ 1 完了・版 0.6.0。**最終レビュー 1 回を実施し、指摘 4 件のうち 3 件を T05 として修正中**）
+最終更新: 2026-09-21（題材 cross-env の**フェーズ 1 をクローズ**。版 0.6.0、最終レビューと指摘修正まで完了。次の題材は `docs/spec/check-speed.md` の A）
 
 ## いま何をしているか（1〜3 行）
 
-題材は **cross-env**（エージェントと OS を問わず同じに動く）。**準備フェーズは完了し、合意はすべて spec と決定 0006 に書き戻してある。** **フェーズ 1（macOS で動く）の 4 タスクはすべて done で、版 0.6.0 を切った。最終レビューも 1 回実施済み**（観点 4 つを並列、指摘 4 件）。いまその指摘のうち 3 件を **T05** として潰しているところ（`phase: iterate` / `current_task: T05`）。残るのは main へのマージとフェーズ 2（Codex）。計画と進捗は `docs/plans/active/cross-env.md`、機械可読な状態は `.harness/state/`。
+題材は **cross-env**（エージェントと OS を問わず同じに動く）。**準備フェーズは完了し、合意はすべて spec と決定 0006 に書き戻してある。** **フェーズ 1（macOS で動く）は完了。** 5 タスク done、版 **0.6.0**、最終レビュー 1 回と指摘 3 件の修正（T05）まで済み、`.harness/state/progress.json` は `phase: done`（**ユーザーの承認待ち**）。残るのは main へのマージとフェーズ 2（Codex）。
+
+**次の題材は `docs/spec/check-speed.md` の A**（検査ごとの所要時間を可視化する）。2026-09-21 にユーザーと範囲を合意済み: **計測を単独で先にやり、実測を見てから tech-debt #6 の返済範囲を決める**。計画と進捗は `docs/plans/active/cross-env.md`、機械可読な状態は `.harness/state/`。
 
 **作業機は macOS（Darwin 24.6 / arm64 / 素の bash 3.2.57）。** 2026-09-20 に初めて実機で回し、`harness check` が **pass=9 fail=4** だったところを **pass=18 fail=0**（検査自体が 13 → 18 件）にした。**`.githooks/pre-commit` は T02 で本当に走るようになった**（index mode 100755）。
 
@@ -19,7 +21,7 @@
 | macOS の素の bash | **3.2.57 のまま動く**（決定 0006 で「3.2 を切らない」と決めた）。`brew install bash` は**もう要らない** | 決定 0006 |
 | 導入コピーの drift | なし（modified=0 missing=0）。**T02 以降 `update` は mode 差分も残さない**（実行ビットを index の正にしたため） | `harness status` |
 | 決定 | 0001〜**0007**（0007: フックが実行不可なら doctor は FAIL） | `docs/decisions/` |
-| フェーズ | **`iterate` / T05**（レビュー指摘の修正）。最終レビューは実施済み（`final_review.status: findings_open`） | `.harness/state/progress.json` |
+| フェーズ | **`done`**（5/5 タスク、`final_review.status: done`）。ユーザーの承認待ち | `.harness/state/progress.json` |
 | 最終レビュー | 観点 4 つ（仕様突合 / **機能の完結性** / **クロス環境** / **検査の実効性**。後ろ 2 つは既定の「並行性 / 認可」から差し替え）を下位モデルで並列。**指摘 4 件、すべて単独報告かつ修正コスト低なので反証は回していない**（条件は両方満たす場合のみ） | `.harness/state/reports/review-*.md` |
 | 技術負債 | **#8 は返済済**（`tests/gc.sh` で経路を新設）、**#3 はほぼ返済済**（残るのは古い macOS 15 未満）、**#4 は機構まで確認済**（確定は main へ載せた後）、**#9 を新規起票**（init の perms）。未着手は #1 #2 #6 #7 | `docs/tech-debt.md` |
 
@@ -27,13 +29,10 @@
 
 **`task-orchestrate` の反復フェーズの続き。** `.harness/state/progress.json` が `phase: iterate` / `current_task: T03` なので、スキルの §0 から入れば続きから拾える。
 
-1. **T05 を終わらせる**（レビュー指摘 3 件。`stages.json` の T05）:
-   - `doctor` B6 が「`core.hooksPath` は正しいが `.githooks/pre-commit` が無い」状態で、矛盾した文言と no-op の直し方を出す（`harness/scripts/doctor.sh:288-290`）
-   - `tests/doctor.sh:94-101` の C3 スタブ化が `ln -s` の失敗を握り潰し、**symlink を作れない Windows で診断が総崩れになりうる**（`|| cp` のフォールバックが無い）
-   - `tests/lint-bash-compat.sh` が **`harness/checks.seed.sh` を走査していない**。配られて実行されるペイロードなのに、`declare -A` を仕込んでも検出されない（レビュアーが実機で確認）
-   4 件目（spec A2 の件数ずれ）は統括の書き戻し漏れだったので直接修正済み。
-2. **main へ載せ、tech-debt #4 を閉じる**: `bash bin/harness init --source https://github.com/takumifukasawa/agent-harness.git` を 1 回回して `doctor` が FAIL 0 になることを確認する。**今落ちているのは公開 main が T01 前（305d57b）だからで、コード側の欠陥ではない**（現ブランチ内容の clone 経路では通る）。
-3. **フェーズ 2（Codex）のタスクを `stages.json` に足す**（spec の B1〜B4）。**Codex CLI 0.154.0 がこの機に入っている**（`/opt/homebrew/bin/codex`）ので環境待ちにはならない
+1. **フェーズ 1 の成果を main へ載せ、tech-debt #4 を閉じる**（下の 2 と一体）。マージ後に `bash bin/harness init --source https://github.com/takumifukasawa/agent-harness.git` を 1 回回して `doctor` が FAIL 0 になることを確認する。
+2. **次の題材 `docs/spec/check-speed.md` の A**（検査ごとの所要時間を可視化）。`harness/scripts/check.sh`（60 行）の `check()` に数行を足す規模で、**1 タスクで終わる見込み**なので `task-orchestrate` を使うほどではない（スキル §5「1 セッションで終わる変更には使わない」）。A8 で実測を tech-debt #6 に書き戻すところまでが範囲。
+3. **フェーズ 2（Codex）**。今落ちている公開経路は main が T01 前（305d57b）だからで、コード側の欠陥ではない（現ブランチ内容の clone 経路では通る）。
+   タスクは spec の B1〜B4。**Codex CLI 0.154.0 がこの機に入っている**（`/opt/homebrew/bin/codex`）ので環境待ちにはならない
    フェーズ 1 とは spec の節も差分範囲も分かれるので、**`.harness/state/` を作り直して新しい反復として起動する**のが素直（今の state はフェーズ 1 の記録として畳む）。
 
 ## 別の PC で再開するとき
@@ -89,3 +88,4 @@ git config core.hooksPath .githooks
 - **古い macOS（15 未満）の経路**: `sha256sum` / `jq` が無い前提のコードは、この機では確かめられていない（tech-debt #3 の残り）。
 - **`harness init` の perms**: 新規導入直後が docs=0600 / スクリプト=0711 になる。踏んでいないので直していない（tech-debt #9）。
 - **`core.hooksPath` 未設定 / `.githooks/pre-commit` 自体が無いケース**: B6 の別分岐で、**WARN のまま**（決定 0007 のスコープ外。T04 の申し送り）。clone 直後の正常な途中状態でもあり、直し方も案内済み。「門番が不在なら FAIL」の論理をここまで広げるかは未検討。
+- **T05 で受け入れ条件を実測で調整した点**: C3 のスタブ化は「`ln -s` も `cp` も失敗したら落とす」と指示したが、実装役は `/usr/bin/sudo`（setuid・所有者以外読み取り不可）で `cp` が Permission denied になる実例を踏み、**「1 件も stub 化できなかったときだけ失敗」**に変えた。判断は妥当だが、**診断に要るコマンド（git / sed）だけが失敗したケースは依然見逃す**。実害が出たら区別を足す。

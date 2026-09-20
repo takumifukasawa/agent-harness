@@ -10,7 +10,8 @@
 | ファイル | 範囲 | 状態 |
 |---|---|---|
 | [harness-doctor.md](harness-doctor.md) | `harness doctor`: 導入先の環境と導入状態の診断 | 合意済（v0.4.0 で出荷） |
-| [cross-env-support.md](cross-env-support.md) | エージェント（Claude / Codex）と OS（Windows / macOS）を問わず同じように動く | **未合意（草案）** |
+| [cross-env-support.md](cross-env-support.md) | エージェント（Claude / Codex）と OS（Windows / macOS）を問わず同じように動く | **合意済**（フェーズ 1 は 0.6.0 で出荷。フェーズ 2 = Codex が残り） |
+| [check-speed.md](check-speed.md) | `harness check` が遅いことを実測で直す（計測 → 返済 → 並列化の順） | **A のみ合意済**（B・C は A の実測後） |
 
 ## 1 つの spec の書き方
 
