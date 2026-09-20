@@ -1,7 +1,7 @@
 # cross-env — エージェントと OS を問わず同じように動く
 
 - 開始: 2026-09-20
-- 状態: 進行中（フェーズ 1 / T01 完了、T02 着手前）
+- 状態: 進行中（フェーズ 1 / T01・T02 完了、次は T03）
 - 関連: [spec](../../spec/cross-env-support.md), [決定 0006](../../decisions/0006-support-bash-3-2.md), `docs/tech-debt.md` #3
 
 ## 目的（何ができれば完了か）
@@ -18,10 +18,10 @@ Windows × Codex は今回の対象外。
 フェーズ 1（A）:
 
 - [x] A1. `/bin/bash .harness/bin/harness doctor` が **FAIL 0**。`LC_ALL=C` を付けず `ja_JP.UTF-8` のまま
-- [x] A2. `/bin/bash .harness/bin/harness check` が **全件 pass**（T01 で禁止検査 2 件が増えて 15 件）
-- [ ] A3. `harness init` が公開 URL からも動く
+- [x] A2. `/bin/bash .harness/bin/harness check` が **全件 pass**（T01 で 15 件、T02 で 18 件に増えた。pass=18 fail=0）
+- [ ] A3. `harness init` が公開 URL からも動く — **機構は T02 で確認済**（URL 解決・`curl \| bash` とも動く）。公開 main が T01 前なので導入後の doctor だけ落ちる。**T03 で main に載せた後の 1 回で確定**（tech-debt #4）
 - [x] A4. 決定 0006（bash 3.2 を切らない）に従っている
-- [ ] A5. 環境差の修正それぞれに検査・テストが付いている
+- [x] A5. 環境差の修正それぞれに検査・テストが付いている（T02。踏んだ 3 件それぞれに `tests/githooks.sh` / `tests/gc.sh` / `tests/stdin.sh`）
 
 フェーズ 2（B）: spec の B1〜B4。A 完了時にタスクを足す。
 
@@ -30,7 +30,7 @@ Windows × Codex は今回の対象外。
 | # | タスク | 状態 | 備考 |
 |---|---|---|---|
 | T01 | bash 3.2 で動く形に直す（27 箇所）+ 禁止検査 2 件 | **done** | `declare -A` 1 / `mapfile` 2 / `${var}` 化 24。受け入れは「素の `/bin/bash` で `check` 全件 pass」 |
-| T02 | 踏んだ環境差を直す + A1 / A3 を確定 | todo | 未到達だった `date -d` / `sed -i` は**踏んだぶんだけ**直す。**`.githooks/pre-commit` の実行ビット（git index を 100755 に）と、それを見逃す doctor B6 の偽 OK（`-x` を見ていない）もここ。** 公開 URL からの `init`（tech-debt #4）もここ |
+| T02 | 踏んだ環境差を直す + A1 / A3 を確定 | **done** | 未到達だった `date -d` / `sed -i` は**踏んだぶんだけ**直す。**`.githooks/pre-commit` の実行ビット（git index を 100755 に）と、それを見逃す doctor B6 の偽 OK（`-x` を見ていない）もここ。** 公開 URL からの `init`（tech-debt #4）もここ |
 | T03 | 導入コピー同期・CHANGELOG・版上げ | todo | `harness status` drift 0 ／「プロジェクト側で必要な作業」を CHANGELOG に |
 | — | フェーズ 2（B: Codex）のタスク | 未分解 | A 完了時に `stages.json` へ追加 |
 
@@ -51,3 +51,4 @@ Windows × Codex は今回の対象外。
 ## 未確定事項（人間の判断待ち）
 
 - なし。
+- **2026-09-20（T02 完了）**: `.githooks/pre-commit` の index mode を 100755 にし、doctor B6 を「index の mode は常に／作業ツリーの `-x` は `core.filemode != false` のときだけ」見る形に直した（Windows の偽警告を macOS から `core.filemode=false` で再現して回帰テスト化）。別ディレクトリへ clone し直し、**検査をわざと壊したコミットが拒否される**ところまで実測。`gc.sh` の `date -d` は GNU/BSD 両対応 + **読めない日付は WARN** にし、`tests/gc.sh`（7 シナリオ）で**検出経路を新設**（tech-debt #8 返済）。A3 の確認中に **7 つ目のブロッカー**を新規発見: `curl \| bash` 経路で `${BASH_SOURCE[0]}` が `unbound variable`（`self_repo()` では subshell だけ死ぬので**エラーを出しながら成功**していた。5 箇所を `:-` 付きに、`tests/stdin.sh` を登録）。**`check` は pass=15 → pass=18 fail=0**、`doctor` は OK=16 WARN=0 FAIL=0。コミット 3 件（`41153f0`..`b57206e`）。踏まなかったもの（`sha256sum` 不在、init の perms → tech-debt #9）は直していない。

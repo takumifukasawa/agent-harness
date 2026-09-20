@@ -59,10 +59,11 @@ macOS           フェーズ 1        フェーズ 2
 | 1 | `declare -A` | `declare: -A: invalid option` → **init が即死** | `bin/harness:355`（1） | **T01 で修正済み**（一時ファイル + awk に置換）。check の 3 FAIL の唯一の原因だった |
 | 2 | `"$var日本語"` | bash 3.2 + UTF-8 で `unbound variable`。`${var}` と書けば通る | **24 行** | **T01 で修正済み**。禁止検査で再発を止めている。走査に無かった新発見 |
 | 3 | `mapfile` | bash 4+ 専用。外部コマンド全滅時のフォールバック | `doctor.sh:76-77`（2） | **T01 で修正済み**（`while read` に置換） |
-| 4 | `date -d` | `illegal option -- d` を確認 | `gc.sh:42` | **依然未到達**。`harness gc` は `check` の経路に無く、macOS で壊れているかを機械で検出できない（tech-debt #8 に起票） |
+| 4 | `date -d` | `illegal option -- d` を確認 | `gc.sh:42` | **T02 で修正済み**。GNU/BSD 両方言に対応し、**読めない日付は無言でスキップせず WARN** を出すようにした（無言スキップが害の本体）。`tests/gc.sh`（7 シナリオ）を `checks.sh` に fast 登録して**検出経路も新設**（tech-debt #8 は返済済） |
 | 5 | `sed -i` | 引数必須。`invalid command code` を確認 | `tests/doctor.sh`・`tests/update.sh` 計 6 | **T01 で踏んだので修正済み**（`sed_i()` ヘルパーで GNU/BSD 両対応） |
-| 6 | `.githooks/pre-commit` の実行ビット | git index 上で mode **100644**。`harness init` は `chmod +x` する（`bin/harness:466`）が、**`git clone` で持ってくると実行ビットが付かず、git がフックを黙って無視する**（`hint: the '.githooks/pre-commit' hook was ignored because it's not set as executable`）。Windows の Git は `core.filemode=false` が既定なので気づかなかった | `.githooks/pre-commit` | **doctor が偽の OK を出す** |
+| 6 | `.githooks/pre-commit` の実行ビット | git index 上で mode **100644**。`harness init` は `chmod +x` する（`bin/harness:466`）が、**`git clone` で持ってくると実行ビットが付かず、git がフックを黙って無視する**（`hint: the '.githooks/pre-commit' hook was ignored because it's not set as executable`）。Windows の Git は `core.filemode=false` が既定なので気づかなかった | `.githooks/pre-commit` | **T02 で修正済み**。git index を 100755 に。doctor B6 は「index の mode は常に」「作業ツリーの `-x` は `core.filemode != false` のときだけ」見る（Windows で偽警告を出さない）。`tests/githooks.sh` を登録し、**別ディレクトリへ clone し直して門番が本当に働くこと**（壊した検査でコミットが拒否され HEAD が動かない）まで実測 |
 | 7 | C3 テストの PATH 操作 | `node` / `jq` のディレクトリを PATH から丸ごと外す作りだったが、macOS 15+ では `jq` が `/usr/bin` に `git`・`sed` と同居しているため**それらも巻き添えで消え**、テストが誤検知する | `tests/doctor.sh` の C3 | **T01 で踏んだので修正済み**（実行ファイル単位のスタブ化に変更） |
+| 8 | `${BASH_SOURCE[0]}` | `curl \| bash`（標準入力実行）で `unbound variable`。`self_repo()` の中では subshell だけが死ぬので**エラーを出しながら成功**し、`self-install` は案内の die に**届く前に**落ちる | `bin/harness` 5 箇所 | **T02 で修正済み**（`:-` 付きに）。A3 の確認中に新規発覚。`tests/stdin.sh` を登録 |
 
 **#6 は doctor の穴でもある。** B6 は `core.hooksPath` の値と `-f`（存在）しか見ておらず、フックが実行不可でも `OK git hooks` と報告する。**検査が効いていないのに緑になる**のはハーネスの根幹（`AGENTS.md`「実装後は `check.sh` を回す。これが『完了』の客観条件」）に関わるので、`-x` を見るように直す。`handoff.md` の「別の PC で再開するとき」に書いてある `git config core.hooksPath .githooks` だけでは**不十分だった**ことになる。
 
