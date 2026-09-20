@@ -51,7 +51,7 @@ if [ -f "$DOCS/handoff.md" ]; then
   elif [ "$upd" = "YYYY-MM-DD" ]; then
     report WARN "docs/handoff.md が雛形のまま（最終更新: YYYY-MM-DD）" "session-handoff で現在地を書く"
   else
-    d=$(days_since "$upd") && [ "$d" -gt "$DAYS" ] && report WARN "docs/handoff.md の最終更新が ${d} 日前（$upd）" "現在地が古い。session-handoff で更新するか、休止中なら明記する"
+    d=$(days_since "$upd") && [ "$d" -gt "$DAYS" ] && report WARN "docs/handoff.md の最終更新が ${d} 日前（${upd}）" "現在地が古い。session-handoff で更新するか、休止中なら明記する"
   fi
 else
   report ERR "docs/handoff.md が無い" "docs-template/handoff.md から作る"
@@ -92,7 +92,7 @@ if [ -d "$DOCS/plans/active" ]; then
   while IFS= read -r f; do
     last=$(git log -1 --format=%cs -- "$f" 2>/dev/null)
     [ -z "$last" ] && { report WARN "計画 $f が未コミット" "コミットする（git から辿れて初めて次のセッションの事実になる）"; continue; }
-    d=$(days_since "$last") && [ "$d" -gt "$DAYS" ] && report WARN "計画 $f が ${d} 日更新されていない（最終コミット $last）" "進めるか、completed/ へ移すか、handoff に休止と書く"
+    d=$(days_since "$last") && [ "$d" -gt "$DAYS" ] && report WARN "計画 $f が ${d} 日更新されていない（最終コミット ${last}）" "進めるか、completed/ へ移すか、handoff に休止と書く"
   done < <(find "$DOCS/plans/active" -name '*.md' | sort)
 fi
 
@@ -122,7 +122,7 @@ fi
 # 9. 古い外部知識
 if [ -f "$DOCS/references/README.md" ]; then
   while IFS= read -r dt; do
-    d=$(days_since "$dt") && [ "$d" -gt $((DAYS * 6)) ] && report INFO "docs/references/ に取得から ${d} 日経った知識がある（$dt）" "元を見直すか、腐っていないか確認する"
+    d=$(days_since "$dt") && [ "$d" -gt $((DAYS * 6)) ] && report INFO "docs/references/ に取得から ${d} 日経った知識がある（${dt}）" "元を見直すか、腐っていないか確認する"
   done < <(grep -oE '\| *[0-9]{4}-[0-9]{2}-[0-9]{2} *\|' "$DOCS/references/README.md" | tr -d '| ')
 fi
 
