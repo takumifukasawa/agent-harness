@@ -51,6 +51,9 @@ FILTER="${1:-}"
 passed=0; failed=0
 failed_names=()
 WORK=""; PROJ=""; OUT=""; CODE=0
+# D3/A3 のシナリオが使う: harness init 自身の失敗時の出力を、その後の doctor 呼び出し
+# （OUT/CODE を上書きする）とは別に保持しておく。
+PARTIAL_INIT_OUT=""; PARTIAL_INIT_CODE=0
 errors=()
 
 # ---------------------------------------------------------------- 表明
@@ -307,6 +310,54 @@ expect_not_installed() {
   expect_out 'harness init'
 }
 scenario "D3: 未導入ディレクトリで exit 2 と harness init の案内" setup_empty expect_not_installed
+
+# D3/A3 拡張（no-silent-failures A3）: 「未導入（何も無い）」と「中途半端に配られた状態
+# （manifest は無いが配布物はある）」を区別する。既存の D3 は完全に空のディレクトリしか見ておらず、
+# 部分配布後の失敗は検証していなかった（反証役の指摘）。
+#
+# 実機再現と同じ方法で再現する: docs をファイルで塞ぐと、seed 雛形の配布（mkdir -p docs/...）が
+# 失敗し、manifest.json を書く前に init 全体が落ちる（20 件超のファイルは既に配られている）。
+setup_partial_install() {
+  PROJ="$WORK/partial"; mkdir -p "$PROJ" || return 1
+  ( cd "$PROJ" && git init -q . ) >/dev/null 2>&1
+  touch "$PROJ/docs" || return 1
+  PARTIAL_INIT_OUT="$(cd "$PROJ" && bash "$REPO/bin/harness" init --source "$REPO" 2>&1)"
+  PARTIAL_INIT_CODE=$?
+  if [ "$PARTIAL_INIT_CODE" -eq 0 ]; then
+    errors+=("setup: harness init が成功してしまった（docs をファイルで塞ぐ再現が効かなくなった）")
+    return 1
+  fi
+  if [ -f "$PROJ/.harness/manifest.json" ]; then
+    errors+=("setup: manifest.json が書かれてしまった（残骸シナリオの前提が崩れた）")
+    return 1
+  fi
+  if [ ! -e "$PROJ/.harness/scripts" ]; then
+    errors+=("setup: 残骸が実際に残っていない（前提が崩れた）")
+    return 1
+  fi
+  return 0
+}
+expect_partial_install() {
+  # 1. その場で分かる（失敗直後の init 自身の出力）。反証役の指摘: stdout に流れる '+' 行だけでは
+  # 「manifest は書いていない」という明示が無く、失敗直後の出力を見逃すと二度と得られない。
+  OUT="$PARTIAL_INIT_OUT"; CODE="$PARTIAL_INIT_CODE"
+  expect_code 1
+  expect_out 'manifest\.json'
+  expect_out '完了していない'
+  expect_out '残っている'
+
+  # 2. doctor を後から回しても分かる。「未導入（$ROOT/.harness/manifest.json が見つからない）」と
+  # 同じ文言では「本当に何も無い」のか「途中まで配られている」のかが区別できないので、別の文言で
+  # 報告する（修正前は manifest.json が無いというだけで即 exit 2 し、残骸には一切触れなかった）。
+  run_doctor_in "$PROJ"
+  expect_code 2
+  expect_out '中途半端'
+  expect_not_out '^harness doctor: 導入コピーが無い（'
+  expect_out 'manifest\.json'
+  expect_out '自動では消さない'
+}
+scenario "D3/A3: manifest.json を書く前に init が失敗すると、その場と doctor の両方で残骸に気づける" \
+  setup_partial_install expect_partial_install
 
 # B1. git が無ければ FAIL（PATH を潰した sub-shell で再現）。exit は 1。
 # 注: bash の版判定は BASH_VERSINFO[0] で行うが、BASH_VERSINFO は readonly で上書きできないため
@@ -729,6 +780,46 @@ expect_managed_case_collision() {
 }
 scenario "B12(managed): .githooks/pre-commit の case 衝突は FAIL（tech-debt #14。#13 と同じ検出・同じ直し方）" \
   setup_managed_case_collision expect_managed_case_collision
+
+# B12(generated). no-silent-failures 最終レビュー指摘 S2: B12 の走査は ownership=seed|managed
+# だけが対象で、generated（.claude/agents/*.md 等。apply_plan は managed と全く同じ
+# case 非依存の `[ -f ]` 経路を通る）は対象外だった。大文字違いの無関係な既存ファイルを混入させて
+# init すると、既存ファイルの内容がそのまま使われるのに、B8 の「.claude/agents/*.md は manifest
+# どおりに揃っている」は存在確認しかしていないため恒久的に OK を返す（#14 と同型の偽の緑）。
+# B12(managed) と同じ決定的な再現方法（fs_case_insensitive を差し替える）を使う。
+setup_generated_case_collision() {
+  setup_init || return 1
+  {
+    cat "$PROJ/.harness/scripts/seed-case.sh"
+    echo
+    echo 'fs_case_insensitive() { return 0; }  # test override: 常に case を区別しないことにする'
+  } >"$PROJ/.harness/scripts/seed-case.sh.new" &&
+    mv "$PROJ/.harness/scripts/seed-case.sh.new" "$PROJ/.harness/scripts/seed-case.sh" ||
+    { errors+=("setup: seed-case.sh の上書きに失敗した"); return 1; }
+  rm -f "$PROJ/.claude/agents/implementer.md"
+  mkdir -p "$PROJ/.claude/agents"
+  echo "unrelated content, not the harness role file" >"$PROJ/.claude/agents/Implementer.md"
+  ( cd "$PROJ" && git add .claude/agents/Implementer.md ) >/dev/null 2>&1 ||
+    { errors+=("setup: .claude/agents/Implementer.md の git add に失敗した"); return 1; }
+}
+expect_generated_case_collision() {
+  run_doctor
+  # B8（Claude アダプタ）は存在確認しかしていないため OK のまま。B12 が WARN として拾う
+  # （.githooks/pre-commit のような検査の門番そのものではないので FAIL ではなく WARN）。
+  expect_code 0
+  expect_out '^OK .*\.claude/agents/\*\.md は manifest どおりに揃っている'
+  expect_out '^WARN .*generated.*\.claude/agents/implementer\.md.*既存の \.claude/agents/Implementer\.md.*case 違いで衝突している'
+  expect_out 'git mv \.claude/agents/Implementer\.md \.claude/agents/implementer\.md'
+  # #13（seed）/ #14（managed）と同じ語彙であること（利用者から見て別物にしない。B4）
+  expect_out 'case 違いで衝突している'
+  apply_fix "git mv .claude/agents/Implementer.md .claude/agents/implementer.md"
+  run_doctor
+  expect_code 0
+  expect_not_out '既存の \.claude/agents/Implementer\.md と case 違いで衝突している'
+  expect_out '^OK .*managed / generated.*衝突は無い'
+}
+scenario "B12(generated): .claude/agents/*.md の case 衝突は WARN（no-silent-failures S2。#13/#14 と同じ検出・同じ直し方）" \
+  setup_generated_case_collision expect_generated_case_collision
 
 # B7. AGENTS.md のマーカーの v= を manifest と食い違わせると WARN（harness update を案内）。
 setup_agents_version_mismatch() {

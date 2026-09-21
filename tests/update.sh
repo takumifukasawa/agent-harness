@@ -366,6 +366,27 @@ expect_source_cli_used() {
 }
 scenario "U14: source 側の CLI が新しければその plan() で配る（update 1 回で足りる）" break_source_cli_newer expect_source_cli_used
 
+# U15. no-silent-failures A3: update は apply_plan（ファイルを配る）→ write_manifest（manifest.json
+# を書く）の順で進む。apply_plan の途中（mkdir -p や cp）が失敗すると、manifest.json を書く前に
+# update 全体が落ちる。修正前は mkdir の生エラーが stderr に出るだけで、「manifest はまだ今回の
+# 内容に更新していない」という整合性の話には一切触れず、途中まで配った分がどうなったかも
+# 分からなかった（実機再現: 既存のディレクトリをファイルで塞いで再現する）。
+break_update_mid_failure() {
+  rm -rf "$PROJ/.agents/skills/harness"
+  touch "$PROJ/.agents/skills/harness"   # ディレクトリだった場所をファイルで塞ぎ、mkdir -p を失敗させる
+}
+expect_update_mid_failure() {
+  run_update
+  expect_code 1
+  expect_out 'mkdir'   # 元のエラーは消さない（tech-debt #15 / A2 の回帰: 無言終了しない）
+  expect_out 'update は失敗した'
+  expect_out 'manifest\.json'
+  expect_out '残っている'
+  expect_out '同じコマンド（update）をもう一度実行する'
+}
+scenario "U15: update が manifest.json を書く前に失敗すると、その場で残骸と未完了を案内する（no-silent-failures A3）" \
+  break_update_mid_failure expect_update_mid_failure
+
 # ================================================================ 集計
 echo
 echo "tests/update.sh: pass=$passed fail=$failed"

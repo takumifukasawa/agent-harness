@@ -38,6 +38,42 @@ if command -v cygpath >/dev/null 2>&1; then ROOT="$(cygpath -u "$ROOT" 2>/dev/nu
 cd "$ROOT" 2>/dev/null || { echo "harness doctor: $ROOT に入れない" >&2; exit 2; }
 
 if [ ! -f "$ROOT/.harness/manifest.json" ]; then
+  # A3（no-silent-failures）: manifest.json が無いのは「まだ何も入れていない」とは限らない。
+  # init / update は apply_plan（ファイルを配る）→ write_manifest（manifest.json を書く）の順で
+  # 進むので、途中（mkdir -p や cp）で失敗すると manifest.json を書く前にスクリプトごと落ち、
+  # 配った分の残骸だけが残る。この 2 つを機械で区別しないと、残骸に気づく手段が無いまま
+  # 「harness init をやり直す」とだけ案内し、実際には既に散らばっているファイルを隠してしまう
+  # （実機再現: docs をファイルで塞いで init を失敗させると 20 件超の残骸が残るが、修正前の
+  # doctor はここで即 exit 2 し、それについて何も言わなかった）。
+  #
+  # 判定は簡易にする: 配布先としてよく使う既知のパスのどれかが存在すれば「残骸あり」とみなす。
+  # bin/harness の plan() の全項目と厳密に一致させる必要は無い（doctor は plan() を読まない。
+  # git と bash だけで動く前提を保つ）。取りこぼして「未導入」と誤診するより、多めに拾って
+  # 「残骸かもしれない」と言う方が安全（A3 は気づけることが目的で、自動修復はしない）。
+  # AGENTS.md はプロジェクトが独自に書いていることもあるので、harness のマーカーが無ければ
+  # 残骸の証拠として扱わない（誤検知を避ける）。
+  residue_paths=""
+  for residue_p in .harness/bin .harness/scripts .harness/checks.sh .harness/state-template \
+                   .agents/skills .claude/skills .claude/agents .githooks/pre-commit \
+                   .codex/hooks.json AGENTS.md; do
+    [ -e "$ROOT/$residue_p" ] || continue
+    if [ "$residue_p" = "AGENTS.md" ] && ! grep -q '<!-- harness:begin' "$ROOT/$residue_p" 2>/dev/null; then
+      continue
+    fi
+    residue_paths="$residue_paths $residue_p"
+  done
+  residue_paths="${residue_paths# }"
+
+  if [ -n "$residue_paths" ]; then
+    n_residue="$(find "$ROOT/.harness" "$ROOT/.agents/skills" "$ROOT/.claude/skills" "$ROOT/.claude/agents" \
+      "$ROOT/.githooks" "$ROOT/.codex" -type f 2>/dev/null | grep -vF "/.harness/manifest.json" | wc -l | tr -d ' ')"
+    echo "harness doctor: 導入が中途半端（$ROOT/.harness/manifest.json が無いが、配布物と見られるファイルが残っている。約 ${n_residue} 件）" >&2
+    echo "  これは harness init / update が manifest.json を書く前に失敗したときに残る状態（残骸）で、「未導入」とは別。自動では消さない。" >&2
+    echo "  残骸として見つかったパス:${residue_paths}" >&2
+    echo "  直し方: 原因を直してから同じコマンド（init または update）をもう一度実行する（配布は冪等）。中身を確認したいときは上記のパスを直接見る" >&2
+    exit 2
+  fi
+
   echo "harness doctor: 導入コピーが無い（$ROOT/.harness/manifest.json が見つからない）" >&2
   echo "  直し方: このディレクトリで harness init を実行する" >&2
   echo "          例: bash <agent-harness を clone した場所>/bin/harness init --source <同じ場所>" >&2
@@ -217,13 +253,13 @@ elif [ -n "$mf_version" ] && [ -n "$mf_source" ] && [ -n "$mf_agents" ]; then
   report FAIL "manifest（.harness/manifest.json）の files が壊れている:${mf_broken%;}" \
     "bash .harness/bin/harness update で作り直す（version/source/agents は読めているので、files の記載が壊れていても復元できる）"
   # 黙ってスキップしない。何を確認できていないかを出力に残す。
-  report WARN "manifest が読めないため B4（ファイルの存在）/ B5（改行）/ B8・B9（アダプタ側の照合）/ B10（新版）/ B12（seed の case 衝突）の診断をスキップした" \
+  report WARN "manifest が読めないため B4（ファイルの存在）/ B5（改行）/ B8・B9（アダプタ側の照合）/ B10（新版）/ B12（seed / managed / generated の case 衝突）の診断をスキップした" \
     "先に上の FAIL（manifest）を直してから、もう一度 harness doctor を回す"
 else
   report FAIL "manifest（.harness/manifest.json）が壊れている（見出しごと読めない）:${mf_broken%;}" \
     "mv .harness/manifest.json .harness/manifest.json.broken && bash .harness/bin/harness init --source <このプロジェクトの導入元。不明なら .harness/manifest.json.broken や git log -p -- .harness/manifest.json、docs/handoff.md で確認。省略時は既定の公開リポジトリを使う>"
   # 黙ってスキップしない。何を確認できていないかを出力に残す。
-  report WARN "manifest が読めないため B4（ファイルの存在）/ B5（改行）/ B8・B9（アダプタ側の照合）/ B10（新版）/ B12（seed の case 衝突）の診断をスキップした" \
+  report WARN "manifest が読めないため B4（ファイルの存在）/ B5（改行）/ B8・B9（アダプタ側の照合）/ B10（新版）/ B12（seed / managed / generated の case 衝突）の診断をスキップした" \
     "先に上の FAIL（manifest）を直してから、もう一度 harness doctor を回す"
 fi
 
@@ -553,28 +589,35 @@ fi
 # case を区別しないファイルシステム（macOS / Windows）では、harness の配布先パスと大文字小文字
 # 違いの既存ファイルが同じもの扱いになる。seed は apply_plan がそれを「既にある」として雛形を
 # 配らないが manifest には配布先の名前で記録される（tech-debt #13。2026-09-21、実プロジェクト
-# aesthetic-comparison への導入で発見）。managed（.githooks/pre-commit を含む）も同じ理由で
-# 衝突しうるが、apply_plan はそれを一般の CONFLICT として .harness/conflicts/ へ逃がすだけで、
-# 実際に使われているのは既存の大文字小文字違いファイルの内容のまま（tech-debt #14。onboarding-polish
+# aesthetic-comparison への導入で発見）。managed（.githooks/pre-commit を含む）・generated
+# （.claude/agents/*.md 等の役割ファイル。生成元は docs/roles/）も同じ理由で衝突しうる。
+# apply_plan は managed と generated を全く同じ経路（case 非依存の `[ -f ]` 判定）で扱うので、
+# 両方とも一般の CONFLICT として .harness/conflicts/ へ逃がすだけで、実際に使われているのは
+# 既存の大文字小文字違いファイルの内容のまま（managed は tech-debt #14。onboarding-polish
 # 最終レビューの反証役が実機確認: .githooks/Pre-commit を先に置いて init すると、seed 分岐の
 # CASE-CONFLICT ではなく汎用の CONFLICT に逃げるだけで、doctor は git hooks の実行ビット等しか
-# 見ないため「OK」を恒久的に返し続けた）。どちらも case を区別する環境（Linux 等）に持っていくと
-# 2 つのファイルが併存する。
+# 見ないため「OK」を恒久的に返し続けた。generated も同型で、no-silent-failures 最終レビュー
+# 指摘 S2 で発見: 大文字違いの無関係な既存ファイルを混入させて init すると、B8 の
+# 「.claude/agents/*.md は manifest どおりに揃っている」は存在確認しかしていないため、実際には
+# harness が生成した内容ではない別ファイルが使われているのに恒久的に OK を返していた）。
+# どれも case を区別する環境（Linux 等）に持っていくと 2 つのファイルが併存する。
 #
 # 判定ロジックは harness/scripts/seed-case.sh（bin/harness と共有。導入コピーでは
 # .harness/scripts/seed-case.sh としてこのファイルの隣に配られる）。判定そのものは ownership に
-# 依存しないので、seed / managed の両方をこの 1 か所の走査で見る（同じロジックを 2 か所に
-# 複製しない）。この節は、この環境が case を区別しない場合だけ動く。区別する環境では別ファイル
-# として正しく共存するので、何も報告しない（B3。Codex アダプタの B9 が agents を見て出し分けるのと
-# 同じ作法）。
+# 依存しないので、seed / managed / generated の 3 つをこの 1 か所の走査で見る（同じロジックを
+# 複数箇所に複製しない）。この節は、この環境が case を区別しない場合だけ動く。区別する環境では
+# 別ファイルとして正しく共存するので、何も報告しない（B3。Codex アダプタの B9 が agents を見て
+# 出し分けるのと同じ作法）。
 #
-# 重大度: seed は WARN（据え置き。二重になるのは docs の雛形だけ）。managed も基本は WARN だが、
-# .githooks/pre-commit だけは FAIL にする。理由: harness check が赤くなる経路は決定 0005 の
-# `doctor: FAIL 0` だけなので、WARN のままでは check が緑のまま＝この題材が塞ぎたい「偽の緑」が
-# そのまま残る。.githooks/pre-commit は決定 0007 が「フックが実行不可なら FAIL」とした対象そのもので、
-# case 衝突は「実行不可」よりさらに悪い「harness が中身を保証できない別ファイルが使われる」状態
-# なので、同じ結論（FAIL）が自然に伸びる。他の managed ファイルの case 衝突は安全装置の迂回ではなく
-# 機能欠落の一種なので、seed 側の B12（WARN）と同じ扱いに揃える。
+# 重大度: seed は WARN（据え置き。二重になるのは docs の雛形だけ）。managed / generated も基本は
+# WARN だが、.githooks/pre-commit だけは FAIL にする。理由: harness check が赤くなる経路は決定
+# 0005 の `doctor: FAIL 0` だけなので、WARN のままでは check が緑のまま＝この題材が塞ぎたい
+# 「偽の緑」がそのまま残る。.githooks/pre-commit は決定 0007 が「フックが実行不可なら FAIL」と
+# した対象そのもので、case 衝突は「実行不可」よりさらに悪い「harness が中身を保証できない別
+# ファイルが使われる」状態なので、同じ結論（FAIL）が自然に伸びる。他の managed / generated
+# ファイルの case 衝突は安全装置の迂回ではなく機能欠落の一種なので、seed 側の B12（WARN）と
+# 同じ扱いに揃える（generated が役割ファイルであっても、.githooks/pre-commit のような検査の
+# 門番そのものではないので、これも他の managed ファイルと同じ WARN でよい）。
 if [ "$manifest_ok" = 1 ]; then
   seed_case_lib="${DOCTOR_DIR:-}/seed-case.sh"
   if [ -n "$DOCTOR_DIR" ] && [ -f "$seed_case_lib" ]; then
@@ -588,7 +631,7 @@ if [ "$manifest_ok" = 1 ]; then
       while IFS=$'\t' read -r f_path f_src f_own f_sha f_srcsha; do
         [ -z "$f_path" ] && continue
         case "$f_own" in
-          seed | managed) ;;
+          seed | managed | generated) ;;
           *) continue ;;
         esac
         case_existing="$(seed_case_collision "$ROOT" "$f_path" "$seed_ci" 2>/dev/null || true)"
@@ -598,18 +641,19 @@ if [ "$manifest_ok" = 1 ]; then
           report WARN "seed の配布先 $f_path が既存の $case_existing と case 違いで衝突している（$(case_collision_reason "$f_path" "$case_existing" seed)）" \
             "$(case_collision_fix "$f_path" "$case_existing")"
         else
+          # managed / generated: apply_plan は同じ経路で扱うので、判定・重大度もここで揃える。
           managed_conflicts=$((managed_conflicts + 1))
-          if [ "$f_path" = ".githooks/pre-commit" ]; then
+          if [ "$f_own" = "managed" ] && [ "$f_path" = ".githooks/pre-commit" ]; then
             report FAIL "managed の配布先 $f_path が既存の $case_existing と case 違いで衝突している（$(case_collision_reason "$f_path" "$case_existing" managed)）" \
               "$(case_collision_fix "$f_path" "$case_existing")"
           else
-            report WARN "managed の配布先 $f_path が既存の $case_existing と case 違いで衝突している（$(case_collision_reason "$f_path" "$case_existing" managed)）" \
+            report WARN "${f_own} の配布先 $f_path が既存の $case_existing と case 違いで衝突している（$(case_collision_reason "$f_path" "$case_existing" "$f_own")）" \
               "$(case_collision_fix "$f_path" "$case_existing")"
           fi
         fi
       done <<<"$mf_entries"
       [ "$seed_conflicts" -eq 0 ] && report OK "seed の配布先に大文字小文字違いの衝突は無い（この環境は case を区別しない）"
-      [ "$managed_conflicts" -eq 0 ] && report OK "managed の配布先に大文字小文字違いの衝突は無い（この環境は case を区別しない）"
+      [ "$managed_conflicts" -eq 0 ] && report OK "managed / generated の配布先に大文字小文字違いの衝突は無い（この環境は case を区別しない）"
     fi
   fi
 fi

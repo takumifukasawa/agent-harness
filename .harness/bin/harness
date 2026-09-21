@@ -34,6 +34,42 @@ info() { echo "harness: $*"; }
 now() { date +%Y-%m-%d; }
 ts() { date +%Y%m%d-%H%M%S; }
 
+# ---------------------------------------------------------------- A3: 途中失敗の可視化
+# init / update は apply_plan（ファイルを配る）→ write_manifest（manifest.json を書く）の順で
+# 進む。set -e のもとでは apply_plan の途中（mkdir -p や cp）が失敗すると、manifest.json を
+# 書く前にスクリプトごと落ちる。そのとき途中まで配ったファイルが $ROOT に残るのに、「manifest は
+# 書いていないので導入は完了していない」と気づく手段が無かった（docs/spec/no-silent-failures.md
+# の A3。実機再現: docs をファイルで塞いで init すると 20 件超の残骸が残るが、それを教える
+# メッセージは無く、doctor も manifest.json が無いというだけで即 exit 2 していた）。
+#
+# cmd_init / cmd_update は apply_plan を呼ぶ直前に INSTALL_TRAP_MODE を立て、write_manifest が
+# 成功したら空に戻す。その区間で（原因を問わず）非 0 終了したら、ここで案内を出す。区間の外
+# （まだ 1 つもファイルを配る前、または manifest.json を書き終えた後）の失敗では何も言わない
+# （残骸が無い/導入は完了しているので、この案内は的外れになる）。
+#
+# reexec_if_vendored が作る一時コピー（HARNESS_REEXEC_TMP）の掃除もここで兼ねる。trap は 1 つの
+# シグナルにつき 1 つしか効かない（後から trap すると前のものが黙って消える）ので、2 か所に
+# 分けて trap すると cmd_update の一時ファイル掃除が消える。1 か所にまとめて両方を面倒見る。
+INSTALL_TRAP_MODE=""
+on_script_exit() {
+  local status=$?
+  [ -n "${HARNESS_REEXEC_TMP:-}" ] && rm -f "$HARNESS_REEXEC_TMP"
+  if [ -n "$INSTALL_TRAP_MODE" ] && [ "$status" -ne 0 ]; then
+    {
+      echo
+      echo "harness: ${INSTALL_TRAP_MODE} は失敗した（終了コード ${status}）。上に出ているエラーを直す。"
+      if [ "$INSTALL_TRAP_MODE" = init ]; then
+        echo "         manifest.json はまだ書いていない。この導入はまだ完了していない。"
+      else
+        echo "         manifest.json はまだ今回の内容に更新していない（途中まで配った分と manifest の記録が食い違っている可能性がある）。"
+      fi
+      echo "         上の出力にある '+' / 'seed' / 'update' / 'restore' 行の分だけ、${ROOT:-このディレクトリ} に途中までのファイルが残っている可能性がある（自動では消さない）。"
+      echo "         原因を直してから同じコマンド（${INSTALL_TRAP_MODE}）をもう一度実行する（配布は冪等）。状態を確認するには: bash .harness/bin/harness doctor"
+    } >&2
+  fi
+  return 0
+}
+
 # 内容ハッシュ。フィルタを通さない生バイトで取る。
 # 素の `git hash-object` は .gitattributes の text/eol と core.autocrlf を適用するので、CRLF 化しただけの
 # 導入コピーを「未変更」と誤判定する。これに騙されるのは status の MODIFIED 判定、update の上書き判断、
@@ -672,6 +708,7 @@ cmd_init() {
     esac
   done
   ROOT="$(project_root)"
+  trap on_script_exit EXIT
   [ -f "$(manifest_path)" ] && die "既に導入済み（$MANIFEST_REL がある）。harness update を使う"
   [ -z "$source" ] && source="$(self_repo)"
   [ -z "$source" ] && source="$DEFAULT_SOURCE"
@@ -687,8 +724,10 @@ cmd_init() {
   if ! is_shared_source "$source"; then shared_source="$DEFAULT_SOURCE"; local_source="$source"; fi
   info "init  project=$ROOT"
   info "      source=$source ref=${ref:-default} version=$version agents=$agents"
+  INSTALL_TRAP_MODE=init
   apply_plan "$agents" init
   write_manifest "$version" "$shared_source" "$ref" "$agents"
+  INSTALL_TRAP_MODE=""
   if [ -n "$local_source" ]; then
     write_source_local "$local_source"
     info "  + $SOURCE_LOCAL_REL (${local_source}。この PC 用。gitignore 対象＝コミットしない)"
@@ -716,7 +755,7 @@ cmd_update() {
   local ref=""
   ROOT="$(project_root)"
   reexec_if_vendored "$@"
-  [ -n "${HARNESS_REEXEC_TMP:-}" ] && trap 'rm -f "$HARNESS_REEXEC_TMP"' EXIT
+  trap on_script_exit EXIT
   while [ $# -gt 0 ]; do
     case "$1" in --ref) ref="$2"; shift 2;; *) die "unknown option: $1";; esac
   done
@@ -759,8 +798,10 @@ cmd_update() {
     awk -v old="## [$oldver]" 'index($0,old)==1{exit} /^## \[/{p=1} p' "$srcdir/CHANGELOG.md" | sed 's/^/   /'
     echo
   fi
+  INSTALL_TRAP_MODE=update
   apply_plan "$agents" update
   write_manifest "$version" "$shared_source" "$ref" "$agents"
+  INSTALL_TRAP_MODE=""
   merge_claude_settings "$agents"
 }
 

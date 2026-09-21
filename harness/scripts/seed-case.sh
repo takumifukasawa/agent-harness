@@ -121,15 +121,20 @@ seed_case_collision() {
 }
 
 # 衝突の説明文・直し方（bin/harness と doctor.sh で文言を揃えるための共通ヘルパー。
-# ownership（seed / managed）で説明文の中身だけを出し分ける。直し方は git mv で共通。
+# ownership（seed / managed / generated）で説明文の中身だけを出し分ける。直し方は git mv で共通。
 # B4（tech-debt #14 受け入れ条件）: 利用者から見て「seed の検出」と「managed の検出」が
 # 2 つの別物に見えないよう、語彙（「case 違いで衝突している」「git mv ... で寄せる」）と
-# 直し方はどちらも同じ関数から出す）。
-case_collision_reason() { # dest_rel existing_rel kind(seed|managed。省略時 seed)
+# 直し方はどちらも同じ関数から出す）。generated（no-silent-failures 最終レビュー指摘 S2）は
+# apply_plan が managed と全く同じ経路で扱うため、語彙は managed と揃え、対象だけ言い換える。
+case_collision_reason() { # dest_rel existing_rel kind(seed|managed|generated。省略時 seed)
   local dest="$1" existing="$2" kind="${3:-seed}"
   case "$kind" in
     managed)
       printf 'この環境は大文字小文字を区別しないため、managed の配布先 %s は既存の %s と同じファイル扱いになっている。harness init / update はそれを一般の CONFLICT として .harness/conflicts/ へ退避するだけで、実際に使われているのは既存の %s の内容のまま。case を区別する環境（Linux 等）に持っていくと、%s と %s が別ファイルとして併存する（tech-debt #14）' \
+        "$dest" "$existing" "$existing" "$existing" "$dest"
+      ;;
+    generated)
+      printf 'この環境は大文字小文字を区別しないため、generated（役割ファイル等の生成物。生成元は docs/roles/）の配布先 %s は既存の %s と同じファイル扱いになっている。harness init / update はそれを一般の CONFLICT として .harness/conflicts/ へ退避するだけで、実際に使われているのは既存の %s の内容のまま（harness は中身を保証できない）。case を区別する環境（Linux 等）に持っていくと、%s と %s が別ファイルとして併存する' \
         "$dest" "$existing" "$existing" "$existing" "$dest"
       ;;
     *)
