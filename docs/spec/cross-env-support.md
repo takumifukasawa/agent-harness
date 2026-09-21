@@ -36,10 +36,10 @@ macOS           フェーズ 1        フェーズ 2
 
 ### B. Codex で動く（フェーズ 2）
 
-- B1. Codex 実機で `harness init --agents codex` したプロジェクトが成立する（`.agents/skills/` が読まれ、`$role-implementer` / `$role-reviewer` が呼べる）
-- B2. `harness/adapters/codex/README.md` の表の各行を**実機で確認**し、確認日と結果を更新する（現状は公式 docs のみが出典、確認日 2026-09-17）
+- B1. **完了（2026-09-21）。** 実機で `.agents/skills/` の 7 スキルが読まれ、`$role-implementer` の明示呼び出しが機能した（SKILL.md の戻り値 6 フィールドと禁止事項を正確に再現）
+- B2. **完了（2026-09-21）。** `harness/adapters/codex/README.md` を実機確認の結果で全面更新（確認日 2026-09-21 / CLI 0.154.0）。「hook は v0 では使わない」という記述は実機で覆り、落とし穴（2 段階の信頼、`apply_patch` に deny が効かない）も併記した
 - B3. `task-orchestrate` の 1 タスクを Codex で最後まで回せる（実装役の起動 → 戻り値 → 統括の 3 点判定）
-- B4. 標準 deny（`git push --force` 等）を Codex 側でどう効かせるか決める。現状 `config.toml` の sandbox / approval への翻訳表が無く、`.githooks/` でしか塞げていない。決定を `docs/decisions/` に残す
+- B4. **完了（2026-09-21、版 0.7.0）。** 標準 deny は **`PreToolUse` hook** で効かせる（[決定 0009](../decisions/0009-codex-deny-via-pretooluse-hook.md)）。`init --agents codex` が `.codex/hooks.json` と `.harness/scripts/codex-deny.sh` を配り、`doctor` が「hook が信頼されていない＝効いていない」を WARN で報告する。対象は `.claude/settings.json` の deny と同じ 5 つ。検査は `tests/codex.sh`（19 件、codex CLI に依存しない）
 
 **この機に Codex CLI 0.154.0 が入っている**（`/opt/homebrew/bin/codex`、確認日 2026-09-20）ので、環境待ちにはならない。
 

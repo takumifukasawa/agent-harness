@@ -23,6 +23,7 @@ check fast "githooks are executable"      "bash tests/githooks.sh"
 check fast "gc scenarios"                 "bash tests/gc.sh"
 # curl <公開 URL>/bin/harness | bash -s -- init の経路（標準入力から実行すると BASH_SOURCE が無い）
 check      "stdin (curl | bash) install"  "bash tests/stdin.sh"
+check      "codex adapter (deny hook)"    "bash tests/codex.sh"
 
 # bash 3.2 互換（決定 0006）。macOS 既定の bash はアップデートされない前提で、この 2 つを機械的に締め出す。
 # 対象は bin/harness・harness/scripts/*.sh・tests/*.sh（tests/lint-bash-compat.sh 自身は自己参照になるため対象外）。

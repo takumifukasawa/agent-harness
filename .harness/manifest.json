@@ -1,14 +1,14 @@
 {
-  "harness_version": "0.6.0",
+  "harness_version": "0.7.0",
   "source": "https://github.com/takumifukasawa/agent-harness.git",
   "source_ref": "",
   "installed_at": "2026-09-21",
   "agents": "claude,codex",
   "files": [
-    {"path":".harness/bin/harness","src":"@self","ownership":"managed","sha256":"21479190fa498ac08e4215ffc759e75440630991","source_sha256":""},
+    {"path":".harness/bin/harness","src":"@self","ownership":"managed","sha256":"a068c53d5df31a3a6cce8ceb33f9eb9f5d2939bb","source_sha256":""},
     {"path":".harness/bin/harness.cmd","src":"@self-cmd","ownership":"managed","sha256":"59de6078cfcf46f4941194220ffd48aa2e8400c5","source_sha256":""},
     {"path":".harness/scripts/check.sh","src":"scripts/check.sh","ownership":"managed","sha256":"ff1f0fc80afde76f879a830f1732ef3dbb167f22","source_sha256":""},
-    {"path":".harness/scripts/doctor.sh","src":"scripts/doctor.sh","ownership":"managed","sha256":"b6473c0e788e39dec82813a2d2b0000084cc49dd","source_sha256":""},
+    {"path":".harness/scripts/doctor.sh","src":"scripts/doctor.sh","ownership":"managed","sha256":"b966aef8d5d3d3bb355eed6eab0acdb25630ab9c","source_sha256":""},
     {"path":".harness/scripts/gc.sh","src":"scripts/gc.sh","ownership":"managed","sha256":"ad9711b0bc6c88b96eabe1b97fe504c241094ade","source_sha256":""},
     {"path":".harness/scripts/session-start.sh","src":"scripts/session-start.sh","ownership":"managed","sha256":"c2b68ba5a93a87cc1105a1d7a7f5878cb7a3fe03","source_sha256":""},
     {"path":".harness/checks.sh","src":"checks.seed.sh","ownership":"seed","sha256":"-","source_sha256":"-"},
@@ -38,13 +38,15 @@
     {"path":"docs/rules/README.md","src":"docs-template/rules/README.md","ownership":"seed","sha256":"-","source_sha256":"-"},
     {"path":"docs/spec/README.md","src":"docs-template/spec/README.md","ownership":"seed","sha256":"-","source_sha256":"-"},
     {"path":"docs/tech-debt.md","src":"docs-template/tech-debt.md","ownership":"seed","sha256":"-","source_sha256":"-"},
-    {"path":"AGENTS.md","src":"AGENTS.core.md","ownership":"merge","sha256":"f77cac296f14810f4f522bf5157399ec4b0465ce","source_sha256":"-"},
+    {"path":"AGENTS.md","src":"AGENTS.core.md","ownership":"merge","sha256":"213aefd6d09320607dab9dcf256290288b5d2058","source_sha256":"-"},
     {"path":"CLAUDE.md","src":"adapters/claude/CLAUDE.md.template","ownership":"managed","sha256":"fcaf5d8406e36b729c4fb77c017027bc2d5eab1e","source_sha256":""},
     {"path":".harness/adapters/claude.settings.fragment.json","src":"adapters/claude/settings.fragment.json","ownership":"managed","sha256":"d7fc64fe34e903c597c345ba2add34206badab37","source_sha256":""},
     {"path":".claude/agents/implementer.md","src":"docs-template/roles/implementer.md","ownership":"generated","sha256":"7e710e883809147adad3ef45efdbb4590e090c4d","source_sha256":"311cf3c1bc117fa7a58d7d3d66b8705d78ca0fd6"},
     {"path":".claude/agents/reviewer.md","src":"docs-template/roles/reviewer.md","ownership":"generated","sha256":"f276ee7e739d3740223eab075908242e8184199d","source_sha256":"8ce7658a4d82d774b1768e8188664bff5a5f2257"},
     {"path":".agents/skills/role-implementer/SKILL.md","src":"docs-template/roles/implementer.md","ownership":"generated","sha256":"ba1c6ac9ac63adf447dc5f0dc884451a28d5a9e2","source_sha256":"311cf3c1bc117fa7a58d7d3d66b8705d78ca0fd6"},
     {"path":".agents/skills/role-reviewer/SKILL.md","src":"docs-template/roles/reviewer.md","ownership":"generated","sha256":"7a5326a71c9b37e2b66a1c1bc6ca439fb3215bbb","source_sha256":"8ce7658a4d82d774b1768e8188664bff5a5f2257"},
+    {"path":".codex/hooks.json","src":"adapters/codex/hooks.json","ownership":"managed","sha256":"0bed6c2dec668ee3022fb0efb16ee9bf6b22711c","source_sha256":""},
+    {"path":".harness/scripts/codex-deny.sh","src":"adapters/codex/deny.sh","ownership":"managed","sha256":"52084c968588891398635e41640ba6199f627ec7","source_sha256":""},
     {"path":".githooks/pre-commit","src":"@pre-commit","ownership":"managed","sha256":"581e80a3b67f04d1bb187f30db213f3ca6753fd3","source_sha256":""}
   ]
 }

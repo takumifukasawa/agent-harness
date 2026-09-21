@@ -307,11 +307,15 @@ plan() {
       echo -e "docs-template/roles/$r.md\t.claude/agents/$r.md\tgenerated"
     done
   ;; esac
-  # Codex アダプタ: 役割文を明示呼び出し用スキルに（$role-implementer）
+  # Codex アダプタ: 役割文を明示呼び出し用スキルに（$role-implementer）+ 標準 deny の hook（決定 0009）
   case ",$agents," in *,codex,*)
     for r in implementer reviewer; do
       echo -e "docs-template/roles/$r.md\t.agents/skills/role-$r/SKILL.md\tgenerated"
     done
+    # Codex の PreToolUse hook。Claude 側の .claude/settings.json の deny と同じ 5 つを止める。
+    # Codex を使わないプロジェクトには配らない（--agents の指定に従う）。
+    echo -e "adapters/codex/hooks.json\t.codex/hooks.json\tmanaged"
+    echo -e "adapters/codex/deny.sh\t.harness/scripts/codex-deny.sh\tmanaged"
   ;; esac
   # git hooks
   echo -e "@pre-commit\t.githooks/pre-commit\tmanaged"

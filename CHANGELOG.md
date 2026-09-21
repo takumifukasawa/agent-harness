@@ -3,6 +3,15 @@
 各版に「プロジェクト側で必要な作業」を必ず書く。`harness update` はこの節を表示する。
 semver: managed ファイルの移動・マーカー形式変更は major、ルール/スキルの追加は minor、文言修正は patch。
 
+## [0.7.0] - 2026-09-21
+
+Codex を使うプロジェクトで、**標準 deny（破壊的な git 操作）を Codex 側でも機械的に止められる**ようにした版。Claude 側の `.claude/settings.json` の deny と同じ 5 つを対象にする（エージェントを問わず同じに止まることが目的）。
+
+- 追加（決定 0009 / cross-env B4）: `harness init --agents codex` が **`.codex/hooks.json`（Codex の `PreToolUse` hook）と `.harness/scripts/codex-deny.sh`** を managed で配る。hook が `{"hookSpecificOutput":{...,"permissionDecision":"deny",...}}` を返すとコマンドは実行されず、モデルにも拒否理由が伝わる（Codex CLI 0.154.0 で実機確認）。対象は `git push --force` / `git push -f` / `git reset --hard` / `git branch -D` / `gh repo delete` の 5 つ。コマンドの取り出しは `jq` があれば使い、無ければ `sed` に落ちる（依存は git と bash だけ）。**Codex を使わないプロジェクトには配らない**（`--agents` の指定に従う）。
+- 追加（決定 0009）: `harness doctor` の B9 が、**この hook が「効いている」かを見る**。Codex の hook は**置いただけでは効かない**（(1) プロジェクトが `trust_level = "trusted"`、(2) さらに hook 定義ごとの信頼、の 2 段階が要る。実機で (1) だけでは 1 つも発火しないことを確認した）。効いていなければ WARN で直し方（`codex` を起動して `/hooks` で信頼する）を出し、Codex の設定がその PC に無ければ INFO にとどめる。`CODEX_HOME` を尊重する。
+- 追加: このリポジトリ自身の検査に `codex adapter (deny hook)`（`tests/codex.sh`、19 件）。**codex CLI には依存しない**（hook が受け取る JSON を自前で作って deny スクリプトに食わせ、診断は `CODEX_HOME` を偽装して確かめる）ので、Codex の入っていない PC / CI でも同じに走る。
+- **プロジェクト側で必要な作業**: Codex を使うプロジェクトは `harness update` 後に `.codex/hooks.json` と `.harness/scripts/codex-deny.sh` が入る。**そのままでは hook は効かない。** 各 PC で 1 回、そのディレクトリで `codex` を起動し、プロジェクトの信頼を求められたら信頼したうえで **`/hooks` で hook を信頼する**（`core.hooksPath` と同じで git には乗らない）。効いていない間も `.githooks/` の門番は従来どおり働く。`harness doctor` が状態を報告する。なお **`apply_patch` には deny が効かない**（既知の不具合 openai/codex#27833）ので、ファイル書き込み系を hook で止められると当てにしないこと。
+
 ## [0.6.0] - 2026-09-21
 
 - 追加: `harness check` が**検査ごとの所要秒数**と**合計時間**、**遅い順の上位 5 件**を出すようにした。どの検査が重いかを推定でなく実測で掴むため（`$SECONDS` 組み込みを使うので外部プロセスは増えない。macOS の BSD `date` にミリ秒が無いため粒度は秒）。**プロジェクト側で必要な作業: 無し**（判定と終了コードは変わらない。出力に `(3s)` が付くだけ）。

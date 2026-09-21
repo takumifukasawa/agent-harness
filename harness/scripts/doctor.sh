@@ -445,6 +445,39 @@ case ",$mf_agents," in
         report FAIL "Codex アダプタの役割スキルが足りない（role-implementer / role-reviewer）" \
           "bash .harness/bin/harness update で復元する（復元できなければ bash .harness/bin/harness init をやり直す）"
       fi
+
+      # 標準 deny の hook（決定 0009）。**置いただけでは効かない**: (1) プロジェクトが trusted で、
+      # (2) さらに hook 定義ごとに信頼されている必要がある（実測 2026-09-21 / Codex CLI 0.154.0。
+      # trust_level だけでは hook が 1 つも発火しなかった）。つまり core.hooksPath と同じで
+      # clone しただけでは効かないので、ここで見て直し方を案内する。
+      if [ -f "$ROOT/.codex/hooks.json" ]; then
+        codex_cfg="${CODEX_HOME:-${HOME:-}/.codex}/config.toml"
+        if [ ! -f "$codex_cfg" ]; then
+          report INFO "Codex の設定（${codex_cfg}）がこの PC に無いため、標準 deny の hook が効いているか確認できない" \
+            "この PC で Codex を使うなら codex を一度起動する（設定が作られる）。使わないならこの行は無視してよい"
+        else
+          codex_trusted=0; codex_hook_trusted=0
+          # [projects."<ROOT>"] セクションの中に trust_level = "trusted" があるか
+          if awk -v key="[projects.\"${ROOT}\"]" '
+                $0 == key { inside = 1; next }
+                inside && /^\[/ { inside = 0 }
+                inside && /trust_level[[:space:]]*=[[:space:]]*"trusted"/ { found = 1 }
+                END { exit found ? 0 : 1 }
+              ' "$codex_cfg" 2>/dev/null; then
+            codex_trusted=1
+          fi
+          # hook 定義ごとの信頼は [hooks.state."<hooks.json の絶対パス>:<event>:..."] に記録される
+          grep -qF "${ROOT}/.codex/hooks.json:" "$codex_cfg" 2>/dev/null && codex_hook_trusted=1
+          if [ "$codex_trusted" = 1 ] && [ "$codex_hook_trusted" = 1 ]; then
+            report OK "Codex の標準 deny hook（.codex/hooks.json）が信頼されている"
+          else
+            codex_why="プロジェクトが信頼されていない（trust_level）"
+            [ "$codex_trusted" = 1 ] && codex_why="hook 定義が信頼されていない"
+            report WARN "Codex の標準 deny hook が効いていない: ${codex_why}。破壊的な git 操作が Codex 側では機械的に止まらない（.githooks/ の門番は別途効いている）" \
+              "このディレクトリで codex を起動し、プロジェクトの信頼を求められたら信頼したうえで /hooks で hook を信頼する（信頼は各 PC で 1 回。git には乗らない）"
+          fi
+        fi
+      fi
     fi
   ;;
 esac

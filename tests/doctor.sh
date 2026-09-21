@@ -546,12 +546,15 @@ setup_no_hookspath() { ensure_warn_bundle && PROJ="$WARN_BUNDLE_DIR"; }
 expect_no_hookspath() {
   OUT="$WARN_BUNDLE_OUT_BEFORE"; CODE="$WARN_BUNDLE_CODE_BEFORE"
   expect_code 0
-  expect_out '^WARN .*hooks'
+  # `hooks` だけで照合しない: 0.7.0 で Codex 側の hook（`Codex の標準 deny hook …`）が
+  # 別項目として増え、B6 とは無関係な WARN/OK がここに混ざるようになった。B6 が見ているのは
+  # git hooks なので、対象をそこに限る（表明の数も意味も変えない）。
+  expect_out '^WARN .*git hooks'
   expect_out 'git config core\.hooksPath \.githooks'
   OUT="$WARN_BUNDLE_OUT_AFTER"; CODE="$WARN_BUNDLE_CODE_AFTER"
   expect_code 0
-  expect_not_out '^WARN .*hooks'
-  expect_out '^OK .*hooks'
+  expect_not_out '^WARN .*git hooks'
+  expect_out '^OK .*git hooks'
 }
 scenario "B6: core.hooksPath が外れていれば WARN（直し方のコマンドで直る）" setup_no_hookspath expect_no_hookspath
 
