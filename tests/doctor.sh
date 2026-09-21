@@ -683,6 +683,53 @@ expect_hook_filemode_false() {
 scenario "B6: core.filemode=false なら作業ツリーの実行ビットで警告しない（Windows で偽の FAIL/WARN を出さない）" \
   setup_hook_filemode_false expect_hook_filemode_false
 
+# B12(managed). tech-debt #14: #13 の case 衝突検出（B12）は ownership=seed だけが対象で、
+# managed（.githooks/pre-commit を含む）は対象外だった。既存に case 違いの無関係なファイル
+# （.githooks/Pre-commit）があると、init はそれを seed 分岐の CASE-CONFLICT ではなく汎用の
+# CONFLICT として .harness/conflicts/ へ逃がすだけで、doctor の B6 は実行ビット等しか見ないため
+# 「OK git hooks（... 実行可能）」と恒久的に緑を返し続けていた（onboarding-polish 最終レビューの
+# 反証役が実機確認）。
+#
+# 実 FS の case 区別に依存させず決定的に再現する: seed_case_collision() 自体は find -name/-iname
+# の文字列比較で実 FS 非依存だが、doctor がそれを呼ぶかどうかを決める fs_case_insensitive() は
+# 実ホストの FS を見る。ここでは doctor が source する .harness/scripts/seed-case.sh の
+# fs_case_insensitive() を「常に区別しない」へ差し替えて、ホストの実 FS に関わらず再現する
+# （tests/seed-case.sh の X1 と同じ考え方: 判定ロジックそのものはホスト非依存に保ちつつ、
+# 「この環境は case を区別しないか」だけを外から固定する）。
+setup_managed_case_collision() {
+  setup_init || return 1
+  {
+    cat "$PROJ/.harness/scripts/seed-case.sh"
+    echo
+    echo 'fs_case_insensitive() { return 0; }  # test override: 常に case を区別しないことにする'
+  } >"$PROJ/.harness/scripts/seed-case.sh.new" &&
+    mv "$PROJ/.harness/scripts/seed-case.sh.new" "$PROJ/.harness/scripts/seed-case.sh" ||
+    { errors+=("setup: seed-case.sh の上書きに失敗した"); return 1; }
+  rm -f "$PROJ/.githooks/pre-commit"
+  cat >"$PROJ/.githooks/Pre-commit" <<'HOOK'
+#!/usr/bin/env bash
+echo "unrelated script, not the harness hook"
+HOOK
+  chmod +x "$PROJ/.githooks/Pre-commit"
+  ( cd "$PROJ" && git add .githooks/Pre-commit ) >/dev/null 2>&1 ||
+    { errors+=("setup: .githooks/Pre-commit の git add に失敗した"); return 1; }
+}
+expect_managed_case_collision() {
+  run_doctor
+  expect_code 1
+  expect_out '^FAIL .*managed.*\.githooks/pre-commit.*既存の \.githooks/Pre-commit.*case 違いで衝突している'
+  expect_out 'git mv \.githooks/Pre-commit \.githooks/pre-commit'
+  # #13（seed）と同じ語彙・同じ直し方であること（利用者から見て 2 つの別物にしない。B4）
+  expect_out 'case 違いで衝突している'
+  apply_fix "git mv .githooks/Pre-commit .githooks/pre-commit"
+  run_doctor
+  expect_code 0
+  expect_not_out '既存の \.githooks/Pre-commit と case 違いで衝突している'
+  expect_out '^OK .*managed.*衝突は無い'
+}
+scenario "B12(managed): .githooks/pre-commit の case 衝突は FAIL（tech-debt #14。#13 と同じ検出・同じ直し方）" \
+  setup_managed_case_collision expect_managed_case_collision
+
 # B7. AGENTS.md のマーカーの v= を manifest と食い違わせると WARN（harness update を案内）。
 setup_agents_version_mismatch() {
   setup_init || return 1
