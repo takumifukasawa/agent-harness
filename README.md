@@ -90,7 +90,19 @@ harness/                 # プロジェクトに入るペイロード
 
 [`agent-skills`](../agent-skills) は個人の汎用スキル集（マシン単位・シンボリックリンク）。こちらはプロジェクト運用の足場（リポジトリ単位・コミットされる）。詳細は DESIGN.md §9。
 
+### 入れた後にやること（init は足場を置くだけ）
+
+`init` 直後の `check` は seed の 2 件しか回らない。仕組みが働き始めるのはここから。
+
+1. **`.harness/checks.sh` に検査を登録する。** これが「完了の客観条件」（`AGENTS.md`）。テスト・lint・型検査・ビルドなど、**そのプロジェクトで緑なら完了と言えるもの**を並べる。速いものには `fast` を付けると pre-commit でも回る。
+2. **`docs/spec/` に何を作るかを書く。** 受け入れ条件はここが唯一の正で、会話ではなくここに書き戻す。
+3. **`bash .harness/bin/harness doctor`** で FAIL 0 を確認する。
+4. Codex を使うなら、`codex` を起動して **`/hooks` で標準 deny の hook を信頼する**（0.7.0 以降。各 PC で 1 回。`doctor` が状態を報告する）。
+
+**既存の `docs/` があるプロジェクトに入れるとき**は、先に `ls docs/` を見て、雛形の名前（`README.md` / `handoff.md` / `architecture.md` / `learnings.md` / `tech-debt.md`）と**大文字違いで被るもの**がないか確認する。case を区別しないファイルシステム（macOS / Windows）では、既存の `HANDOFF.md` があると雛形の `handoff.md` は配られないのに manifest には載る（`docs/tech-debt.md` #13）。被っていたら `git mv` で雛形側の名前に寄せるのが手っ取り早い。
+
 ## 既知の制約
 
-- `.claude/settings.json` の自動マージは `node` がある環境のみ。無ければ `.harness/adapters/claude.settings.fragment.json` を手で反映する。
-- 動作確認は Windows（Git Bash）のみ。macOS / Linux は未検証。詳細は `docs/tech-debt.md`。
+- `.claude/settings.json` の自動マージは `node` がある環境のみ。無ければ `.harness/adapters/claude.settings.fragment.json` を手で反映する（`docs/tech-debt.md` #1）。
+- 動作確認は **Windows（Git Bash）と macOS（Darwin 24.6 / arm64 / 素の bash 3.2.57）**。macOS は 2026-09-20〜21 に実機で確認し、`init` / `update` / `doctor` / `check` / `gc` が通る（決定 0006 で bash 3.2 を切らないと決めた）。**Linux は未検証**、**古い macOS（15 未満、`sha256sum` / `jq` が無い）も未検証**。詳細は `docs/tech-debt.md` #3。
+- **0.7.0 以前から上げるときだけ、`harness update` を 2 回回す**（1 回目で CLI 自身が入れ替わり、2 回目から新しい配布物が入る。0.7.1 で解消。`docs/tech-debt.md` #12）。
