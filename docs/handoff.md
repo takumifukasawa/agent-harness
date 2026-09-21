@@ -1,6 +1,6 @@
 # handoff — 現在地
 
-最終更新: 2026-09-21（cross-env フェーズ 1 クローズ・版 0.6.0。続けて **check-speed の A（計測）と B の 1〜2 件目まで完了**。フル `check` は **95s → 62s → 50s**）
+最終更新: 2026-09-21（**cross-env フェーズ 1 を main へ載せ（push 済）、tech-debt #4 を実機で閉じた**。check-speed は決定 0008 で**完了**（95s → 50s）。次はフェーズ 2（Codex））
 
 ## いま何をしているか（1〜3 行）
 
@@ -24,7 +24,7 @@ B2 の中身は (1) `doctor` の B5（改行）を一括判定に（337→253ms�
 
 | 項目 | 状態 | 出典 |
 |---|---|---|
-| ブランチ | **`cross-env`**（main から分岐。push していない） | `git branch` |
+| ブランチ | **`main`**（`cross-env` の 35 コミットを FF マージして `origin/main` へ push 済。`c1de264`） | `git branch -vv` |
 | VERSION | **0.6.0**（T03 で minor を切った。2026-09-21）。`CHANGELOG.md` の `[0.6.0]` と `AGENTS.md` のマーカー `v=0.6.0`、`manifest.json` の `harness_version` が一致 | `VERSION`, `CHANGELOG.md` |
 | 検査 | **18 件 pass / 0 fail**（**50 秒**。CS-B1 / B2 で 95s から短縮）。T01 で禁止検査 2 件、T02 で `githooks are executable` / `gc scenarios` / `stdin (curl \| bash) install` の 3 件が増えた | `/bin/bash .harness/bin/harness check` |
 | `harness doctor` | **OK=16 WARN=0 FAIL=0**。**T04 で B6 の重大度が WARN → FAIL になった**（フックが実行不可＝門番が不在。決定 0007）。このリポジトリは index が 100755 なので OK のまま | `/bin/bash .harness/bin/harness doctor` |
@@ -33,17 +33,15 @@ B2 の中身は (1) `doctor` の B5（改行）を一括判定に（337→253ms�
 | 決定 | 0001〜**0007**（0007: フックが実行不可なら doctor は FAIL） | `docs/decisions/` |
 | フェーズ | **`done`**（5/5 タスク、`final_review.status: done`）。ユーザーの承認待ち | `.harness/state/progress.json` |
 | 最終レビュー | 観点 4 つ（仕様突合 / **機能の完結性** / **クロス環境** / **検査の実効性**。後ろ 2 つは既定の「並行性 / 認可」から差し替え）を下位モデルで並列。**指摘 4 件、すべて単独報告かつ修正コスト低なので反証は回していない**（条件は両方満たす場合のみ） | `.harness/state/reports/review-*.md` |
-| 技術負債 | **#8 は返済済**（`tests/gc.sh` で経路を新設）、**#3 はほぼ返済済**（残るのは古い macOS 15 未満）、**#4 は機構まで確認済**（確定は main へ載せた後）、**#9 を新規起票**（init の perms）。未着手は #1 #2 #6 #7 | `docs/tech-debt.md` |
+| 技術負債 | **#4 #8 #11 は返済済**、**#6 は打ち切り**（決定 0008）、**#3 はほぼ返済済**（残るのは古い macOS 15 未満）。未着手は #1 #2 #7 #9 #10 | `docs/tech-debt.md` |
 
 ## NEXT（依存順。順序制約があれば明記）
 
-**`task-orchestrate` の反復フェーズの続き。** `.harness/state/progress.json` が `phase: iterate` / `current_task: T03` なので、スキルの §0 から入れば続きから拾える。
+**フェーズ 1 と check-speed は閉じた。次は cross-env のフェーズ 2（Codex）。**
 
-1. **フェーズ 1 の成果を main へ載せ、tech-debt #4 を閉じる**（下の 2 と一体）。マージ後に `bash bin/harness init --source https://github.com/takumifukasawa/agent-harness.git` を 1 回回して `doctor` が FAIL 0 になることを確認する。
-2. **`check-speed` の B の 3 件目をやるかの判断**（50s からさらに縮めるか）。候補は spec の「未確定事項」に 3 つ（`apply_plan` が no-op でも 44 ファイルを毎回レンダリングする構造 / `plan()` の `basename` 16 回 / フィクスチャの複製・削除 4.5s）。**目標値は未確定**（#6 起票時の「20〜40 秒」は前提が覆ったので使わない）。**検査を弱めて速くしない**のが前提（spec の B2）。やらずに C（並列化）へ行くか、ここで打ち切るのも選択肢。
-3. **フェーズ 2（Codex）**。今落ちている公開経路は main が T01 前（305d57b）だからで、コード側の欠陥ではない（現ブランチ内容の clone 経路では通る）。
-   タスクは spec の B1〜B4。**Codex CLI 0.154.0 がこの機に入っている**（`/opt/homebrew/bin/codex`）ので環境待ちにはならない
-   フェーズ 1 とは spec の節も差分範囲も分かれるので、**`.harness/state/` を作り直して新しい反復として起動する**のが素直（今の state はフェーズ 1 の記録として畳む）。
+1. **フェーズ 2（Codex）に着手する**。タスクは `docs/spec/cross-env-support.md` の B1〜B4。**Codex CLI 0.154.0 がこの機に入っている**（`/opt/homebrew/bin/codex`）ので環境待ちにはならない。**`harness/adapters/codex/README.md` の記述は公式 docs 由来（2026-09-17 確認）で実機確認はこれから**。
+   フェーズ 1 とは spec の節も差分範囲も分かれるので、**`.harness/state/` を作り直して新しい反復として起動する**（今の state はフェーズ 1 の記録として畳む。`phase: done` のまま残っている）。規模的に `task-orchestrate` の対象。
+2. （任意）**未着手の負債**: #1（settings.json の node 依存）#2（gc のヒューリスティック）#7（`tests/source.sh` への分離）#9（init の perms）#10（常駐サーバの trap 統合）。いずれも低優先で、関連箇所を触るときに一緒に返す。
 
 ## 別の PC で再開するとき
 
@@ -61,7 +59,7 @@ B2 の中身は (1) `doctor` の B5（改行）を一括判定に（337→253ms�
 | **`.harness/source.local`** | `echo '<clone した絶対パス>' > .harness/source.local`。無いと `update` / `diff` / `upstream` が公開 URL を見に行く。`doctor` が WARN で直し方ごと案内する |
 | **`core.hooksPath`** | `git config core.hooksPath .githooks`。`.git/config` は clone で引き継がれない |
 | ~~`.githooks/pre-commit` の実行ビット~~ | **T02 で不要になった。** index が 100755 になったので clone しただけで実行ビットが付く。`doctor` の B6 も実行可否まで見る（`core.filemode=false` の Windows では偽警告を出さない） |
-| `.harness/state/` | **捨てない。** 題材 cross-env が進行中（`phase: iterate`）。捨てた場合は `docs/plans/active/cross-env.md` と git log から再構成する |
+| `.harness/state/` | フェーズ 1 の記録（`phase: done`）。**フェーズ 2 を始めるときに作り直す**。捨てた場合は `docs/plans/active/cross-env.md` と git log から再構成する |
 
 ### macOS の場合
 
