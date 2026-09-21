@@ -5,7 +5,7 @@
   "installed_at": "2026-09-21",
   "agents": "claude,codex",
   "files": [
-    {"path":".harness/bin/harness","src":"@self","ownership":"managed","sha256":"ced408a537a7df918ca4bbbb5e947f4bb71043c6","source_sha256":""},
+    {"path":".harness/bin/harness","src":"@self","ownership":"managed","sha256":"c1c522db5803b805df9b7632d045eb3d7c8c682d","source_sha256":""},
     {"path":".harness/bin/harness.cmd","src":"@self-cmd","ownership":"managed","sha256":"59de6078cfcf46f4941194220ffd48aa2e8400c5","source_sha256":""},
     {"path":".harness/scripts/check.sh","src":"scripts/check.sh","ownership":"managed","sha256":"ff1f0fc80afde76f879a830f1732ef3dbb167f22","source_sha256":""},
     {"path":".harness/scripts/doctor.sh","src":"scripts/doctor.sh","ownership":"managed","sha256":"cb9c703e09b0edfd3aadd646d0e6c27e8a5ef8de","source_sha256":""},

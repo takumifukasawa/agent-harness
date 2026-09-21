@@ -957,18 +957,27 @@ maybe_delegate() {
 ROOT=""; PAYLOAD=""; SELF_PATH=""; HVER=""
 # maybe_delegate が出した「実行中のスクリプト＝同梱コピー」の判定を持ち回る（1=同じ / 空=未判定）。
 VENDORED_SAME=""
-maybe_delegate "$@"
-case "${1:-}" in
-  init)     shift; cmd_init "$@";;
-  self-install) shift; cmd_self_install "$@";;
-  update)   shift; cmd_update "$@";;
-  status)   shift; cmd_status "$@";;
-  diff)     shift; cmd_diff "$@";;
-  upstream) shift; cmd_upstream "$@";;
-  check)    shift; cmd_check "$@";;
-  gc)       shift; cmd_gc "$@";;
-  doctor)   shift; cmd_doctor "$@";;
-  version|--version|-v) cmd_version;;
-  ""|help|-h|--help) usage;;
-  *) die "unknown command: $1 (harness help)";;
-esac
+# `source bin/harness` された場合（tests/hash-server-stderr.sh が hash_server_start /
+# hash_server_stop を CLI を経由せず直接呼ぶために使う。tech-debt #15 の回帰検査）は、
+# ここから下の CLI 分岐を走らせない。通常実行（bash bin/harness ... / 標準入力実行）では走る。
+# `(return 0 2>/dev/null)` は「sourced か」を BASH_SOURCE の比較より確実に見分ける（標準入力
+# 実行では BASH_SOURCE が空になり $0 との比較が誤判定するため）。
+HARNESS_SOURCED=0
+(return 0 2>/dev/null) && HARNESS_SOURCED=1
+if [ "$HARNESS_SOURCED" = 0 ]; then
+  maybe_delegate "$@"
+  case "${1:-}" in
+    init)     shift; cmd_init "$@";;
+    self-install) shift; cmd_self_install "$@";;
+    update)   shift; cmd_update "$@";;
+    status)   shift; cmd_status "$@";;
+    diff)     shift; cmd_diff "$@";;
+    upstream) shift; cmd_upstream "$@";;
+    check)    shift; cmd_check "$@";;
+    gc)       shift; cmd_gc "$@";;
+    doctor)   shift; cmd_doctor "$@";;
+    version|--version|-v) cmd_version;;
+    ""|help|-h|--help) usage;;
+    *) die "unknown command: $1 (harness help)";;
+  esac
+fi
