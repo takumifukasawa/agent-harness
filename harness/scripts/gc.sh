@@ -16,7 +16,8 @@
 #   8. harness status の MODIFIED（管理ファイルの drift）
 #   9. docs/references/ の取得日が N*6 日（約 3 か月）より古い
 #  10. docs/plans/active/ の計画で、タスク表と状態欄が矛盾している
-#      （a) タスク表の行がすべて done なのに状態欄が「完了」でない (b) 状態欄が「完了」なのに active/ のまま）
+#      （a) タスク表の行がすべて done なのに状態欄が「完了」でも作業継続中（〜中）でもない
+#       (b) 状態欄が「完了」で始まる（部分文字列一致ではない）のに active/ のまま）
 set -u
 
 DAYS=14; STRICT=0
@@ -161,6 +162,35 @@ plan_state_value() { # <file> -> 「- 状態:」行の値（1 行。無ければ
   sed -n 's/^- *状態: *//p' "$1" | head -1
 }
 
+plan_state_core() { # <state> -> 装飾（**強調**）と括弧の注記を落とした中核語だけ
+  # 先に括弧の注記を落としてから前後の空白・強調記号を剥がす。逆順だと「**レビュー中**（…）」の
+  # ように強調の閉じ ** が括弧の手前に来る書き方で、末尾の ** が剥がれずに残ってしまう。
+  printf '%s' "$1" |
+    sed -E 's/[（(].*//' |
+    sed -E 's/^\*+//; s/\*+$//; s/^[[:space:]]+//; s/[[:space:]]+$//'
+}
+
+plan_state_is_complete() { # <state> -> 真: 状態欄が「完了」を表す（中核語が「完了」で始まる）
+  # 部分文字列一致にすると「未完了」「進行中（T01完了、T02未着手）」のように実際には
+  # 未完了の文章まで拾ってしまう（レビュー指摘 S4）。中核語の先頭が「完了」の場合だけ拾う。
+  case "$(plan_state_core "$1")" in 完了*) return 0;; esac
+  return 1
+}
+
+plan_state_is_ongoing() { # <state> -> 真: 「〜レビュー中」等、最終レビューが正常に進行中を表す語
+  # C1a はタスク表が全 done なのに状態欄が「完了」でないケースを拾う。task-orchestrate の手順
+  # （docs/roles/、.agents/skills/task-orchestrate/SKILL.md）では実装が全部終わってから最終
+  # レビューを 1 回回すので、「タスク表は全 done・状態欄はレビュー中」は正常な途中状態であり、
+  # ここで警告すると C3（誤検知で既存の指摘を埋もれさせない）に反する（レビュー指摘 G1。実物:
+  # docs/plans/active/no-silent-failures.md の「**最終レビュー中**（…）」）。
+  # 一方 docs/plans/README.md の雛形にある他の状態（計画中/進行中/ブロック中）は、タスク表が
+  # 全 done なら矛盾したままなので除外しない（「〜中」全般を継続中扱いすると、素の書き戻し忘れ
+  # ＝「進行中」のまま放置、を見逃してしまう。tests/gc.sh の G8 が回帰を止める）。よって
+  # 「レビュー中」に限定して継続中とみなす。
+  case "$(plan_state_core "$1")" in *レビュー中) return 0;; esac
+  return 1
+}
+
 plan_state_col() { # <file> -> タスク表で「状態」列の配列添字（0-indexed。列が無ければ空）
   local header cells cell idx col
   header=$(grep -m1 -E '^\|.*状態.*\|' "$1") || return 0
@@ -191,11 +221,11 @@ plan_all_tasks_done() { # <file> <col> -> 真: タスク行（先頭列が T+数
 if [ -d "$DOCS/plans/active" ]; then
   while IFS= read -r f; do
     state=$(plan_state_value "$f")
-    if printf '%s' "$state" | grep -q '完了'; then
+    if plan_state_is_complete "$state"; then
       report WARN "計画 $f の状態欄が「完了」なのに active/ に置かれたまま" "docs/plans/completed/ へ移す（畳み忘れ）"
     else
       col=$(plan_state_col "$f")
-      if [ -n "$col" ] && plan_all_tasks_done "$f" "$col"; then
+      if [ -n "$col" ] && plan_all_tasks_done "$f" "$col" && ! plan_state_is_ongoing "$state"; then
         report WARN "計画 $f のタスク表は行が全部 done なのに状態欄が「完了」になっていない" "状態欄を完了に書き戻すか、まだなら理由を書く"
       fi
     fi

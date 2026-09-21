@@ -252,6 +252,82 @@ expect_plan_mixed_states_no_false_positive() {
 scenario "G10: タスク表に進行中/未着手が混在し状態欄が進行中なら誤検知しない（実物と同じ形）" \
   setup_plan_mixed_states_no_false_positive expect_plan_mixed_states_no_false_positive
 
+# G11. S4（最終レビュー指摘）: C1b の「完了」判定が部分文字列一致だと、状態欄が「未完了」のような
+# 実際には未完了の文章でも「畳み忘れ」と誤案内する。状態欄が「完了」で始まる場合だけ拾う。
+setup_plan_state_mikanryou_no_false_positive() {
+  new_proj || return 1
+  mkdir -p "$PROJ/docs/plans/active" || return 1
+  printf '# qux\n\n- 開始: 2026-09-01\n- 状態: 未完了\n' >"$PROJ/docs/plans/active/qux.md"
+  ( cd "$PROJ" && git add -A &&
+    git -c user.email=t@t -c user.name=t commit -q -m plan ) >/dev/null 2>&1 ||
+    { errors+=("setup: コミットに失敗した"); return 1; }
+}
+expect_plan_state_mikanryou_no_false_positive() {
+  run_gc
+  expect_not_out '状態欄が「完了」なのに active/ に置かれたまま'
+  expect_code 0
+}
+scenario "G11: 状態欄が「未完了」なら完了扱いしない（部分文字列一致による誤検知を防ぐ）" \
+  setup_plan_state_mikanryou_no_false_positive expect_plan_state_mikanryou_no_false_positive
+
+# G12. S4（最終レビュー指摘）: 状態欄が「進行中（T01完了、T02未着手）」のように、括弧の中に
+# 「完了」という語を含むだけの文章でも C1b が誤案内しないこと。タスク表も全 done ではないので
+# C1a も出さない（未着手が残っている）。
+setup_plan_state_parenthetical_kanryou_no_false_positive() {
+  new_proj || return 1
+  mkdir -p "$PROJ/docs/plans/active" || return 1
+  {
+    printf '# quux\n\n'
+    printf -- '- 開始: 2026-09-01\n'
+    printf -- '- 状態: 進行中（T01完了、T02未着手）\n\n'
+    printf '## タスク分解（依存順）\n\n'
+    printf '| # | タスク | 状態 | 備考 |\n'
+    printf '|---|---|---|---|\n'
+    printf '| T01 | do thing | done | ... |\n'
+    printf '| T02 | do other | 未着手 | ... |\n'
+  } >"$PROJ/docs/plans/active/quux.md"
+  ( cd "$PROJ" && git add -A &&
+    git -c user.email=t@t -c user.name=t commit -q -m plan ) >/dev/null 2>&1 ||
+    { errors+=("setup: コミットに失敗した"); return 1; }
+}
+expect_plan_state_parenthetical_kanryou_no_false_positive() {
+  run_gc
+  expect_not_out '状態欄が「完了」なのに active/ に置かれたまま'
+  expect_not_out 'タスク表は行が全部 done なのに状態欄が'
+  expect_code 0
+}
+scenario "G12: 状態欄が「進行中（…完了…）」でも完了扱いしない（括弧内の部分文字列一致を防ぐ）" \
+  setup_plan_state_parenthetical_kanryou_no_false_positive expect_plan_state_parenthetical_kanryou_no_false_positive
+
+# G13. G1（最終レビュー指摘）: タスク表が全 done でも、状態欄が「レビュー中」など作業継続中を
+# 表す語（末尾が「中」）なら C1a を出さない。実物（docs/plans/active/no-silent-failures.md）と
+# 同じ「**最終レビュー中**（T01〜T03 は全 done。指摘の処理が残っている）」という書き方を再現する。
+setup_plan_review_in_progress_no_false_positive() {
+  new_proj || return 1
+  mkdir -p "$PROJ/docs/plans/active" || return 1
+  {
+    printf '# corge\n\n'
+    printf -- '- 開始: 2026-09-01\n'
+    printf -- '- 状態: **最終レビュー中**（T01〜T03 は全 done。指摘の処理が残っている）\n\n'
+    printf '## タスク分解（依存順）\n\n'
+    printf '| # | タスク | 状態 | 備考 |\n'
+    printf '|---|---|---|---|\n'
+    printf '| T01 | do thing | done | ... |\n'
+    printf '| T02 | do other | **done** | ... |\n'
+  } >"$PROJ/docs/plans/active/corge.md"
+  ( cd "$PROJ" && git add -A &&
+    git -c user.email=t@t -c user.name=t commit -q -m plan ) >/dev/null 2>&1 ||
+    { errors+=("setup: コミットに失敗した"); return 1; }
+}
+expect_plan_review_in_progress_no_false_positive() {
+  run_gc
+  expect_not_out 'タスク表は行が全部 done なのに状態欄が'
+  expect_not_out '状態欄が「完了」なのに active/ に置かれたまま'
+  expect_code 0
+}
+scenario "G13: タスク表が全 done でも状態欄がレビュー中（末尾が「中」）なら誤検知しない（最終レビュー中の実物）" \
+  setup_plan_review_in_progress_no_false_positive expect_plan_review_in_progress_no_false_positive
+
 # ================================================================ 集計
 echo
 echo "tests/gc.sh: pass=$passed fail=$failed"
