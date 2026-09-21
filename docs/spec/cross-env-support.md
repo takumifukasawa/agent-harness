@@ -38,7 +38,7 @@ macOS           フェーズ 1        フェーズ 2
 
 - B1. **完了（2026-09-21）。** 実機で `.agents/skills/` の 7 スキルが読まれ、`$role-implementer` の明示呼び出しが機能した（SKILL.md の戻り値 6 フィールドと禁止事項を正確に再現）
 - B2. **完了（2026-09-21）。** `harness/adapters/codex/README.md` を実機確認の結果で全面更新（確認日 2026-09-21 / CLI 0.154.0）。「hook は v0 では使わない」という記述は実機で覆り、落とし穴（2 段階の信頼、`apply_patch` に deny が効かない）も併記した
-- B3. `task-orchestrate` の 1 タスクを Codex で最後まで回せる（実装役の起動 → 戻り値 → 統括の 3 点判定）
+- B3. **完了（2026-09-21）。** Codex の実装役（`$role-implementer`）に tech-debt #7（テストの分離）を 1 タスクとして渡し、**戻り値の JSON をスキルの形式どおり返して完走**した。統括（Claude）の 3 点判定も通った（受け入れ条件・範囲・報告の正確さ。独立検証と一致）。**範囲外の作業は自分でやらず統括へ申し送った**（tech-debt の返済記録と `architecture.md` の参照更新）
 - B4. **完了（2026-09-21、版 0.7.0）。** 標準 deny は **`PreToolUse` hook** で効かせる（[決定 0009](../decisions/0009-codex-deny-via-pretooluse-hook.md)）。`init --agents codex` が `.codex/hooks.json` と `.harness/scripts/codex-deny.sh` を配り、`doctor` が「hook が信頼されていない＝効いていない」を WARN で報告する。対象は `.claude/settings.json` の deny と同じ 5 つ。検査は `tests/codex.sh`（19 件、codex CLI に依存しない）
 
 **この機に Codex CLI 0.154.0 が入っている**（`/opt/homebrew/bin/codex`、確認日 2026-09-20）ので、環境待ちにはならない。

@@ -1,6 +1,6 @@
 # handoff — 現在地
 
-最終更新: 2026-09-21（**フェーズ 2（Codex）に着手。B1 / B2 達成、B4 は決定 0009 まで**。フェーズ 1 は main へ載せ push 済、tech-debt #4 も返済。check-speed は決定 0008 で完了（95s → 50s））
+最終更新: 2026-09-21（**cross-env フェーズ 2 の受け入れ条件 B1〜B4 がすべて揃った。版 0.7.0**。フェーズ 1 は main へ載せ push 済。check-speed は決定 0008 で完了）
 
 ## いま何をしているか（1〜3 行）
 
@@ -25,9 +25,9 @@ B2 の中身は (1) `doctor` の B5（改行）を一括判定に（337→253ms�
 | 項目 | 状態 | 出典 |
 |---|---|---|
 | ブランチ | **`main`**（`cross-env` の 35 コミットを FF マージして `origin/main` へ push 済。`c1de264`） | `git branch -vv` |
-| VERSION | **0.6.0**（T03 で minor を切った。2026-09-21）。`CHANGELOG.md` の `[0.6.0]` と `AGENTS.md` のマーカー `v=0.6.0`、`manifest.json` の `harness_version` が一致 | `VERSION`, `CHANGELOG.md` |
-| 検査 | **18 件 pass / 0 fail**（**50 秒**。CS-B1 / B2 で 95s から短縮）。T01 で禁止検査 2 件、T02 で `githooks are executable` / `gc scenarios` / `stdin (curl \| bash) install` の 3 件が増えた | `/bin/bash .harness/bin/harness check` |
-| `harness doctor` | **OK=16 WARN=0 FAIL=0**。**T04 で B6 の重大度が WARN → FAIL になった**（フックが実行不可＝門番が不在。決定 0007）。このリポジトリは index が 100755 なので OK のまま | `/bin/bash .harness/bin/harness doctor` |
+| VERSION | **0.7.0**（Codex の標準 deny hook。2026-09-21）。`CHANGELOG.md` の `[0.7.0]` と `AGENTS.md` のマーカー `v=0.7.0`、`manifest.json` の `harness_version` が一致 | `VERSION`, `CHANGELOG.md` |
+| 検査 | **20 件 pass / 0 fail**（**55 秒**。0.7.0 で `codex adapter` と `source scenarios` が増えた）。T01 で禁止検査 2 件、T02 で `githooks are executable` / `gc scenarios` / `stdin (curl \| bash) install` の 3 件が増えた | `/bin/bash .harness/bin/harness check` |
+| `harness doctor` | **OK=16 WARN=1 FAIL=0**。**WARN 1 は Codex の標準 deny hook が未信頼**（`.codex/hooks.json` は配られたが、この PC で `/hooks` による信頼をしていない。意図した挙動で、信頼すれば消える）。**T04 で B6 の重大度が WARN → FAIL になった**（フックが実行不可＝門番が不在。決定 0007）。このリポジトリは index が 100755 なので OK のまま | `/bin/bash .harness/bin/harness doctor` |
 | macOS の素の bash | **3.2.57 のまま動く**（決定 0006 で「3.2 を切らない」と決めた）。`brew install bash` は**もう要らない** | 決定 0006 |
 | 導入コピーの drift | なし（modified=0 missing=0）。**T02 以降 `update` は mode 差分も残さない**（実行ビットを index の正にしたため） | `harness status` |
 | 決定 | 0001〜**0007**（0007: フックが実行不可なら doctor は FAIL） | `docs/decisions/` |
@@ -39,9 +39,9 @@ B2 の中身は (1) `doctor` の B5（改行）を一括判定に（337→253ms�
 
 **フェーズ 1 と check-speed は閉じた。次は cross-env のフェーズ 2（Codex）。**
 
-1. **T08: `task-orchestrate` の 1 タスクを Codex で最後まで回す（spec の B3）。** 実装役の起動 → 戻り値 → 統括の 3 点判定まで。**Codex はログイン済みで、`$role-implementer` が呼べることは実機で確認済み**（残るのは「1 タスクを完走できるか」）。題材は小さい実タスクがよく、未着手の負債 #2 や #7 が候補。着手時に **`.harness/state/` を作り直して新しい反復として起動する**（今の state はフェーズ 1 の記録。`phase: done` のまま残っている）。
-2. **T09 の実装（決定 0009 は済み）。** `harness init --agents codex` が `<repo>/.codex/hooks.json` と deny スクリプトを managed で配り、`doctor` が「hook が信頼されていないので効いていない」を検出して `/hooks` を案内する。**`.githooks/` の門番は残したまま二重にする**（hook は `apply_patch` に効かず、信頼されるまで発火しない）。Codex を使わないプロジェクトには配らない・診断も出さない（`manifest.json` の `agents` を見る）。
-   **実機で確認済みの前提**（`harness/adapters/codex/README.md`、確認日 2026-09-21）: `PreToolUse` が `{"hookSpecificOutput":{...,"permissionDecision":"deny",...}}` を返すとコマンドは実行されず、モデルにも理由が伝わる。**プロジェクトの `trust_level = "trusted"` だけでは hook は 1 つも発火しない**（hook 定義ごとの信頼が別途要る）。
+1. **人間の作業が 1 つある（任意）: このリポジトリで Codex の hook を信頼する。** `doctor` の WARN 1 はこれ。ディレクトリで `codex` を起動し、プロジェクトの信頼を求められたら信頼したうえで `/hooks` で hook を信頼すると消える（各 PC で 1 回。git には乗らない）。**Codex をこの PC で使わないなら放置してよい。**
+2. **cross-env フェーズ 2 は受け入れ条件 B1〜B4 をすべて満たした。** 残るのは C2（各環境の事実を確認日つきで書く）の継続運用だけなので、**題材としてクローズしてよい**（`docs/plans/active/cross-env.md` を `completed/` へ移し、`.harness/state/` を畳む）。その判断はユーザーに委ねる。
+3. **次の題材を決める。** 未着手の負債は #1（settings.json の node 依存）#2（gc のヒューリスティック）#9（init の perms）#10（常駐サーバの trap 統合）#12（CLI 変更後の update が 1 回で効かない）。**#12 は今回踏んだばかり**で、`bin/harness` を触るたびに再発する。
 3. （任意）**未着手の負債**: #1（settings.json の node 依存）#2（gc のヒューリスティック）#7（`tests/source.sh` への分離）#9（init の perms）#10（常駐サーバの trap 統合）。いずれも低優先で、関連箇所を触るときに一緒に返す。
 
 ## 別の PC で再開するとき
