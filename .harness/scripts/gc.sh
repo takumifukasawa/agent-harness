@@ -15,6 +15,8 @@
 #   7. .harness/state/progress.json の updated_at が N 日より古い（放置された state）
 #   8. harness status の MODIFIED（管理ファイルの drift）
 #   9. docs/references/ の取得日が N*6 日（約 3 か月）より古い
+#  10. docs/plans/active/ の計画で、タスク表と状態欄が矛盾している
+#      （a) タスク表の行がすべて done なのに状態欄が「完了」でない (b) 状態欄が「完了」なのに active/ のまま）
 set -u
 
 DAYS=14; STRICT=0
@@ -149,6 +151,55 @@ if [ -f "$DOCS/references/README.md" ]; then
   while IFS= read -r dt; do
     d=$(days_since "$dt") && [ "$d" -gt $((DAYS * 6)) ] && report INFO "docs/references/ に取得から ${d} 日経った知識がある（${dt}）" "元を見直すか、腐っていないか確認する"
   done < <(grep -oE '\| *[0-9]{4}-[0-9]{2}-[0-9]{2} *\|' "$DOCS/references/README.md" | tr -d '| ')
+fi
+
+# 10. 計画のタスク表と状態欄の矛盾（統括自身の書き戻し漏れを機械で見る。spec no-silent-failures C）
+#     見るのは合意済みの 2 つだけ（C3: 表記揺れでは警告しない。広げない）:
+#       (a) タスク表の行がすべて `done` なのに、状態欄が「完了」になっていない（＝書き戻し忘れ）
+#       (b) 状態欄が「完了」なのに active/ に置かれたまま（＝畳み忘れ）
+plan_state_value() { # <file> -> 「- 状態:」行の値（1 行。無ければ空）
+  sed -n 's/^- *状態: *//p' "$1" | head -1
+}
+
+plan_state_col() { # <file> -> タスク表で「状態」列の配列添字（0-indexed。列が無ければ空）
+  local header cells cell idx col
+  header=$(grep -m1 -E '^\|.*状態.*\|' "$1") || return 0
+  idx=0; col=""
+  IFS='|' read -ra cells <<<"$header"
+  for cell in "${cells[@]}"; do
+    cell=$(printf '%s' "$cell" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
+    if [ "$cell" = "状態" ]; then col=$idx; break; fi
+    idx=$((idx + 1))
+  done
+  echo "$col"
+}
+
+plan_all_tasks_done() { # <file> <col> -> 真: タスク行（先頭列が T+数字）が 1 件以上あり全部 done
+  local f="$1" col="$2" any=0 line cells first status
+  [ -n "$col" ] || return 1
+  while IFS= read -r line; do
+    IFS='|' read -ra cells <<<"$line"
+    first=$(printf '%s' "${cells[1]:-}" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
+    case "$first" in T[0-9]*) ;; *) continue;; esac
+    any=1
+    status=$(printf '%s' "${cells[$col]:-}" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/^\*+//; s/\*+$//')
+    case "$status" in [Dd][Oo][Nn][Ee]*) ;; *) return 1;; esac
+  done < <(grep -E '^\|' "$f")
+  [ "$any" = 1 ]
+}
+
+if [ -d "$DOCS/plans/active" ]; then
+  while IFS= read -r f; do
+    state=$(plan_state_value "$f")
+    if printf '%s' "$state" | grep -q '完了'; then
+      report WARN "計画 $f の状態欄が「完了」なのに active/ に置かれたまま" "docs/plans/completed/ へ移す（畳み忘れ）"
+    else
+      col=$(plan_state_col "$f")
+      if [ -n "$col" ] && plan_all_tasks_done "$f" "$col"; then
+        report WARN "計画 $f のタスク表は行が全部 done なのに状態欄が「完了」になっていない" "状態欄を完了に書き戻すか、まだなら理由を書く"
+      fi
+    fi
+  done < <(find "$DOCS/plans/active" -name '*.md' | sort)
 fi
 
 # 読めなかった日付は必ず出す。日付判定が効いていないまま「問題なし」と言うのが一番害が大きい
