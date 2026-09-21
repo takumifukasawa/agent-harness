@@ -24,9 +24,31 @@ bash .harness/bin/harness <subcommand> [args]
 | `doctor` | 環境と導入状態を診断する（終了コード: 0=FAIL 0 件、1=FAIL あり、2=未導入） | 1 行 1 項目 `OK\|WARN\|FAIL  項目  →  直し方`、末尾の集計行 `harness doctor: OK=n WARN=n FAIL=n` を報告。WARN/FAIL があれば各行の「→」の直し方に従う。`INFO`（source に新版あり）は集計に含めず、`harness update` を促す |
 | `version` | 版を表示 | |
 
+## 別のプロジェクトへ入れる
+
+「これを別のプロジェクトにも入れたい」と頼まれたとき（**今のプロジェクトではなく、他の作業先**への初導入）の案内。導入先のディレクトリで実行する。
+
+- **agent-harness を clone 済みのとき**:
+  ```bash
+  bash /path/to/agent-harness/bin/harness init
+  ```
+- **clone していない PC でも、URL から直接**:
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/takumifukasawa/agent-harness/main/bin/harness \
+    | bash -s -- init --source https://github.com/takumifukasawa/agent-harness.git
+  ```
+
+入るもの: `AGENTS.md` の管理ブロック、`CLAUDE.md`（`@AGENTS.md`）、`.agents/skills/` と `.claude/skills/`、`docs/` の雛形、`.harness/`、`.githooks/pre-commit`。既存の `AGENTS.md` / `CLAUDE.md` は壊さず先頭に足すだけ。
+
+**`init` は足場を置くだけ。** 直後の `check` は seed の検査しか回らないので、続けて案内する:
+
+1. `.harness/checks.sh` にそのプロジェクトの検査（テスト・lint・型検査・ビルドなど、緑なら完了と言えるもの）を登録する。これが「完了の客観条件」になる。
+2. `docs/spec/` に何を作るかを書く。受け入れ条件はここが唯一の正。
+3. `bash .harness/bin/harness doctor` を回し、FAIL 0 を確認する。
+
 ## やらないこと
 
-- `init` はこのスキルから実行しない（未導入のプロジェクトで発火することはないはず。導入は人間が行う）。
+- `init` はこのスキルから実行しない（このスキル自身は既に導入済みのプロジェクトで発火する想定。今のプロジェクトへの導入は人間が行う。上の「別のプロジェクトへ入れる」は導入**先**で実行するコマンドの案内であり、この制約と矛盾しない）。
 - 衝突ファイルを黙って上書きしない。`.harness/conflicts/` の中身を消さない。
 - upstream 先のリポジトリで commit しない（レビューは人間）。
 
