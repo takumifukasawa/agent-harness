@@ -1,7 +1,7 @@
 # no-silent-failures — 黙って通るものを機械で止める
 
 - 開始: 2026-09-21
-- 状態: 進行中
+- 状態: **最終レビュー中**（T01〜T03 は全 done。指摘の処理が残っている）
 - 関連: [spec](../../spec/no-silent-failures.md), `docs/tech-debt.md` #14 #15
 
 ## 目的（何ができれば完了か）
