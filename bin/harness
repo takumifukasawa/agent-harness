@@ -73,7 +73,12 @@ hash_server_start() {
   mkfifo "$d/in" "$d/out" 2>/dev/null || { rm -rf "$d"; return 0; }
   # fifo は `<>`（読み書き）で開く。片側だけで開くと相手が開くまでブロックするので、git の起動に
   # 失敗した場合にここで永久に止まる。両端を自分で持てば open は必ず即座に返る。
-  exec 3<>"$d/in" 4<>"$d/out" 2>/dev/null || { rm -rf "$d"; return 0; }
+  # コマンドを伴わない `exec 2>/dev/null` は 1 行に見えて実はシェル全体に永続適用され、以後の
+  # stderr が全部消える（bash のよくある落とし穴。tech-debt #15）。`{ ...; } 2>/dev/null` に
+  # 包むと、fd 2 のリダイレクトはこのブロックの実行中だけに限定される一方、exec が本来やりたい
+  # fd 3 / 4 の恒久的な差し替えはブロックを抜けても残る（`{ }` の redirect は exec 前の fd を
+  # 退避 → 復元するが、exec 自身が明示的に開いた fd 3 / 4 はその退避の対象ではないため）。
+  { exec 3<>"$d/in" 4<>"$d/out"; } 2>/dev/null || { rm -rf "$d"; return 0; }
   # 子からは fifo の fd 3 / 4 を落とす。子が in の書き側を持ったままだと、親が fd 3 を閉じても
   # git に EOF が届かず終了しない。
   git hash-object --no-filters --stdin-paths <"$d/in" >"$d/out" 2>/dev/null 3>&- 4>&- &
@@ -88,7 +93,10 @@ hash_server_start() {
 
 hash_server_stop() {
   [ -n "$HASH_SRV_DIR" ] || return 0
-  exec 3>&- 4>&- 2>/dev/null || true
+  # ここも同じ理由（tech-debt #15）で `{ ...; } 2>/dev/null` に包む。bare exec の 2>/dev/null は
+  # 1 行に見えてシェル全体へ永続適用されるので、包まないと stop 後の（apply_plan / cmd_update の
+  # 残り、次のコマンド呼び出し等）stderr まで一緒に消える。
+  { exec 3>&- 4>&-; } 2>/dev/null || true
   rm -rf "$HASH_SRV_DIR" 2>/dev/null || true
   HASH_SRV_DIR=""
   return 0

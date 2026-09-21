@@ -33,3 +33,8 @@ check      "codex adapter (deny hook)"    "bash tests/codex.sh"
 # 対象は bin/harness・harness/scripts/*.sh・tests/*.sh（tests/lint-bash-compat.sh 自身は自己参照になるため対象外）。
 check fast "bash 3.2: no bash4+-only syntax" "bash tests/lint-bash-compat.sh forbidden-syntax"
 check fast "bash 3.2: no unbraced var before non-ASCII" "bash tests/lint-bash-compat.sh nonascii-var"
+
+# 常駐ハッシュサーバ（hash_server_start / hash_server_stop）を起動・停止した後も stderr が
+# 生きているか（tech-debt #15 の回帰検査）。コマンドを伴わない bare exec の 2>/dev/null が
+# シェル全体へ永続適用され、以後の stderr が全部消える bash の落とし穴が再発していないかを見る。
+check fast "hash server: stderr stays live" "bash tests/hash-server-stderr.sh"
