@@ -1,21 +1,22 @@
 # handoff — 現在地
 
-最終更新: 2026-09-21（cross-env フェーズ 1 クローズ・版 0.6.0。続けて **check-speed の A（検査の計測）も完了**し、B の対象が実測で確定した）
+最終更新: 2026-09-21（cross-env フェーズ 1 クローズ・版 0.6.0。続けて **check-speed の A（計測）と B の 1〜2 件目まで完了**。フル `check` は **95s → 62s → 50s**）
 
 ## いま何をしているか（1〜3 行）
 
 題材は **cross-env**（エージェントと OS を問わず同じに動く）。**準備フェーズは完了し、合意はすべて spec と決定 0006 に書き戻してある。** **フェーズ 1（macOS で動く）は完了。** 5 タスク done、版 **0.6.0**、最終レビュー 1 回と指摘 3 件の修正（T05）まで済み、`.harness/state/progress.json` は `phase: done`（**ユーザーの承認待ち**）。残るのは main へのマージとフェーズ 2（Codex）。
 
-**`docs/spec/check-speed.md` の A（検査ごとの所要時間を可視化）は完了**（`ac529ff`）。実測:
+**`docs/spec/check-speed.md` は A（計測）完了・B は 2 件目まで完了**（`ac529ff` → `264892d` → `04c1353`）。フル `check` の推移:
 
-| 検査 | 秒 | 割合 |
+| | 秒 | 内訳 |
 |---|---|---|
-| `doctor scenarios`（`tests/doctor.sh`） | **58s** | 61% |
-| `update scenarios`（`tests/update.sh`） | **30s** | 32% |
-| 残り 16 件 | 合計 7s | 7% |
-| **`--fast`（pre-commit）** | **1s** | — |
+| A 実装時 | 95s | `doctor scenarios` 58s + `update scenarios` 30s で 93% |
+| B1（ハッシュのバッチ化）後 | 62s | 43s + 15s |
+| **B2（プロセス起動の削減）後** | **50s** | **34s + 12s**。`--fast`（pre-commit）は 1s のまま |
 
-**2 件で 93%。** tech-debt #6 は `tests/doctor.sh` だけを挙げていたが、**`tests/update.sh` の 30 秒は記載が無かった**（測らずに返していたら 3 割取り逃していた）。`--fast` が 1 秒なので、**fast の印を増やす余地**もある（今 18 件中 11 件）。計画と進捗は `docs/plans/active/cross-env.md`、機械可読な状態は `.harness/state/`。
+B2 の中身は (1) `doctor` の B5（改行）を一括判定に（337→253ms）(2) `same_script` の重複 3 回 → 1 回（tech-debt #11 返済）(3) `apply_plan` の一時ファイル使い回し（`update` 793→611ms、`init` 1080→840ms）。**検査は 1 件も減らしていない**（18 件 pass のまま）。
+
+**前提の訂正**: B1b で「`doctor` 13 回 / `init` 15 回」としていたのは**静的 grep 由来で外れ**（実測は `doctor` 45 回 / `init` 5 回）。「`doctor` を速くしても効かない」という結論は取り下げた。回数は実行時に数える（`docs/learnings.md` 2026-09-21）。計画と進捗は `docs/plans/active/cross-env.md`、機械可読な状態は `.harness/state/`。
 
 **作業機は macOS（Darwin 24.6 / arm64 / 素の bash 3.2.57）。** 2026-09-20 に初めて実機で回し、`harness check` が **pass=9 fail=4** だったところを **pass=18 fail=0**（検査自体が 13 → 18 件）にした。**`.githooks/pre-commit` は T02 で本当に走るようになった**（index mode 100755）。
 
@@ -25,7 +26,7 @@
 |---|---|---|
 | ブランチ | **`cross-env`**（main から分岐。push していない） | `git branch` |
 | VERSION | **0.6.0**（T03 で minor を切った。2026-09-21）。`CHANGELOG.md` の `[0.6.0]` と `AGENTS.md` のマーカー `v=0.6.0`、`manifest.json` の `harness_version` が一致 | `VERSION`, `CHANGELOG.md` |
-| 検査 | **18 件 pass / 0 fail**（約 1.5 分）。T01 で禁止検査 2 件、T02 で `githooks are executable` / `gc scenarios` / `stdin (curl \| bash) install` の 3 件が増えた | `/bin/bash .harness/bin/harness check` |
+| 検査 | **18 件 pass / 0 fail**（**50 秒**。CS-B1 / B2 で 95s から短縮）。T01 で禁止検査 2 件、T02 で `githooks are executable` / `gc scenarios` / `stdin (curl \| bash) install` の 3 件が増えた | `/bin/bash .harness/bin/harness check` |
 | `harness doctor` | **OK=16 WARN=0 FAIL=0**。**T04 で B6 の重大度が WARN → FAIL になった**（フックが実行不可＝門番が不在。決定 0007）。このリポジトリは index が 100755 なので OK のまま | `/bin/bash .harness/bin/harness doctor` |
 | macOS の素の bash | **3.2.57 のまま動く**（決定 0006 で「3.2 を切らない」と決めた）。`brew install bash` は**もう要らない** | 決定 0006 |
 | 導入コピーの drift | なし（modified=0 missing=0）。**T02 以降 `update` は mode 差分も残さない**（実行ビットを index の正にしたため） | `harness status` |
@@ -39,7 +40,7 @@
 **`task-orchestrate` の反復フェーズの続き。** `.harness/state/progress.json` が `phase: iterate` / `current_task: T03` なので、スキルの §0 から入れば続きから拾える。
 
 1. **フェーズ 1 の成果を main へ載せ、tech-debt #4 を閉じる**（下の 2 と一体）。マージ後に `bash bin/harness init --source https://github.com/takumifukasawa/agent-harness.git` を 1 回回して `doctor` が FAIL 0 になることを確認する。
-2. **`check-speed` の B**（`tests/doctor.sh` 58s と `tests/update.sh` 30s を速くする）。**対象は実測で確定済み。目標値だけ未確定**（#6 起票時の目標は「20〜40 秒」）。**検査を弱めて速くしない**のが前提（spec の B2）。規模によっては `task-orchestrate` を使う。
+2. **`check-speed` の B の 3 件目をやるかの判断**（50s からさらに縮めるか）。候補は spec の「未確定事項」に 3 つ（`apply_plan` が no-op でも 44 ファイルを毎回レンダリングする構造 / `plan()` の `basename` 16 回 / フィクスチャの複製・削除 4.5s）。**目標値は未確定**（#6 起票時の「20〜40 秒」は前提が覆ったので使わない）。**検査を弱めて速くしない**のが前提（spec の B2）。やらずに C（並列化）へ行くか、ここで打ち切るのも選択肢。
 3. **フェーズ 2（Codex）**。今落ちている公開経路は main が T01 前（305d57b）だからで、コード側の欠陥ではない（現ブランチ内容の clone 経路では通る）。
    タスクは spec の B1〜B4。**Codex CLI 0.154.0 がこの機に入っている**（`/opt/homebrew/bin/codex`）ので環境待ちにはならない
    フェーズ 1 とは spec の節も差分範囲も分かれるので、**`.harness/state/` を作り直して新しい反復として起動する**のが素直（今の state はフェーズ 1 の記録として畳む）。
@@ -83,7 +84,7 @@ cd agent-harness
 echo "$(pwd)" > .harness/source.local
 git config core.hooksPath .githooks
 /bin/bash .harness/bin/harness doctor  # FAIL 0
-/bin/bash .harness/bin/harness check   # 18 件 pass（約 1.5 分）
+/bin/bash .harness/bin/harness check   # 18 件 pass（約 50 秒）
 # 実行ビットは index に入っているので chmod は要らない（0.6.0 以降）
 ```
 
