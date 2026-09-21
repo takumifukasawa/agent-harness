@@ -337,6 +337,35 @@ expect_exec_bits_restored() {
 }
 scenario "U13: update はフックと CLI の実行ビットを立て直す" break_exec_bits expect_exec_bits_restored
 
+# U14. source 側の CLI が新しければ、その plan() で配られる（update 1 回で足りる）。
+# 「何を配るか」を決める plan() は**実行している CLI のもの**が使われる。update が古い同梱コピーへ
+# 委譲したまま走ると、新しい版で増えた配布エントリが丸ごと漏れる（tech-debt #12。実測 2026-09-21:
+# 配布エントリを 2 行足しても 1 回目の update は new=0、CLI 自身が入れ替わった 2 回目でようやく
+# 配られた。"installed copies in sync" は 1 回目で緑になるので気づけない）。
+break_source_cli_newer() {
+  local src="$WORK/src-newer"
+  mkdir -p "$src" || return 1
+  (cd "$REPO" && git archive HEAD) | tar -x -C "$src" || return 1
+  # 作業ツリーの CLI を使う（コミット前の変更でもこのシナリオが成り立つように）
+  cp "$REPO/bin/harness" "$src/bin/harness" || return 1
+  PROJ="$WORK/p-srcnewer"; mkdir -p "$PROJ" || return 1
+  (cd "$PROJ" && git init -q . && bash "$src/bin/harness" init --source "$src") >/dev/null 2>&1 || return 1
+  # source 側の plan() にだけ配布エントリを 1 行足す（= 新しい版で配布物が増えた状況）
+  awk '''{print}
+        /^  echo -e "@pre-commit/ { print "  echo -e \"checks.seed.sh\\t.harness/dummy-probe.txt\\tmanaged\"" }''' \
+    "$src/bin/harness" > "$src/bin/harness.new" || return 1
+  mv "$src/bin/harness.new" "$src/bin/harness" || return 1
+  grep -q 'dummy-probe' "$src/bin/harness" || return 1
+  [ ! -e "$PROJ/.harness/dummy-probe.txt" ] || return 1   # 足す前から在ったら検査にならない
+}
+expect_source_cli_used() {
+  run_update
+  expect_code 0
+  [ -f "$PROJ/.harness/dummy-probe.txt" ] ||
+    errors+=("update 1 回で source 側の新しい plan() が使われていない（配布エントリが漏れる。tech-debt #12）")
+}
+scenario "U14: source 側の CLI が新しければその plan() で配る（update 1 回で足りる）" break_source_cli_newer expect_source_cli_used
+
 # ================================================================ 集計
 echo
 echo "tests/update.sh: pass=$passed fail=$failed"

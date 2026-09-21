@@ -697,6 +697,19 @@ cmd_update() {
   [ -z "$ref" ] && ref="$(manifest_get source_ref)"
   local srcdir; srcdir="$(resolve_source "$source" "$ref")"
   PAYLOAD="$srcdir/harness"; SELF_PATH="$srcdir/bin/harness"
+  # 「何を配るか」を決める plan() は**今動いている CLI のもの**が使われる。source 側の CLI が
+  # それより新しければ、新しい版で増えた配布エントリが丸ごと漏れる（実測 2026-09-21: 配布
+  # エントリを 2 行足しても 1 回目の update は new=0、CLI 自身が入れ替わった 2 回目でようやく
+  # 配られた。tech-debt #12）。source の内容で更新するのだから、判断も source 側の CLI にさせる。
+  if [ -z "${HARNESS_FROM_SOURCE:-}" ] && [ -f "$SELF_PATH" ] && ! same_script "${BASH_SOURCE[0]:-}" "$SELF_PATH"; then
+    # reexec_if_vendored が作った一時コピーがあれば先に消す（exec で EXIT trap は失われる）
+    [ -n "${HARNESS_REEXEC_TMP:-}" ] && rm -f "$HARNESS_REEXEC_TMP"
+    if [ -n "$ref" ]; then
+      HARNESS_FROM_SOURCE=1 exec bash "$SELF_PATH" update --ref "$ref"
+    else
+      HARNESS_FROM_SOURCE=1 exec bash "$SELF_PATH" update
+    fi
+  fi
   local version; version="$(tr -d '\r\n' <"$srcdir/VERSION")"; HVER="$version"
   # manifest に書き戻すのは共有値だけ。旧形式（source に機械依存の絶対パス）で導入された
   # プロジェクトは、ここでその値を .harness/source.local へ移し、manifest を共有値へ直す。
@@ -905,7 +918,12 @@ maybe_delegate() {
   # update の再実行（reexec_if_vendored）で来たときは、同梱コピーと同じ内容であることを
   # 再実行の前に確かめてある。同じ判定をもう一度やらない（same_script は git を 2 回起動する。
   # update 1 回で 3 回呼ばれていた分が、この行と VENDORED_SAME で 1 回になる。実測 2026-09-21）。
-  case "$cmd" in update) [ -n "${HARNESS_REEXEC:-}" ] && { VENDORED_SAME=1; return 0; };; esac
+  case "$cmd" in update)
+    [ -n "${HARNESS_REEXEC:-}" ] && { VENDORED_SAME=1; return 0; }
+    # source 側の CLI へ渡したあと（HARNESS_FROM_SOURCE）は、同梱コピーへ戻さない。
+    # 戻すと source ↔ 同梱コピーを往復して終わらない。
+    [ -n "${HARNESS_FROM_SOURCE:-}" ] && return 0
+  ;; esac
   local root vendored me="${BASH_SOURCE[0]:-}"
   root="$(project_root)"; vendored="$root/.harness/bin/harness"
   [ -f "$vendored" ] || return 0

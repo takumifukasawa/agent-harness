@@ -1,7 +1,7 @@
 # cross-env — エージェントと OS を問わず同じように動く
 
 - 開始: 2026-09-20
-- 状態: **フェーズ 1 完了**（5 タスク done、版 0.6.0、最終レビューと指摘の修正まで済み）。フェーズ 2（Codex）が残り
+- 状態: **完了（2026-09-21）**
 - 関連: [spec](../../spec/cross-env-support.md), [決定 0006](../../decisions/0006-support-bash-3-2.md), [決定 0007](../../decisions/0007-hook-not-executable-is-fail.md), `docs/tech-debt.md` #3
 
 ## 目的（何ができれば完了か）
@@ -73,3 +73,18 @@ Windows × Codex は今回の対象外。
 - **2026-09-21（T09 完了 / 版 0.7.0）**: 決定 0009 を実装した。`init --agents codex` が **`.codex/hooks.json`（`PreToolUse`）と `.harness/scripts/codex-deny.sh`** を managed で配り、`doctor` の B9 が **hook が「効いている」か**（プロジェクトの `trust_level` と hook 定義ごとの信頼の 2 段階）を見て、欠けていれば WARN で `/hooks` を案内する。deny の対象は `.claude/settings.json` と同じ 5 つで、コマンドの取り出しは jq があれば使い無ければ sed に落ちる。検査 **`tests/codex.sh`（19 件）を新設**し、**codex CLI に依存しない**形にした（hook の入力 JSON を自前で作り、診断は `CODEX_HOME` を偽装）。空洞でないことも確認済み（deny を無効化すると 7 件、診断の判定を壊すと 1 件が落ちる）。`check` は **19 件 pass / 0 fail**（54s）。**このリポジトリ自身の `doctor` は WARN=1 になった**（`.codex/hooks.json` が配られたが未信頼。`/hooks` で信頼すれば消える。意図した挙動）。途中で `bin/harness` を変えた直後の update が 1 回では効かないことを踏み、`docs/learnings.md` と tech-debt #12 に残した。残りは **T08（task-orchestrate を Codex で 1 周）**。
 
 - **2026-09-21（T08 完了 / フェーズ 2 の受け入れ条件 B1〜B4 が揃った）**: **Codex の実装役で `task-orchestrate` を 1 周回した**（spec の B3）。題材は tech-debt #7（`source` の解決順のテストを `tests/source.sh` に分離）。`.harness/state/` を作り直して T10 として投げ、`codex exec --sandbox workspace-write` で `$role-implementer` を起動。**実装役はスキルどおりの戻り値 JSON を返して完走し**、`report_path` に Red / Green と比較の根拠を書いた。統括（Claude）の 3 点判定も通った: (a) 受け入れ条件 — `check` が **pass=20 fail=0**、`tests/source.sh` 単体 4 件 pass (b) 範囲 — 触ったのは指定した 3 ファイルのみ (c) 報告の正確さ — シナリオ総数 44（doctor 40 + source 4）で不変、表明も 285 → 289 行で減っていないことを**統括が独立に確認**し、報告と一致した。**範囲外（tech-debt の返済記録・`architecture.md` の参照更新）は自分でやらず統括へ申し送った**のも規律どおり。tech-debt #7 は返済済。
+
+## 完了（2026-09-21）
+
+**受け入れ条件 A（macOS で動く）と B（Codex で動く）をすべて満たした。** C（回帰を止める）は運用ルールなので、これ以降の作業で守り続ける（環境差の修正には必ず検査かテストを付ける / 各環境で確認した事実は `harness/adapters/<agent>/README.md` に確認日つきで書く）。
+
+| | 結果 |
+|---|---|
+| A: macOS の素の bash 3.2 | `init` / `doctor` / `check` / `gc` が通る（版 0.6.0。決定 0006） |
+| B: Codex | 役割スキルが呼べ、標準 deny が Claude と同じ 5 つで止まり、`task-orchestrate` を 1 周完走（版 0.7.0。決定 0009） |
+| 検査 | 13 件 → **20 件**（pass=20 fail=0、55 秒） |
+| 副産物 | `check` が 95s → 50s（決定 0008。別 spec `check-speed`） |
+
+返済した負債: #3（ほぼ。残るは古い macOS 15 未満）/ #4 / #7 / #8 / #11。新たに起票: #9 #10 #12。
+
+**この題材でいちばん効いた教訓は「推定で決めると外す」。** 3 回覆った（`doctor` の呼び出し回数 13 → 45、Codex がルートの `AGENTS.md` を「読めていない」→ 読めていた、hook は「使えない」→ 使える）。いずれもそのまま docs に書いていたら誤った事実が正本になっていた。手順は `docs/learnings.md`（2026-09-21 の 5 件）に残した。

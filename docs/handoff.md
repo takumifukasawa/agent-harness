@@ -1,6 +1,6 @@
 # handoff — 現在地
 
-最終更新: 2026-09-21（**cross-env フェーズ 2 の受け入れ条件 B1〜B4 がすべて揃った。版 0.7.0**。フェーズ 1 は main へ載せ push 済。check-speed は決定 0008 で完了）
+最終更新: 2026-09-21（**cross-env を完了としてクローズ**（`plans/completed/`）。続けて tech-debt #12 を返済し**版 0.7.1**。`active/` の計画は空で、次の題材は未定）
 
 ## いま何をしているか（1〜3 行）
 
@@ -25,24 +25,28 @@ B2 の中身は (1) `doctor` の B5（改行）を一括判定に（337→253ms�
 | 項目 | 状態 | 出典 |
 |---|---|---|
 | ブランチ | **`main`**（`cross-env` の 35 コミットを FF マージして `origin/main` へ push 済。`c1de264`） | `git branch -vv` |
-| VERSION | **0.7.0**（Codex の標準 deny hook。2026-09-21）。`CHANGELOG.md` の `[0.7.0]` と `AGENTS.md` のマーカー `v=0.7.0`、`manifest.json` の `harness_version` が一致 | `VERSION`, `CHANGELOG.md` |
-| 検査 | **20 件 pass / 0 fail**（**55 秒**。0.7.0 で `codex adapter` と `source scenarios` が増えた）。T01 で禁止検査 2 件、T02 で `githooks are executable` / `gc scenarios` / `stdin (curl \| bash) install` の 3 件が増えた | `/bin/bash .harness/bin/harness check` |
+| VERSION | **0.7.1**（update が source 側の CLI で走る。2026-09-21）。`CHANGELOG.md` の `[0.7.1]` と `AGENTS.md` のマーカー `v=0.7.1`、`manifest.json` の `harness_version` が一致 | `VERSION`, `CHANGELOG.md` |
+| 検査 | **20 件 pass / 0 fail**（**59 秒**。0.7.0 で `codex adapter`、0.7.1 で `tests/update.sh` の U14 が増えた）。T01 で禁止検査 2 件、T02 で `githooks are executable` / `gc scenarios` / `stdin (curl \| bash) install` の 3 件が増えた | `/bin/bash .harness/bin/harness check` |
 | `harness doctor` | **OK=16 WARN=1 FAIL=0**。**WARN 1 は Codex の標準 deny hook が未信頼**（`.codex/hooks.json` は配られたが、この PC で `/hooks` による信頼をしていない。意図した挙動で、信頼すれば消える）。**T04 で B6 の重大度が WARN → FAIL になった**（フックが実行不可＝門番が不在。決定 0007）。このリポジトリは index が 100755 なので OK のまま | `/bin/bash .harness/bin/harness doctor` |
 | macOS の素の bash | **3.2.57 のまま動く**（決定 0006 で「3.2 を切らない」と決めた）。`brew install bash` は**もう要らない** | 決定 0006 |
 | 導入コピーの drift | なし（modified=0 missing=0）。**T02 以降 `update` は mode 差分も残さない**（実行ビットを index の正にしたため） | `harness status` |
 | 決定 | 0001〜**0007**（0007: フックが実行不可なら doctor は FAIL） | `docs/decisions/` |
-| フェーズ | **`done`**（5/5 タスク、`final_review.status: done`）。ユーザーの承認待ち | `.harness/state/progress.json` |
+| 題材 | **cross-env は完了**（`docs/plans/completed/cross-env.md`）。`docs/plans/active/` は空。`.harness/state/` も畳んだ | `docs/plans/` |
 | 最終レビュー | 観点 4 つ（仕様突合 / **機能の完結性** / **クロス環境** / **検査の実効性**。後ろ 2 つは既定の「並行性 / 認可」から差し替え）を下位モデルで並列。**指摘 4 件、すべて単独報告かつ修正コスト低なので反証は回していない**（条件は両方満たす場合のみ） | `.harness/state/reports/review-*.md` |
-| 技術負債 | **#4 #8 #11 は返済済**、**#6 は打ち切り**（決定 0008）、**#3 はほぼ返済済**（残るのは古い macOS 15 未満）。未着手は #1 #2 #7 #9 #10 | `docs/tech-debt.md` |
+| 技術負債 | **#4 #7 #8 #11 #12 は返済済**、**#6 は打ち切り**（決定 0008）、**#3 はほぼ返済済**（残るのは古い macOS 15 未満）。未着手は **#1 #2 #9 #10** | `docs/tech-debt.md` |
 
 ## NEXT（依存順。順序制約があれば明記）
 
 **フェーズ 1 と check-speed は閉じた。次は cross-env のフェーズ 2（Codex）。**
 
-1. **人間の作業が 1 つある（任意）: このリポジトリで Codex の hook を信頼する。** `doctor` の WARN 1 はこれ。ディレクトリで `codex` を起動し、プロジェクトの信頼を求められたら信頼したうえで `/hooks` で hook を信頼すると消える（各 PC で 1 回。git には乗らない）。**Codex をこの PC で使わないなら放置してよい。**
-2. **cross-env フェーズ 2 は受け入れ条件 B1〜B4 をすべて満たした。** 残るのは C2（各環境の事実を確認日つきで書く）の継続運用だけなので、**題材としてクローズしてよい**（`docs/plans/active/cross-env.md` を `completed/` へ移し、`.harness/state/` を畳む）。その判断はユーザーに委ねる。
-3. **次の題材を決める。** 未着手の負債は #1（settings.json の node 依存）#2（gc のヒューリスティック）#9（init の perms）#10（常駐サーバの trap 統合）#12（CLI 変更後の update が 1 回で効かない）。**#12 は今回踏んだばかり**で、`bin/harness` を触るたびに再発する。
-3. （任意）**未着手の負債**: #1（settings.json の node 依存）#2（gc のヒューリスティック）#7（`tests/source.sh` への分離）#9（init の perms）#10（常駐サーバの trap 統合）。いずれも低優先で、関連箇所を触るときに一緒に返す。
+1. **次の題材が未定。** `docs/plans/active/` は空で、`.harness/state/` も無い。候補は残る未着手の負債:
+   - **#1**（`.claude/settings.json` の自動マージが node 前提。無い環境では断片を手で反映）— 配布の穴。jq 対応か bash だけの簡易マージ
+   - **#2**（`harness gc` の判定がヒューリスティック）— 誤検知が出たら精度を上げる、という保留のまま
+   - **#9**（`init` 直後の perms が docs=0600 / スクリプト=0711）— まだ実害を踏んでいない
+   - **#10**（ハッシュ常駐サーバが中断時に一時ディレクトリを残す）— `trap` の統合が要る
+   **どれも低優先。** 新しい題材（spec から書く）を立てるほうが自然なら、そちらを先に決める。
+2. **人間の作業が 1 つある（任意）: このリポジトリで Codex の hook を信頼する。** `doctor` の WARN 1 はこれ。ディレクトリで `codex` を起動し、プロジェクトの信頼を求められたら信頼したうえで `/hooks` で hook を信頼すると消える（各 PC で 1 回。git には乗らない）。**Codex をこの PC で使わないなら放置してよい。**
+3. （参考）**未着手の負債**: #1（settings.json の node 依存）#2（gc のヒューリスティック）#7（`tests/source.sh` への分離）#9（init の perms）#10（常駐サーバの trap 統合）。いずれも低優先で、関連箇所を触るときに一緒に返す。
 
 ## 別の PC で再開するとき
 

@@ -7,7 +7,7 @@
 ## 2026-09-21 `bin/harness` を変えた直後の `harness update` は 1 回では効かない [harness候補]
 - 症状: `plan()` に配布エントリを 2 行足して `bash bin/harness update`（正本から実行）を回したのに `new=0` で何も配られなかった。同じコマンドをもう一度回したら `new=2` で配られた。
 - 原因: `maybe_delegate` は「同梱コピーと内容が違えば同梱コピーへ委譲する」ので、**正本から起動しても実際に走るのは古い `.harness/bin/harness`**。その update が CLI 自身を新しい内容へ入れ替えるため、**新しい `plan()` が効くのは次回の update から**。
-- 対処 / 再発したら: `bin/harness` を変えたら **`bash bin/harness update` を 2 回回す**。`harness check` の "installed copies in sync" は 1 回目で緑になるので、それだけ見ていると「配られたつもり」で進んでしまう（`docs/tech-debt.md` #12）。
+- 対処 / 再発したら: **版 0.7.1 で直した**（source を解決した後、その `bin/harness` が実行中のものと違えばそちらで実行し直す。回帰は `tests/update.sh` の U14）。**ただし同梱コピーが 0.7.0 以前のプロジェクトでは、上げる最初の 1 回だけ 2 回回す必要がある**（1 回目で CLI 自身が入れ替わる）。`harness check` の "installed copies in sync" は 1 回目で緑になるので、それだけ見ていると「配られたつもり」で進んでしまう。
 
 ## 2026-09-21 エージェントに「読めていますか」と聞いても確認にならない（canary を仕込む） [harness候補]
 - 症状: Codex が `<subdir>/AGENTS.md` の連鎖をどこまで読むかを実機確認するため、`sub/` を cwd にして「ルートの AGENTS.md に書かれているコマンドは何ですか。無ければ『無い』」と聞いたら **2 回とも「無い」**と答えた。`--skip-git-repo-check` の有無も変えて再現したので「ルートは読まれない（公式 docs と食い違う）」と結論しかけた。実際は**読めていた**。
