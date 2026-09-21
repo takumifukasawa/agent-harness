@@ -21,8 +21,9 @@
 #
 # テスト容易性: 「このファイルシステムが case を区別するか」は実 FS の挙動そのものなので、
 # テストから切り替えられない。そこで判定を 2 段に分ける。
-#   1. fs_case_insensitive() … 実 FS を一時ディレクトリで確かめる（呼び出し側が使う）。
-#      戻り値はホスト環境に依存するので、テストはこの関数の戻り値そのものは当てにしない。
+#   1. fs_case_insensitive() … 実 FS を、呼び出し側が渡したディレクトリ配下で確かめる。
+#      戻り値はホスト環境（とプローブ先のボリューム）に依存するので、テストはこの関数の
+#      戻り値そのものは当てにしない。
 #   2. seed_case_collision() … 衝突の有無を決める純粋ロジック。「case を区別しないか」は
 #      呼び出し側が 1. の結果を引数 ci で渡す。テストは ci を固定するので、実ホストの FS が
 #      どちらであっても「衝突あり / 衝突なし / case を区別する環境」の 3 系統を再現できる。
@@ -31,14 +32,31 @@
 #      ホストの実 FS が case を区別するかどうかに左右されない
 #      （実機確認 2026-09-21, macOS 15 / APFS 既定ボリューム: `FOO.txt` のみが存在する状態で
 #       `[ -e foo.txt ]` は真になるが、`find . -name foo.txt` は `FOO.txt` を拾わない）。
+#
+# 最終レビュー指摘（2026-09-21）の修正:
+#   X1. fs_case_insensitive() は元々 `mktemp -d`（OS 既定の一時ディレクトリ）でプローブして
+#       いたが、判定したいのは「seed を配る $ROOT のあるボリュームが case を区別するか」であり、
+#       OS 既定の一時ディレクトリが別ボリュームなら判定を取り違える（`TMPDIR` を設定しても
+#       macOS の `mktemp -d` は `_CS_DARWIN_USER_TEMP_DIR` を優先するため回避できない。man mktemp）。
+#       偽陽性（case を区別する $ROOT なのに誤検出）は git mv を促すのでデータ損失リスクになる。
+#       そこで呼び出し側が「プローブ先のディレクトリ（= $ROOT）」を引数で渡す形にした。
+#   C1. seed_case_collision() は、ディレクトリ名だけ case 違いでファイル名は完全一致する
+#       ネストケース（既存 docs/Plans/README.md、seed 配布先 docs/plans/README.md）を検出
+#       できなかった。dirname/basename で「最後の 1 段」だけを見ていたため、ファイル名が
+#       一致すると常に「衝突ではなく配布済み」と判定してしまっていた。パスを 1 段ずつ root から
+#       歩き、途中の段で完全一致が無ければそこを衝突として報告する形に直した。
+#   X2. `find ... -iname | head -1` は、case 違いの候補が 3 つ以上あるとき、どれを報告するかが
+#       find 実装（BSD/GNU/MSYS）依存で非決定的だった。`LC_ALL=C sort` してから先頭を取る。
 
 # このファイルシステムは case を区別しないか。
-# 一時ディレクトリに小文字のファイルを作り、大文字名で -e を見る。判定できなければ
-# 「区別する」側へ倒す（誤検出を避ける。区別する環境では何も報告しない）。
+# root（プローブ先。呼び出し側は $ROOT を渡す）配下に隠しディレクトリを作り、小文字のファイルを
+# 置いて大文字名で -e を見る。判定できなければ「区別する」側へ倒す（誤検出を避ける。
+# 区別する環境・root が使えない環境では何も報告しない）。
 # 戻り値: 0 = 区別しない（衝突の可能性がある） / 1 = 区別する、または判定不能
-fs_case_insensitive() {
-  local d insensitive=1
-  d="$(mktemp -d 2>/dev/null)" || return 1
+fs_case_insensitive() { # root
+  local root="$1" d insensitive=1
+  [ -n "$root" ] && [ -d "$root" ] || return 1
+  d="$(mktemp -d "$root/.harness-case-probe.XXXXXX" 2>/dev/null)" || return 1
   : >"$d/harness-case-probe" 2>/dev/null || { rm -rf "$d" 2>/dev/null; return 1; }
   [ -e "$d/HARNESS-CASE-PROBE" ] && insensitive=0
   rm -rf "$d" 2>/dev/null
@@ -46,24 +64,53 @@ fs_case_insensitive() {
 }
 
 # root: プロジェクトルート（絶対パス）
-# dest_rel: seed の配布先（root からの相対パス。例: docs/handoff.md）
+# dest_rel: seed の配布先（root からの相対パス。例: docs/handoff.md、docs/plans/README.md）
 # ci: 呼び出し側が渡す「この環境は case を区別しないか」（1 = 区別しない / それ以外 = 区別する）
 #
-# dest_rel と大文字小文字だけが違う既存ファイルが同じディレクトリにあれば、その既存ファイルの
-# パス（root からの相対）を 1 行標準出力して 0 を返す。無い、または ci が 1 でなければ
-# 何も出力せず 1 を返す。dest_rel がそのままの大文字小文字で既に存在する場合も 1 を返す
-# （それは衝突ではなく、単に seed が既に配布済みというだけ）。
+# dest_rel を root から 1 段ずつ歩き、各段で完全一致するエントリがあればそこへ進む。完全一致が
+# 無い段で大文字小文字違いのエントリが見つかれば、そこから先（既存側の実際の大文字小文字）を
+# たどれるところまでたどった実パス（root からの相対）を 1 行標準出力して 0 を返す
+# （ディレクトリ名だけの食い違いでも、ファイル名だけの食い違いでも同じ経路で検出する）。
+# 途中で何も見つからない、または dest_rel のすべての段が完全一致で存在する（= seed が
+# 既に配布済みというだけ）場合は、何も出力せず 1 を返す。
 seed_case_collision() {
-  local root="$1" dest_rel="$2" ci="$3" dir base exact found
+  local root="$1" dest_rel="$2" ci="$3"
   [ "$ci" = "1" ] || return 1
-  dir="$(dirname "$dest_rel")"; base="$(basename "$dest_rel")"
-  [ -d "$root/$dir" ] || return 1
-  exact="$(find "$root/$dir" -maxdepth 1 -name "$base" 2>/dev/null | head -1)"
-  [ -n "$exact" ] && return 1
-  found="$(find "$root/$dir" -maxdepth 1 -iname "$base" 2>/dev/null | head -1)"
-  [ -n "$found" ] || return 1
-  printf '%s\n' "${found#"$root"/}"
-  return 0
+  [ -d "$root" ] || return 1
+
+  local segs seg cur exact ci_match mismatch=0 i n
+  IFS='/' read -r -a segs <<<"$dest_rel"
+  n="${#segs[@]}"
+  cur="$root"
+  for ((i = 0; i < n; i++)); do
+    seg="${segs[$i]}"
+    [ -n "$seg" ] || continue
+    [ -d "$cur" ] || return 1
+    exact="$(find "$cur" -maxdepth 1 -name "$seg" 2>/dev/null | head -1)"
+    if [ -n "$exact" ]; then
+      cur="$exact"
+      continue
+    fi
+    # 完全一致が無い。大文字小文字違いのエントリがあれば、そこが衝突。3 つ以上あっても
+    # 報告する対象を find の実装に依存させない（ソートして先頭を取る。X2）。
+    ci_match="$(find "$cur" -maxdepth 1 -iname "$seg" 2>/dev/null | LC_ALL=C sort | head -1)"
+    if [ -z "$ci_match" ]; then
+      # ここより深いパスは何も無い。それまでに mismatch を見つけていればそこまでを報告する。
+      if [ "$mismatch" = 1 ]; then
+        printf '%s\n' "${cur#"$root"/}"
+        return 0
+      fi
+      return 1
+    fi
+    mismatch=1
+    cur="$ci_match"
+  done
+
+  if [ "$mismatch" = 1 ]; then
+    printf '%s\n' "${cur#"$root"/}"
+    return 0
+  fi
+  return 1
 }
 
 # 衝突の説明文・直し方（bin/harness と doctor.sh で文言を揃えるための共通ヘルパー）
