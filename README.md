@@ -32,7 +32,7 @@ curl -fsSL https://raw.githubusercontent.com/takumifukasawa/agent-harness/main/b
 3. **`bash .harness/bin/harness doctor`** で FAIL 0 を確認する。
 4. Codex を使うなら、`codex` を起動して **`/hooks` で標準 deny の hook を信頼する**（0.7.0 以降。各 PC で 1 回。`doctor` が状態を報告する）。
 
-**既存の `docs/` があるプロジェクトに入れるとき**は、先に `ls docs/` を見て、雛形の名前（`README.md` / `handoff.md` / `architecture.md` / `learnings.md` / `tech-debt.md`）と**大文字違いで被るもの**がないか確認する。case を区別しないファイルシステム（macOS / Windows）では、既存の `HANDOFF.md` があると雛形の `handoff.md` は配られないのに manifest には載る（`docs/tech-debt.md` #13）。被っていたら `git mv` で雛形側の名前に寄せるのが手っ取り早い。
+**既存の `docs/` があるプロジェクトに入れるとき**は、先に `ls docs/` を見て、雛形の名前（`README.md` / `handoff.md` / `architecture.md` / `learnings.md` / `tech-debt.md`）と**大文字違いで被るもの**がないか確認する（入れる前に気づけるほうが早い）。case を区別しないファイルシステム（macOS / Windows）では、既存の `HANDOFF.md` があると雛形の `handoff.md` は配られないのに manifest には載る（`docs/tech-debt.md` #13）。**0.7.1 以降は自動でも検出される**: `init` / `update` はこの衝突を `CASE-CONFLICT` として報告し、`doctor` も B12 として同じ状態を報告する（自動でのリネームはしない）。被っていたら `git mv` で雛形側の名前に寄せるのが手っ取り早い。
 
 ### 以後（どの PC でも）
 
