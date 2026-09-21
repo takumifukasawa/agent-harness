@@ -1,6 +1,6 @@
 # handoff — 現在地
 
-最終更新: 2026-09-21（**題材 no-silent-failures が最終レビュー中**。T01〜T03 は全 done で #14 #15 を返済。検査は **22 件**。この日はほかに check-speed、cross-env、onboarding-polish の 3 題材を完了し、実プロジェクトへの初導入も済ませた）
+最終更新: 2026-09-22（**題材 no-silent-failures 完了**。T01〜T06、レビュー指摘 10 件も処理済み。#14 #15 を返済し #16 を起票。検査は **22 件**。2026-09-21 にはほかに check-speed / cross-env / onboarding-polish の 3 題材を完了し、実プロジェクトへの初導入も済ませた）
 
 ## いま何をしているか（1〜3 行）
 
@@ -31,17 +31,17 @@ B2 の中身は (1) `doctor` の B5（改行）を一括判定に（337→253ms�
 | macOS の素の bash | **3.2.57 のまま動く**（決定 0006 で「3.2 を切らない」と決めた）。`brew install bash` は**もう要らない** | 決定 0006 |
 | 導入コピーの drift | なし（modified=0 missing=0）。**T02 以降 `update` は mode 差分も残さない**（実行ビットを index の正にしたため） | `harness status` |
 | 決定 | 0001〜**0007**（0007: フックが実行不可なら doctor は FAIL） | `docs/decisions/` |
-| 題材 | **cross-env / check-speed / onboarding-polish は完了**（`docs/plans/completed/`）。**`no-silent-failures` が最終レビュー中**（`docs/plans/active/`） | `docs/plans/` |
+| 題材 | **4 題材すべて完了**（cross-env / check-speed / onboarding-polish / no-silent-failures。`docs/plans/completed/`）。`docs/plans/active/` は空 | `docs/plans/` |
 | 最終レビュー | 観点 4 つ（仕様突合 / **機能の完結性** / **クロス環境** / **検査の実効性**。後ろ 2 つは既定の「並行性 / 認可」から差し替え）を下位モデルで並列。**指摘 4 件、すべて単独報告かつ修正コスト低なので反証は回していない**（条件は両方満たす場合のみ） | `.harness/state/reports/review-*.md` |
-| 技術負債 | **#4 #7 #8 #11 #12 #13 #14 #15 は返済済**、**#6 は打ち切り**（決定 0008）、**#3 はほぼ返済済**。未着手は **#1 #2 #9 #10** | `docs/tech-debt.md` |
+| 技術負債 | **#4 #7 #8 #11 #12 #13 #14 #15 は返済済**、**#6 は打ち切り**（決定 0008）、**#3 はほぼ返済済**。未着手は **#1 #2 #9 #10 #16** | `docs/tech-debt.md` |
 
 ## NEXT（依存順。順序制約があれば明記）
 
 **フェーズ 1 と check-speed は閉じた。次は cross-env のフェーズ 2（Codex）。**
 
-1. **進行中: `no-silent-failures` の最終レビューの指摘を処理する**（`docs/plans/active/no-silent-failures.md`）。T01〜T03 は完了し **#14 #15 は返済済み**。レビューで 9 件（うち高 4 件）出ており、**統括の判定漏れ 1 件**（A3「残骸に気づける」が未実装のまま done にした）を含む。
+1. **次の題材は未定。** `no-silent-failures` は完了（`docs/plans/completed/`）。**統括を機械で縛る仕組みが 1 つ入った**（`gc` が「計画のタスク表と状態欄の矛盾」を見る）。この題材で残った未着手は **#16**（`.claude/settings.json` の case 衝突。実害は限定的）と、既存の #1 #2 #9 #10。
 2. ~~**次の題材は `#15` が有力。**~~ **返済済み（2026-09-21、T01）。** `bin/harness` の `hash_server_start`（`init` / `update` / `status` / `diff` が呼ぶ）が、`exec 3<>... 2>/dev/null` という**コマンドを伴わない `exec`** のせいで**その後のシェル全体の stderr を恒久的に `/dev/null` へ**流している。結果、`mkdir -p` の失敗などが**無言終了**になり、`manifest.json` が作られないので `status` / `doctor` は「未導入」としか言わない（中途半端に配られた約 28 ファイルの残骸に誰も気づけない）。**2026-09-21 の最終レビューで見つかり、反証で「起点 `24c3eac` の時点から在る既存バグ」と切り分けられた**ので、今回の題材では直さず起票した。**エラーが見えないのは診断の土台を壊すので、優先度は高い。**
-3. ~~**#14**（case 衝突の検出は `seed` のみ）~~ **返済済み（2026-09-21、T02）。** ただし `generated` と `.claude/settings.json` は**まだ対象外**で、レビューで指摘が出ている。
+3. ~~**#14**（case 衝突の検出は `seed` のみ）~~ **返済済み。** `managed`（2026-09-21、T02）に続き **`generated` も対象になった**（2026-09-22、T05）。**`.claude/settings.json` だけは引き続き対象外**で、[#16](tech-debt.md) として起票してある（`merge_claude_settings` は manifest の管理下に無く B12 が原理的に検出できない。ただし**実害は報告と逆向き**で、既存挙動であることが反証で分かっている）。
 4. **実プロジェクトへの初導入をやった（2026-09-21）。** `/Users/fukasawa-takumi/Documents/developer/aesthetic-comparison`（Next.js、既存の `AGENTS.md` と手書き docs 11 ファイルあり）に `harness init` を実行。**既存資産は無傷**（変更は `.gitignore` / `AGENTS.md` / `CLAUDE.md` の 3 ファイルに 65 行追加のみ、既存 docs は 0 件変更）で、`AGENTS.md` は Next.js が自動で足すブロック（`<!-- BEGIN:nextjs-agent-rules -->`）とも共存した。`doctor` FAIL 0 / `gc` 問題なし / `check` pass=2 まで持っていったが、**コミットはしていない**（ユーザーの判断待ち）。
    - **そこで #13 を発見**（seed の case 衝突）。その場は `git mv docs/HANDOFF.md docs/handoff.md` で解消した
    - **残りの一手**: 向こうの `.harness/checks.sh` はまだ seed の 2 件だけ。Next.js プロジェクトなので `npm run lint` / `tsc --noEmit` / `next build` を登録すると「完了の客観条件」が機能し始める
