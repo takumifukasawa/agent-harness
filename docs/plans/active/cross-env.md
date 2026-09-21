@@ -33,7 +33,12 @@ Windows × Codex は今回の対象外。
 | T02 | 踏んだ環境差を直す + A1 / A3 を確定 | **done** | 未到達だった `date -d` / `sed -i` は**踏んだぶんだけ**直す。**`.githooks/pre-commit` の実行ビット（git index を 100755 に）と、それを見逃す doctor B6 の偽 OK（`-x` を見ていない）もここ。** 公開 URL からの `init`（tech-debt #4）もここ |
 | T04 | doctor B6 をフック実行不可で FAIL に上げる（決定 0007） | **done** | T02 は WARN 据え置きにしたが、`check` が緑のままでは今回と同じ見落とし方が残るため FAIL に上げる。Windows（`core.filemode=false`）で偽 FAIL を出さない判定は T02 の形を保つ |
 | T03 | 導入コピー同期・CHANGELOG・版上げ | **done** | `harness status` drift 0 ／「プロジェクト側で必要な作業」を CHANGELOG に |
-| — | フェーズ 2（B: Codex）のタスク | 未分解 | A 完了時に `stages.json` へ追加 |
+| T05 | 最終レビュー指摘 3 件の修正 | **done** | doctor B6 の文言 2 分岐化 / C3 の cp フォールバック / bash 3.2 lint に `harness/checks.seed.sh` を追加 |
+| — | **フェーズ 1 完了・main へ載せた（`c1de264`）。tech-debt #4 も実機で返済** | **done** | 公開 URL からの init で new=25 seeded=15 / doctor FAIL 0 |
+| T06 | Codex 実機の下ごしらえ（B1） | **ログイン待ち** | `codex login` は対話（ブラウザ）なので**人間が 1 回実行する**。そのうえで `harness init --agents codex` したプロジェクトで `.agents/skills/` が読まれ `$role-implementer` が呼べるかを実機で確認する。**ハーネス側の生成物は 2026-09-21 に確認済み**（7 スキル + `role-implementer` / `role-reviewer` が generated で入り、`.claude/` は作られない） |
+| T07 | `harness/adapters/codex/README.md` の表を実機で確認して更新（B2 / C2） | T06 待ち | 各行に確認日と結果を入れる。**すでに 1 行は実機で覆っている**（下の決定ログ 2026-09-21）: 「hook 相当は任意、仕様変動が大きいので v0 では使わない」→ **Codex 0.154.0 には hooks が実在する** |
+| T08 | `task-orchestrate` の 1 タスクを Codex で最後まで回す（B3） | T06・T07 待ち | 実装役の起動 → 戻り値 → 統括の 3 点判定まで。題材は小さい実タスク（未着手の負債 #2 や #7 が候補） |
+| T09 | 標準 deny を Codex でどう効かせるか決めて `docs/decisions/` に残す（B4） | T07 待ち | 候補は (a) `config.toml` の `sandbox_mode` / approval (b) **`PermissionRequest` / `PreToolUse` hook**（実機で形式を確認済み）(c) 現状どおり `.githooks/` だけで塞ぐ。**「どれが効くか」は実機で確かめてから決める**（この題材で 4 回続けて、推定のまま決めると外している） |
 
 ## 決定ログ（日付・決めたこと・理由・落選案）
 
@@ -42,6 +47,9 @@ Windows × Codex は今回の対象外。
 - **2026-09-20 / フックが実行不可なら `doctor` は FAIL（WARN ではない）。** 「門番が不在」は劣化ではなく失敗。WARN だと `check` が緑のままで、今回の見落としを制度化することになる。既存プロジェクトが一度赤くなるのは意図した動作（`CHANGELOG` に修復手順）。落選: WARN 据え置き（見落とし経路が残る）、WARN + seed に独立検査を足す（重大度の問題を検査の数で埋める形。init 直後は素通りし、直す場所が 2 つに増える）。詳細は [決定 0007](../../decisions/0007-hook-not-executable-is-fail.md)
 - **2026-09-20 / A の完了判定は `check` 全件 pass まで。** すべて機械判定。人の目測を入れない。実運用の周回検証は今回の作業そのものが兼ねる
 - **2026-09-20 / T01 と T02 を 1 タスクにまとめた（当初案では別タスク）。** この題材は「`check` を赤から緑にする」作業なので、分けると**中間タスクで `check` が赤いまま**になり、`task-orchestrate` §2.3 の 3 点判定（終了コード 1 = fail → 再試行）が成功を fail と誤判定する。落選: 「判定だけ差し替える（fail 件数が減ればよしとする）」（検査が赤いのに done を認める前例になる）、「落ちる検査を一時的に skip する」（AGENTS.md の「検査を通すためにテストや検査そのものを弱めない」に正面から反する）
+
+- **2026-09-21 / `check` の最適化は 50 秒で打ち切る。** B2 で取った実測から、残る候補の効果は 2〜4 秒で、`apply_plan` の復元判断やシナリオの独立性という壊してはいけないものを触る取引になる。落選: `apply_plan` の no-op スキップ（効果 2.4s に対し `init`/`update` の中核を触る）、使い捨てプロジェクトの数を減らす（spec の B2「検査を弱めない」に接触）、C の並列化（50s のうち 46s が 2 件なので 18 件の並列化では 4 秒ぶんしか縮まない。C1 の発動条件も満たさない）。詳細は [決定 0008](../../decisions/0008-stop-optimizing-check-at-50s.md)
+- **2026-09-21 / フェーズ 2 は「実機で確かめてから書く」を徹底する。** 初回の実機確認だけで、README の表の 1 行（「hook 相当は任意。仕様変動が大きいため v0 では使わない」）が**事実と違う**ことが分かった。Codex 0.154.0 には `~/.codex/hooks.json` があり、`SessionStart` / `UserPromptSubmit` / `PreToolUse` / `PermissionRequest` / `PostToolUse` / `SubagentStart` / `SubagentStop` / `Stop` を **Claude Code とよく似た形式**（`{"hooks": {"<Event>": [{"hooks": [{"type": "command", "command": "...", "timeout": 10}]}]}}`）で受け、`config.toml` の `[hooks.state]` に信頼ハッシュを持つ。**B4（標準 deny）の実装先としてまず疑うのはここ**で、`config.toml` の sandbox / approval だけではない。落選: 公式 docs の記述だけで README を確定する（2026-09-17 の記述がすでに 1 行外れていた）
 
 ## 進捗ログ（セッションごとに 1〜3 行）
 
@@ -57,3 +65,5 @@ Windows × Codex は今回の対象外。
 - **2026-09-20（T04 完了）**: [決定 0007](../../decisions/0007-hook-not-executable-is-fail.md) に従い、`doctor` B6 の重大度を WARN → FAIL に。判定ロジック（index の mode は常に／作業ツリーの `-x` は `core.filemode != false` のときだけ）と直し方の文言は T02 のまま無変更で、**変えたのは重大度だけ**。`tests/doctor.sh` は 41 件 pass で、(a) 実行ビット無しで FAIL (b) index 100644 で FAIL (c) `core.filemode=false` では警告を出さない、の 3 シナリオが揃った。`check` は pass=18 fail=0、`doctor` は OK=16 WARN=0 FAIL=0 のまま。コミット 4 件（`3d4b826`..`94a8a58`）。**`core.hooksPath` 未設定 / フックが存在しない分岐は WARN のまま**（決定 0007 のスコープ外）。
 - **2026-09-21（T03 完了 / フェーズ 1 完了）**: `VERSION` 0.5.0 → **0.6.0**（minor。managed の移動もマーカー形式の変更も無い）。`CHANGELOG` の `[Unreleased]` を `[0.6.0] - 2026-09-21` に切り替え、`harness update` で導入コピーを追従（`AGENTS.md` の `v=0.6.0`、`manifest.json` の `harness_version`。他 39 ファイルは drift 無し）。`check` pass=18 fail=0 / `doctor` OK=16 WARN=0 FAIL=0 / `status` drift 0。**これでフェーズ 1 の受け入れ条件 A1・A2・A4・A5 が揃った**（A3 は機構のみ確認、確定は main へ載せた後）。統括は `phase: review` に移し、観点を 4 つ（仕様突合 / 機能の完結性 / クロス環境 / 検査の実効性）に調整して最終レビューへ。
 - **2026-09-21（最終レビュー + T05 完了 / フェーズ 1 クローズ）**: 観点 4 つ（仕様突合 / 機能の完結性 / クロス環境 / 検査の実効性。後ろ 2 つは既定の「並行性 / 認可」から差し替え）を下位モデルで並列に 1 回。**指摘 4 件、重複なし、すべて単独報告かつ修正コスト低**のため反証は回さず（条件は両方を満たす場合のみ）。1 件（spec A2 の件数ずれ）は統括の書き戻し漏れとして直接修正、残り 3 件を **T05** で潰した: (a) `doctor` B6 が「hooksPath は正しいが pre-commit が無い」状態で矛盾した文言と no-op の直し方を出していた → 2 分岐に分けて `harness update` を案内 (b) C3 のスタブ化が `ln -s` の失敗を握り潰していた → `cp` フォールバック。ただし実 `$PATH` 全体を対象にすると**タイムアウトと setuid の権限エラー**を踏んだので、ロジックを `build_exe_stub()` に切り出し「1 件も作れなかったときだけ失敗」に調整（`docs/learnings.md`） (c) bash 3.2 lint が **`harness/checks.seed.sh` を走査していなかった** → 追加し、`declare -A` を仕込んで実際に検出されることを確認。`check` pass=18 fail=0 / `doctor` OK=16 WARN=0 FAIL=0。コミット 3 件（`5126e91`..`06d626b`）。**フェーズ 1 はここでクローズ。**
+
+- **2026-09-21（check-speed B2 / フェーズ 1 を main へ / フェーズ 2 の下ごしらえ）**: `check-speed` の B を 2 件目まで実施して**フル `check` 95s → 50s（−47%）**にし、[決定 0008](../../decisions/0008-stop-optimizing-check-at-50s.md) で打ち切りを決めて題材を閉じた（`04c1353`）。**前提の訂正**: B1b の「`doctor` 13 回 / `init` 15 回」は静的 grep 由来で外れ（実測 45 回 / 5 回。ヘルパー経由の呼び出しが grep に出ない）。cross-env フェーズ 1 の 35 コミットを **main へ FF マージして push**（`305d57b` → `c1de264`）、公開 URL からの `init` を実機で通して **tech-debt #4 を返済**（new=25 seeded=15 / `doctor` OK=15 WARN=1 FAIL=0。WARN は `source.local` 不在＝正常）。フェーズ 2 は **Codex が未ログイン**（`codex doctor` の auth が ✗）で止まっているので、T06〜T09 に分解して人間のログイン待ちにした。ログイン不要な範囲（`init --agents codex` の生成物、hooks の実在）は確認済み。

@@ -39,9 +39,10 @@ B2 の中身は (1) `doctor` の B5（改行）を一括判定に（337→253ms�
 
 **フェーズ 1 と check-speed は閉じた。次は cross-env のフェーズ 2（Codex）。**
 
-1. **フェーズ 2（Codex）に着手する**。タスクは `docs/spec/cross-env-support.md` の B1〜B4。**Codex CLI 0.154.0 がこの機に入っている**（`/opt/homebrew/bin/codex`）ので環境待ちにはならない。**`harness/adapters/codex/README.md` の記述は公式 docs 由来（2026-09-17 確認）で実機確認はこれから**。
-   フェーズ 1 とは spec の節も差分範囲も分かれるので、**`.harness/state/` を作り直して新しい反復として起動する**（今の state はフェーズ 1 の記録として畳む。`phase: done` のまま残っている）。規模的に `task-orchestrate` の対象。
-2. （任意）**未着手の負債**: #1（settings.json の node 依存）#2（gc のヒューリスティック）#7（`tests/source.sh` への分離）#9（init の perms）#10（常駐サーバの trap 統合）。いずれも低優先で、関連箇所を触るときに一緒に返す。
+1. **人間の作業が 1 つある: `! codex login`。** Codex CLI 0.154.0 は入っているが**未ログイン**（`codex doctor` → `✗ auth: no Codex credentials were found`）。実機確認（spec の B1〜B3）はこれが済むまで進まない。ログインは対話（ブラウザ）なので、このセッションからは実行できない。
+2. **フェーズ 2（Codex）**。タスクは `docs/plans/active/cross-env.md` の **T06〜T09** に分解済み。着手時に **`.harness/state/` を作り直して新しい反復として起動する**（今の state はフェーズ 1 の記録。`phase: done` のまま残っている）。規模的に `task-orchestrate` の対象。
+   **ログイン不要な範囲は 2026-09-21 に確認済み**: `harness init --agents codex` の生成物は正しい（`.agents/skills/` に 7 スキル、`role-implementer` / `role-reviewer` が generated、`.claude/` は作られない）。**`harness/adapters/codex/README.md` の表はすでに 1 行外れている**（「hook 相当は任意。v0 では使わない」→ Codex 0.154.0 には `~/.codex/hooks.json` が実在し、Claude Code とよく似た形式で 8 種のイベントを受ける）。**B4（標準 deny）の実装先としてまず疑うのはここ。**
+3. （任意）**未着手の負債**: #1（settings.json の node 依存）#2（gc のヒューリスティック）#7（`tests/source.sh` への分離）#9（init の perms）#10（常駐サーバの trap 統合）。いずれも低優先で、関連箇所を触るときに一緒に返す。
 
 ## 別の PC で再開するとき
 
