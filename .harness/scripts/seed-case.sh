@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# harness/scripts/seed-case.sh — 判定: seed の配布先と大文字小文字違いの既存ファイルの衝突（tech-debt #13）
+# harness/scripts/seed-case.sh — 判定: 配布先と大文字小文字違いの既存ファイルの衝突
+# （seed は tech-debt #13、managed は tech-debt #14）
 #
 # source して使う（実行はしない。関数を定義するだけで副作用は無い）。
 #   . harness/scripts/seed-case.sh          # 正本（bin/harness の apply_plan から、$PAYLOAD 経由で読む）
@@ -13,9 +14,15 @@
 # 配り、HANDOFF.md と handoff.md が併存する（docs/tech-debt.md #13。2026-09-21、実プロジェクト
 # aesthetic-comparison への導入で発見。その場は git mv で寄せて解消した）。
 #
+# 判定そのものは ownership に依存しない（「配布先のパスと case 違いの既存ファイルがあるか」を
+# 見ているだけ）。managed（.githooks/pre-commit 等）も同じ判定で衝突しうる: 既存に case 違いの
+# 無関係なファイルがあると、apply_plan は seed 分岐の CASE-CONFLICT ではなく汎用の CONFLICT
+# として .harness/conflicts/ に逃がすだけで、harness doctor は「OK」を返し続ける
+# （docs/tech-debt.md #14。onboarding-polish 最終レビューの反証役が実機確認）。
+#
 # bin/harness（apply_plan。init / update の出力）と harness/scripts/doctor.sh の両方がこの判定を
 # 使う。どちらも元々は独立した bash スクリプトで共通処理を source する形は無かったが、この判定は
-# テストから単体で呼べる必要があり（下記）、2 か所に複製すると実装がずれたときに気付けない。
+# テストから単体で呼べる必要があり（下記）、複数箇所に複製すると実装がずれたときに気付けない。
 # plan() は harness/scripts/*.sh をそのまま .harness/scripts/*.sh として配るので、この選択で
 # 導入先にも自動的に同梱される（plan() 自体の変更は不要）。
 #
@@ -113,11 +120,24 @@ seed_case_collision() {
   return 1
 }
 
-# 衝突の説明文・直し方（bin/harness と doctor.sh で文言を揃えるための共通ヘルパー）
-seed_case_collision_reason() { # dest_rel existing_rel
-  printf 'この環境は大文字小文字を区別しないため、seed の配布先 %s は既存の %s と同じファイル扱いになっている。雛形は配っていないが manifest には %s として記録される。case を区別する環境（Linux 等）に持っていくと、%s と %s が別ファイルとして併存する（tech-debt #13）' \
-    "$1" "$2" "$1" "$2" "$1"
+# 衝突の説明文・直し方（bin/harness と doctor.sh で文言を揃えるための共通ヘルパー。
+# ownership（seed / managed）で説明文の中身だけを出し分ける。直し方は git mv で共通。
+# B4（tech-debt #14 受け入れ条件）: 利用者から見て「seed の検出」と「managed の検出」が
+# 2 つの別物に見えないよう、語彙（「case 違いで衝突している」「git mv ... で寄せる」）と
+# 直し方はどちらも同じ関数から出す）。
+case_collision_reason() { # dest_rel existing_rel kind(seed|managed。省略時 seed)
+  local dest="$1" existing="$2" kind="${3:-seed}"
+  case "$kind" in
+    managed)
+      printf 'この環境は大文字小文字を区別しないため、managed の配布先 %s は既存の %s と同じファイル扱いになっている。harness init / update はそれを一般の CONFLICT として .harness/conflicts/ へ退避するだけで、実際に使われているのは既存の %s の内容のまま。case を区別する環境（Linux 等）に持っていくと、%s と %s が別ファイルとして併存する（tech-debt #14）' \
+        "$dest" "$existing" "$existing" "$existing" "$dest"
+      ;;
+    *)
+      printf 'この環境は大文字小文字を区別しないため、seed の配布先 %s は既存の %s と同じファイル扱いになっている。雛形は配っていないが manifest には %s として記録される。case を区別する環境（Linux 等）に持っていくと、%s と %s が別ファイルとして併存する（tech-debt #13）' \
+        "$dest" "$existing" "$dest" "$dest" "$existing"
+      ;;
+  esac
 }
-seed_case_collision_fix() { # dest_rel existing_rel
+case_collision_fix() { # dest_rel existing_rel
   printf 'git mv %s %s で寄せる（内容を確認してから。自動では変更しない）' "$2" "$1"
 }

@@ -549,17 +549,32 @@ else
     ".gitignore に「${gi_missing}」を追記する"
 fi
 
-# ---------------------------------------------------------------- B12. seed の case 衝突（tech-debt #13）
-# case を区別しないファイルシステム（macOS / Windows）では、seed の配布先と大文字小文字違いの
-# 既存ファイルが同じもの扱いになる。apply_plan はそれを「既にある」として雛形を配らないが、
-# manifest には配布先の名前で記録される。case を区別する環境（Linux 等）に持っていくと、
-# その名前のファイルが本当に無いと判定されて update が新たに配り、大文字小文字違いの 2 つが
-# 併存する（2026-09-21、実プロジェクト aesthetic-comparison への導入で発見）。
+# ---------------------------------------------------------------- B12. 配布先の case 衝突（tech-debt #13 / #14）
+# case を区別しないファイルシステム（macOS / Windows）では、harness の配布先パスと大文字小文字
+# 違いの既存ファイルが同じもの扱いになる。seed は apply_plan がそれを「既にある」として雛形を
+# 配らないが manifest には配布先の名前で記録される（tech-debt #13。2026-09-21、実プロジェクト
+# aesthetic-comparison への導入で発見）。managed（.githooks/pre-commit を含む）も同じ理由で
+# 衝突しうるが、apply_plan はそれを一般の CONFLICT として .harness/conflicts/ へ逃がすだけで、
+# 実際に使われているのは既存の大文字小文字違いファイルの内容のまま（tech-debt #14。onboarding-polish
+# 最終レビューの反証役が実機確認: .githooks/Pre-commit を先に置いて init すると、seed 分岐の
+# CASE-CONFLICT ではなく汎用の CONFLICT に逃げるだけで、doctor は git hooks の実行ビット等しか
+# 見ないため「OK」を恒久的に返し続けた）。どちらも case を区別する環境（Linux 等）に持っていくと
+# 2 つのファイルが併存する。
 #
 # 判定ロジックは harness/scripts/seed-case.sh（bin/harness と共有。導入コピーでは
-# .harness/scripts/seed-case.sh としてこのファイルの隣に配られる）。この節は、この環境が
-# case を区別しない場合だけ動く。区別する環境では別ファイルとして正しく共存するので、
-# 何も報告しない（B3。Codex アダプタの B9 が agents を見て出し分けるのと同じ作法）。
+# .harness/scripts/seed-case.sh としてこのファイルの隣に配られる）。判定そのものは ownership に
+# 依存しないので、seed / managed の両方をこの 1 か所の走査で見る（同じロジックを 2 か所に
+# 複製しない）。この節は、この環境が case を区別しない場合だけ動く。区別する環境では別ファイル
+# として正しく共存するので、何も報告しない（B3。Codex アダプタの B9 が agents を見て出し分けるのと
+# 同じ作法）。
+#
+# 重大度: seed は WARN（据え置き。二重になるのは docs の雛形だけ）。managed も基本は WARN だが、
+# .githooks/pre-commit だけは FAIL にする。理由: harness check が赤くなる経路は決定 0005 の
+# `doctor: FAIL 0` だけなので、WARN のままでは check が緑のまま＝この題材が塞ぎたい「偽の緑」が
+# そのまま残る。.githooks/pre-commit は決定 0007 が「フックが実行不可なら FAIL」とした対象そのもので、
+# case 衝突は「実行不可」よりさらに悪い「harness が中身を保証できない別ファイルが使われる」状態
+# なので、同じ結論（FAIL）が自然に伸びる。他の managed ファイルの case 衝突は安全装置の迂回ではなく
+# 機能欠落の一種なので、seed 側の B12（WARN）と同じ扱いに揃える。
 if [ "$manifest_ok" = 1 ]; then
   seed_case_lib="${DOCTOR_DIR:-}/seed-case.sh"
   if [ -n "$DOCTOR_DIR" ] && [ -f "$seed_case_lib" ]; then
@@ -569,16 +584,32 @@ if [ "$manifest_ok" = 1 ]; then
     fs_case_insensitive "$ROOT" && seed_ci=1
     if [ "$seed_ci" = 1 ]; then
       seed_conflicts=0
+      managed_conflicts=0
       while IFS=$'\t' read -r f_path f_src f_own f_sha f_srcsha; do
         [ -z "$f_path" ] && continue
-        [ "$f_own" = "seed" ] || continue
-        seed_existing="$(seed_case_collision "$ROOT" "$f_path" "$seed_ci" 2>/dev/null || true)"
-        [ -n "$seed_existing" ] || continue
-        seed_conflicts=$((seed_conflicts + 1))
-        report WARN "seed の配布先 $f_path が既存の $seed_existing と case 違いで衝突している（$(seed_case_collision_reason "$f_path" "$seed_existing")）" \
-          "$(seed_case_collision_fix "$f_path" "$seed_existing")"
+        case "$f_own" in
+          seed | managed) ;;
+          *) continue ;;
+        esac
+        case_existing="$(seed_case_collision "$ROOT" "$f_path" "$seed_ci" 2>/dev/null || true)"
+        [ -n "$case_existing" ] || continue
+        if [ "$f_own" = "seed" ]; then
+          seed_conflicts=$((seed_conflicts + 1))
+          report WARN "seed の配布先 $f_path が既存の $case_existing と case 違いで衝突している（$(case_collision_reason "$f_path" "$case_existing" seed)）" \
+            "$(case_collision_fix "$f_path" "$case_existing")"
+        else
+          managed_conflicts=$((managed_conflicts + 1))
+          if [ "$f_path" = ".githooks/pre-commit" ]; then
+            report FAIL "managed の配布先 $f_path が既存の $case_existing と case 違いで衝突している（$(case_collision_reason "$f_path" "$case_existing" managed)）" \
+              "$(case_collision_fix "$f_path" "$case_existing")"
+          else
+            report WARN "managed の配布先 $f_path が既存の $case_existing と case 違いで衝突している（$(case_collision_reason "$f_path" "$case_existing" managed)）" \
+              "$(case_collision_fix "$f_path" "$case_existing")"
+          fi
+        fi
       done <<<"$mf_entries"
       [ "$seed_conflicts" -eq 0 ] && report OK "seed の配布先に大文字小文字違いの衝突は無い（この環境は case を区別しない）"
+      [ "$managed_conflicts" -eq 0 ] && report OK "managed の配布先に大文字小文字違いの衝突は無い（この環境は case を区別しない）"
     fi
   fi
 fi

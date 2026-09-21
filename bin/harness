@@ -502,8 +502,8 @@ apply_plan() { # agents mode(init|update)
       fi
       if [ -n "$seed_existing" ]; then
         n_caseconf=$((n_caseconf + 1))
-        info "  CASE-CONFLICT $dest ($(seed_case_collision_reason "$dest" "$seed_existing"))"
-        info "    直し方: $(seed_case_collision_fix "$dest" "$seed_existing")"
+        info "  CASE-CONFLICT $dest ($(case_collision_reason "$dest" "$seed_existing" seed))"
+        info "    直し方: $(case_collision_fix "$dest" "$seed_existing")"
       fi
       ENTRIES+=("$dest"$'\t'"$src"$'\t'"$own"$'\t'"-"$'\t'"-")
     elif [ "$own" = "merge" ]; then
