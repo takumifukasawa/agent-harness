@@ -4,6 +4,21 @@
      形式は「症状 → 原因 → 対処（再発したらまず X を見る）」。日付は絶対日付。
      プロジェクト非依存のものには [harness候補] を付ける。 -->
 
+## 2026-09-21 「何回呼ばれるか」を grep で数えると外す（ヘルパー経由の呼び出しが見えない） [harness候補]
+- 症状: `tests/doctor.sh` が `harness doctor` を何回呼ぶかを grep で数えて 13 回とし、「`doctor` を速くしても効かない」と結論した（`docs/spec/check-speed.md` の B1b）。実測すると **45 回**で、`doctor` はそのテストの最大の項目だった。`init` は逆に 15 回のはずが 5 回（フィクスチャ共有が効いていた）。
+- 原因: テストは `run_doctor` / `run_doctor_in` などの**ヘルパー関数**経由で呼ぶので、`harness doctor` という文字列がソースに出てこない。さらに `update` は `reexec_if_vendored` で 1 呼び出しが 2 プロセスになるため、数えた値の意味もずれる。
+- 対処 / 再発したら: 回数は**実行時に数える**。`bin/harness` と `harness/scripts/doctor.sh` の先頭に `[ -n "${HARNESS_COUNT_FILE:-}" ] && echo "harness ${1:-}" >> "$HARNESS_COUNT_FILE"` を 1 行足し、環境変数を立ててテストを 1 回回してから `git checkout` で戻す（所要 1 分、オーバーヘッドはほぼ 0）。最適化の対象を決める前に必ずこれをやる。
+
+## 2026-09-21 外部プロセスを数える PATH スタブは exec 先を絶対パスで書く [harness候補]
+- 症状: `cp` / `find` などのラッパーを PATH の先頭に置いて起動回数を数えようとしたら、`init` が返ってこなくなり `find` が **13087 回**起動していた。
+- 原因: スタブ生成時に `real=$(command -v find)` の結果をそのまま埋めたが、zsh ではこれが**フルパスではなく `find` という名前だけ**を返すことがある。`exec find "$@"` は PATH 先頭のスタブ自身を呼ぶので無限再帰になる。
+- 対処 / 再発したら: スタブは `PATH=/usr/bin:/bin:/usr/sbin:/sbin type -P <cmd>` で**絶対パスを解決してから**書く（生成したスタブの `exec` 行を 1 つ目視する）。なお `bin/harness` のハッシュ常駐サーバ（fifo）は子プロセスに fd 3/4 を渡すので、スタブで bash を 1 段挟むと fifo の相手が閉じずデッドロックすることがある。計測目的なら `mkfifo` を失敗させて 1 件ずつの経路に落とすと避けられる。
+
+## 2026-09-21 `harness update` に `--source` を渡すと即 die する（計測の単価を誤る） [harness候補]
+- 症状: `update` 1 回の所要を「224ms」と測ってしまった。実際は **829ms**。
+- 原因: `--source` は `init` のオプションで、`cmd_update` は `--ref` 以外を `die "unknown option"` で弾く。計測スクリプトが出力を `>/dev/null 2>&1` に捨てていたので、失敗経路の時間を単価として持ち帰っていた。
+- 対処 / 再発したら: 単価を測るループでも**終了コードを見る**（`|| echo "FAILED"` を足す）。「妙に速い」と感じたら、まず出力を捨てるのをやめて 1 回手で実行する。
+
 ## 2026-09-17 update が同梱 CLI 自身を上書きすると bash が構文エラーで落ちる
 - 症状: `bash .harness/bin/harness update` の処理は完了するのに、直後に `syntax error near unexpected token` で exit 2。
 - 原因: bash は実行中のスクリプトを逐次読むので、`cp` で同じ inode を書き換えると残りを新内容で読む。

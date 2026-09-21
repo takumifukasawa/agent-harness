@@ -5,10 +5,10 @@
   "installed_at": "2026-09-21",
   "agents": "claude,codex",
   "files": [
-    {"path":".harness/bin/harness","src":"@self","ownership":"managed","sha256":"56cabfdd3aa6ef56570845d5ff0ac8db2ec41255","source_sha256":""},
+    {"path":".harness/bin/harness","src":"@self","ownership":"managed","sha256":"21479190fa498ac08e4215ffc759e75440630991","source_sha256":""},
     {"path":".harness/bin/harness.cmd","src":"@self-cmd","ownership":"managed","sha256":"59de6078cfcf46f4941194220ffd48aa2e8400c5","source_sha256":""},
     {"path":".harness/scripts/check.sh","src":"scripts/check.sh","ownership":"managed","sha256":"ff1f0fc80afde76f879a830f1732ef3dbb167f22","source_sha256":""},
-    {"path":".harness/scripts/doctor.sh","src":"scripts/doctor.sh","ownership":"managed","sha256":"56957aef6b860f0f4c5d0e84473cc8e520859c67","source_sha256":""},
+    {"path":".harness/scripts/doctor.sh","src":"scripts/doctor.sh","ownership":"managed","sha256":"b6473c0e788e39dec82813a2d2b0000084cc49dd","source_sha256":""},
     {"path":".harness/scripts/gc.sh","src":"scripts/gc.sh","ownership":"managed","sha256":"ad9711b0bc6c88b96eabe1b97fe504c241094ade","source_sha256":""},
     {"path":".harness/scripts/session-start.sh","src":"scripts/session-start.sh","ownership":"managed","sha256":"c2b68ba5a93a87cc1105a1d7a7f5878cb7a3fe03","source_sha256":""},
     {"path":".harness/checks.sh","src":"checks.seed.sh","ownership":"seed","sha256":"-","source_sha256":"-"},

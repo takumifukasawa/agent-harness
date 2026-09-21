@@ -249,22 +249,35 @@ fi
 # チェックアウトすると LF 管理のはずのファイルが CRLF になり、ハッシュ比較や shebang 実行が壊れる。
 if [ "$manifest_ok" = 1 ]; then
   cr_found=0
+  # 対象を先に集め、判定はまとめて 1 回で済ませる。ファイルごとに tr + wc を起動すると、
+  # doctor 1 回が起動する外部プロセス 113 のうち 75 がここになる（実測 2026-09-21）。
+  # tests/doctor.sh は doctor を 45 回呼ぶので、ここがそのままテスト時間に乗る
+  # （`docs/spec/check-speed.md` の B2）。
+  cr_targets=()
   while IFS=$'\t' read -r f_path f_src f_own f_sha f_srcsha; do
     [ -z "$f_path" ] && continue
     case "$f_own" in managed|generated) ;; *) continue;; esac
     case "$f_path" in *.cmd) continue;; esac  # *.cmd は CRLF が規約（.gitattributes）
     [ -f "$ROOT/$f_path" ] || continue  # 欠落は B4 で報告済み
-    # grep の \r マッチは環境によって信用できない（MSYS の一部 grep が誤検知しない）ので、
-    # tr -d '\r' の前後でバイト数を比べる（CR があれば減る）。
-    if [ "$(tr -d '\r' < "$ROOT/$f_path" | wc -c)" != "$(wc -c < "$ROOT/$f_path")" ]; then
+    cr_targets+=("$ROOT/$f_path")
+  done <<<"$mf_entries"
+  # grep の \r マッチは環境によって信用できない（MSYS の一部 grep が誤検知しない）ので、
+  # tr -d '\r' の前後でバイト数を比べる（CR があれば減る）。まず全部つないだ合計で比べ、
+  # 一致すれば 1 件も CR を含まないのでそこで終わる。違ったときだけ 1 件ずつ特定する（異常系）。
+  # 一括判定に awk や bash の文字列比較を使わないのは、どちらも NUL から先を落とすため
+  # （NUL を含むファイルの CR を見逃す。実測 2026-09-21）。バイト数の比較なら落ちない。
+  if [ -n "${cr_targets[*]:-}" ] &&
+     [ "$(cat "${cr_targets[@]}" | tr -d '\r' | wc -c)" != "$(cat "${cr_targets[@]}" | wc -c)" ]; then
+    for cr_file in "${cr_targets[@]}"; do
+      [ "$(tr -d '\r' < "$cr_file" | wc -c)" != "$(wc -c < "$cr_file")" ] || continue
       cr_found=$((cr_found + 1))
       # update の復元は git checkout を経由せず生バイトで書くので、core.autocrlf の設定に
       # 関係なく直る（決定 0002 の hash_of/apply_plan、実測済み）。autocrlf 設定自体の是正は
       # 「直し方」ではなく再発防止の話なので、直し方は update 1 本にする（決定 0003）。
-      report FAIL "改行: $f_path に CR（\\r）が含まれる（CRLF 化されている。多くは core.autocrlf=true が原因）" \
+      report FAIL "改行: ${cr_file#"$ROOT"/} に CR（\\r）が含まれる（CRLF 化されている。多くは core.autocrlf=true が原因）" \
         "bash .harness/bin/harness update で復元する（正本の内容を生バイトで書き込むため autocrlf の設定に関係なく直る）"
-    fi
-  done <<<"$mf_entries"
+    done
+  fi
   [ "$cr_found" -eq 0 ] && report OK "改行: managed / generated ファイルに CR は無い"
 
   if [ -f "$ROOT/.gitattributes" ] && grep -qxF ".harness/** text eol=lf" "$ROOT/.gitattributes"; then

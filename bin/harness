@@ -445,8 +445,12 @@ apply_plan() { # agents mode(init|update)
   ENTRIES=()
   local n_new=0 n_up=0 n_res=0 n_keep=0 n_conf=0 n_seed=0
   local src dest own tmp abs newhash curhash srchash
+  # 一時ファイルは 1 つを使い回す（render_src / render_agent はいずれも > で上書きするので、
+  # 前のファイルの内容が残ることはない）。plan の行ごとに mktemp + rm を起動すると、それだけで
+  # 88 プロセス ≒ 0.16 秒になる（実測 2026-09-21。`docs/spec/check-speed.md` の B2）。
+  tmp="$(mktemp)"
   while IFS=$'\t' read -r src dest own; do
-    abs="$ROOT/$dest"; tmp="$(mktemp)"
+    abs="$ROOT/$dest"
     srchash=""
     case "$own" in
       generated)
@@ -479,7 +483,7 @@ apply_plan() { # agents mode(init|update)
       if [ "$nbegin" -eq 1 ] && [ "$nend" -eq 1 ]; then
         curhash="$(block_hash "$abs")"
         if [ "$curhash" = "$newhash" ]; then
-          n_keep=$((n_keep + 1)); ENTRIES+=("$dest"$'\t'"$src"$'\t'"$own"$'\t'"$newhash"$'\t'"-"); rm -f "$tmp"; continue
+          n_keep=$((n_keep + 1)); ENTRIES+=("$dest"$'\t'"$src"$'\t'"$own"$'\t'"$newhash"$'\t'"-"); continue
         fi
         backup_file "$backup" "$dest"
         merge_agents_md "$tmp" "$abs"; n_up=$((n_up + 1))
@@ -528,7 +532,7 @@ apply_plan() { # agents mode(init|update)
           mkdir -p "$conflicts/$(dirname "$dest")"; cp "$tmp" "$conflicts/$dest.new"; n_conf=$((n_conf + 1))
           info "  CONFLICT $dest (exists, not from harness) -> .harness/conflicts/$dest.new"
           ENTRIES+=("$dest"$'\t'"$src"$'\t'"$own"$'\t'"$curhash"$'\t'"$srchash")
-          rm -f "$tmp"; continue
+          continue
         elif [ "$curhash" = "$(old_manifest_field "$dest" 4)" ]; then
           backup_file "$backup" "$dest"
           cp "$tmp" "$abs"; n_up=$((n_up + 1)); info "  update $dest"
@@ -546,8 +550,8 @@ apply_plan() { # agents mode(init|update)
       newhash="$(hash_of "$abs")"
       ENTRIES+=("$dest"$'\t'"$src"$'\t'"$own"$'\t'"$newhash"$'\t'"$srchash")
     fi
-    rm -f "$tmp"
   done < <(plan "$agents")
+  rm -f "$tmp"
   rm -f "$OLD_ENTRIES_FILE"; OLD_ENTRIES_FILE=""
   hash_server_stop
 
@@ -668,7 +672,8 @@ reexec_if_vendored() {
   [ -n "${HARNESS_REEXEC:-}" ] && return 0
   # 標準入力から実行中なら BASH_SOURCE が無い（同梱コピーを実行しているはずがないので何もしない）
   local me="${BASH_SOURCE[0]:-}" vendored="$ROOT/.harness/bin/harness" tmp
-  same_script "$me" "$vendored" || return 0
+  # main で maybe_delegate が同じ 2 つを比べている。その結果があればそれを使う（VENDORED_SAME）。
+  [ "${VENDORED_SAME:-}" = 1 ] || same_script "$me" "$vendored" || return 0
   tmp="$(mktemp)"; cp "$me" "$tmp"
   HARNESS_REEXEC=1 HARNESS_REEXEC_TMP="$tmp" exec bash "$tmp" update "$@"
 }
@@ -893,15 +898,21 @@ usage() { # 冒頭のコメントをそのまま usage にする。標準入力�
 maybe_delegate() {
   local cmd="${1:-}"
   case "$cmd" in init|self-install|version|--version|-v|""|help|-h|--help) return 0;; esac
+  # update の再実行（reexec_if_vendored）で来たときは、同梱コピーと同じ内容であることを
+  # 再実行の前に確かめてある。同じ判定をもう一度やらない（same_script は git を 2 回起動する。
+  # update 1 回で 3 回呼ばれていた分が、この行と VENDORED_SAME で 1 回になる。実測 2026-09-21）。
+  case "$cmd" in update) [ -n "${HARNESS_REEXEC:-}" ] && { VENDORED_SAME=1; return 0; };; esac
   local root vendored me="${BASH_SOURCE[0]:-}"
   root="$(project_root)"; vendored="$root/.harness/bin/harness"
   [ -f "$vendored" ] || return 0
-  same_script "$me" "$vendored" && return 0   # 既に同梱コピー（と同じ内容）を実行中
+  if same_script "$me" "$vendored"; then VENDORED_SAME=1; return 0; fi   # 既に同梱コピー（と同じ内容）を実行中
   exec bash "$vendored" "$@"
 }
 
 # ---------------------------------------------------------------- main
 ROOT=""; PAYLOAD=""; SELF_PATH=""; HVER=""
+# maybe_delegate が出した「実行中のスクリプト＝同梱コピー」の判定を持ち回る（1=同じ / 空=未判定）。
+VENDORED_SAME=""
 maybe_delegate "$@"
 case "${1:-}" in
   init)     shift; cmd_init "$@";;
