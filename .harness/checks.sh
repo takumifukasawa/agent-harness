@@ -22,6 +22,9 @@ check fast "manifest source is shared value" "src=\$(sed -n 's/^  \"source\": \"
 check fast "githooks are executable"      "bash tests/githooks.sh"
 # gc の実行経路（tech-debt #8）。日付判定が環境差で無言でスキップされていないかを見る。
 check fast "gc scenarios"                 "bash tests/gc.sh"
+# seed の case 衝突判定（tech-debt #13）。実 FS の case 区別はテストから切り替えられないので、
+# 判定関数 seed_case_collision() を単体で呼ぶ（衝突あり/衝突なし/case を区別する環境の 3 系統）。
+check fast "seed case collision (unit)"   "bash tests/seed-case.sh"
 # curl <公開 URL>/bin/harness | bash -s -- init の経路（標準入力から実行すると BASH_SOURCE が無い）
 check      "stdin (curl | bash) install"  "bash tests/stdin.sh"
 check      "codex adapter (deny hook)"    "bash tests/codex.sh"

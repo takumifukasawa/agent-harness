@@ -17,6 +17,11 @@
 # 診断は bash と git だけで動く。node / jq が無くても全項目が実行できる（あれば使う、で留める）。
 set -u
 
+# 自分自身のディレクトリ（後段の B12 が隣の seed-case.sh を source するため）。後で ROOT へ
+# cd するので、その前に BASH_SOURCE[0] を解決しておく（相対パスで起動された場合、cd の後では
+# 起動時のカレントディレクトリを基準にした意味が失われる）。
+DOCTOR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
+
 # doctor はオプションを取らない。--fix / --json 等の未知の引数を黙って無視すると「指定どおり
 # 動いた」と誤解されうる（spec: --fix は範囲外、--json は要望が出るまで未実装）。usage を出して
 # 「診断自体ができない環境不備」と同じ 2 で終わる。
@@ -212,13 +217,13 @@ elif [ -n "$mf_version" ] && [ -n "$mf_source" ] && [ -n "$mf_agents" ]; then
   report FAIL "manifest（.harness/manifest.json）の files が壊れている:${mf_broken%;}" \
     "bash .harness/bin/harness update で作り直す（version/source/agents は読めているので、files の記載が壊れていても復元できる）"
   # 黙ってスキップしない。何を確認できていないかを出力に残す。
-  report WARN "manifest が読めないため B4（ファイルの存在）/ B5（改行）/ B8・B9（アダプタ側の照合）/ B10（新版）の診断をスキップした" \
+  report WARN "manifest が読めないため B4（ファイルの存在）/ B5（改行）/ B8・B9（アダプタ側の照合）/ B10（新版）/ B12（seed の case 衝突）の診断をスキップした" \
     "先に上の FAIL（manifest）を直してから、もう一度 harness doctor を回す"
 else
   report FAIL "manifest（.harness/manifest.json）が壊れている（見出しごと読めない）:${mf_broken%;}" \
     "mv .harness/manifest.json .harness/manifest.json.broken && bash .harness/bin/harness init --source <このプロジェクトの導入元。不明なら .harness/manifest.json.broken や git log -p -- .harness/manifest.json、docs/handoff.md で確認。省略時は既定の公開リポジトリを使う>"
   # 黙ってスキップしない。何を確認できていないかを出力に残す。
-  report WARN "manifest が読めないため B4（ファイルの存在）/ B5（改行）/ B8・B9（アダプタ側の照合）/ B10（新版）の診断をスキップした" \
+  report WARN "manifest が読めないため B4（ファイルの存在）/ B5（改行）/ B8・B9（アダプタ側の照合）/ B10（新版）/ B12（seed の case 衝突）の診断をスキップした" \
     "先に上の FAIL（manifest）を直してから、もう一度 harness doctor を回す"
 fi
 
@@ -542,6 +547,40 @@ if [ -z "$gi_missing" ]; then
 else
   report WARN ".gitignore に無いエントリ: $gi_missing" \
     ".gitignore に「${gi_missing}」を追記する"
+fi
+
+# ---------------------------------------------------------------- B12. seed の case 衝突（tech-debt #13）
+# case を区別しないファイルシステム（macOS / Windows）では、seed の配布先と大文字小文字違いの
+# 既存ファイルが同じもの扱いになる。apply_plan はそれを「既にある」として雛形を配らないが、
+# manifest には配布先の名前で記録される。case を区別する環境（Linux 等）に持っていくと、
+# その名前のファイルが本当に無いと判定されて update が新たに配り、大文字小文字違いの 2 つが
+# 併存する（2026-09-21、実プロジェクト aesthetic-comparison への導入で発見）。
+#
+# 判定ロジックは harness/scripts/seed-case.sh（bin/harness と共有。導入コピーでは
+# .harness/scripts/seed-case.sh としてこのファイルの隣に配られる）。この節は、この環境が
+# case を区別しない場合だけ動く。区別する環境では別ファイルとして正しく共存するので、
+# 何も報告しない（B3。Codex アダプタの B9 が agents を見て出し分けるのと同じ作法）。
+if [ "$manifest_ok" = 1 ]; then
+  seed_case_lib="${DOCTOR_DIR:-}/seed-case.sh"
+  if [ -n "$DOCTOR_DIR" ] && [ -f "$seed_case_lib" ]; then
+    # shellcheck source=./seed-case.sh
+    . "$seed_case_lib"
+    seed_ci=0
+    fs_case_insensitive && seed_ci=1
+    if [ "$seed_ci" = 1 ]; then
+      seed_conflicts=0
+      while IFS=$'\t' read -r f_path f_src f_own f_sha f_srcsha; do
+        [ -z "$f_path" ] && continue
+        [ "$f_own" = "seed" ] || continue
+        seed_existing="$(seed_case_collision "$ROOT" "$f_path" "$seed_ci" 2>/dev/null || true)"
+        [ -n "$seed_existing" ] || continue
+        seed_conflicts=$((seed_conflicts + 1))
+        report WARN "seed の配布先 $f_path が既存の $seed_existing と case 違いで衝突している（$(seed_case_collision_reason "$f_path" "$seed_existing")）" \
+          "$(seed_case_collision_fix "$f_path" "$seed_existing")"
+      done <<<"$mf_entries"
+      [ "$seed_conflicts" -eq 0 ] && report OK "seed の配布先に大文字小文字違いの衝突は無い（この環境は case を区別しない）"
+    fi
+  fi
 fi
 
 # ---------------------------------------------------------------- 集計

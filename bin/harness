@@ -446,8 +446,18 @@ apply_plan() { # agents mode(init|update)
   # set -e の対象外だったので落ちなかった。ここは直接のコマンドなので || true で同じ耐性を保つ。
   manifest_entries >"$OLD_ENTRIES_FILE" || true
 
+  # seed の配布先と大文字小文字違いの既存ファイルの衝突（tech-debt #13）。判定ロジックは
+  # harness/scripts/seed-case.sh に集約してあり（doctor.sh と共有。理由はそのファイルの
+  # コメント）、apply_plan は $PAYLOAD から直接 source する（他の render_src 等と同じく、
+  # 配布中の版が正）。無ければ（古い source）検出せずスキップする。
+  local seed_ci=0
+  if [ -f "$PAYLOAD/scripts/seed-case.sh" ]; then
+    . "$PAYLOAD/scripts/seed-case.sh"
+    fs_case_insensitive && seed_ci=1
+  fi
+
   ENTRIES=()
-  local n_new=0 n_up=0 n_res=0 n_keep=0 n_conf=0 n_seed=0
+  local n_new=0 n_up=0 n_res=0 n_keep=0 n_conf=0 n_seed=0 n_caseconf=0
   local src dest own tmp abs newhash curhash srchash
   # 一時ファイルは 1 つを使い回す（render_src / render_agent はいずれも > で上書きするので、
   # 前のファイルの内容が残ることはない）。plan の行ごとに mktemp + rm を起動すると、それだけで
@@ -473,8 +483,19 @@ apply_plan() { # agents mode(init|update)
     newhash="$(hash_of "$tmp")"
 
     if [ "$own" = "seed" ]; then
+      # [ -f "$abs" ] は case を区別しない FS では大文字小文字違いの既存ファイルにも真になる
+      # （それが tech-debt #13 の原因）ので、その判定より前に seed_case_collision で別に見る。
+      local seed_existing=""
+      if [ "$seed_ci" = 1 ]; then
+        seed_existing="$(seed_case_collision "$ROOT" "$dest" "$seed_ci" 2>/dev/null)" || true
+      fi
       if [ -f "$abs" ]; then n_keep=$((n_keep + 1)); else
         mkdir -p "$(dirname "$abs")"; cp "$tmp" "$abs"; n_seed=$((n_seed + 1)); info "  seed  $dest"
+      fi
+      if [ -n "$seed_existing" ]; then
+        n_caseconf=$((n_caseconf + 1))
+        info "  CASE-CONFLICT $dest ($(seed_case_collision_reason "$dest" "$seed_existing"))"
+        info "    直し方: $(seed_case_collision_fix "$dest" "$seed_existing")"
       fi
       ENTRIES+=("$dest"$'\t'"$src"$'\t'"$own"$'\t'"-"$'\t'"-")
     elif [ "$own" = "merge" ]; then
@@ -566,9 +587,10 @@ apply_plan() { # agents mode(init|update)
   git -C "$ROOT" config core.hooksPath .githooks 2>/dev/null || true
 
   echo
-  info "$mode done: new=$n_new updated=$n_up restored=$n_res unchanged=$n_keep seeded=$n_seed conflicts=$n_conf"
+  info "$mode done: new=$n_new updated=$n_up restored=$n_res unchanged=$n_keep seeded=$n_seed conflicts=$n_conf case_conflicts=$n_caseconf"
   [ "$n_res" -gt 0 ] && info "restored: managed / generated は harness が正本なので正本の内容に戻した。残したい変更があるなら .harness/backup/ から拾い、harness upstream で正本へ戻してから update する"
   [ "$n_conf" -gt 0 ] && info "conflicts: .harness/conflicts/ を見て、新版を採るか harness upstream で戻すか決める"
+  [ "$n_caseconf" -gt 0 ] && info "case_conflicts: この環境は大文字小文字を区別しないため、上の CASE-CONFLICT 行の既存ファイルと同じ扱いになっている（tech-debt #13）。「直し方」の git mv で寄せる（自動では直さない）"
   [ -d "$backup" ] && info "backup: ${backup#"$ROOT"/}"
   return 0
 }
