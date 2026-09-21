@@ -3,6 +3,11 @@
 各版に「プロジェクト側で必要な作業」を必ず書く。`harness update` はこの節を表示する。
 semver: managed ファイルの移動・マーカー形式変更は major、ルール/スキルの追加は minor、文言修正は patch。
 
+## [Unreleased]
+
+- 改善（onboarding-polish T01）: `harness` スキル（`harness/skills/harness/SKILL.md`）に「別のプロジェクトへ入れる」節を足した。実プロジェクト（aesthetic-comparison）への初導入で、導入先にいるエージェントが「別のプロジェクトへどう入れるか」を答えられない（手順が README にしかなく、配られるのは `AGENTS.md` の管理ブロックと各スキルだけ）ことが分かったため。clone 済み / URL 直の 2 経路の実行コマンドと、`init` 後にやること（`.harness/checks.sh` への検査登録・`docs/spec/` に受け入れ条件を書く・`doctor` で FAIL 0 を確認）を案内する。既存の案内（status / update / diff / check / doctor / upstream、および「`init` はこのスキルから実行しない」という制約）は削っていない。
+- **プロジェクト側で必要な作業**: `bash .harness/bin/harness update` で `.agents/skills/harness/SKILL.md` と `.claude/skills/harness/SKILL.md` に新しい節が入る。動作・判定は変わらない（文言追加のみ）。
+
 ## [0.7.1] - 2026-09-21
 
 - 修正（tech-debt #12）: **`harness update` が source 側の CLI のロジックで走るようにした。** 「何を配るか」を決める `plan()` は実行している CLI のものが使われるが、`maybe_delegate` が常にプロジェクトの同梱コピー（更新前の古い版）へ委譲していたため、**新しい版で増えた配布エントリが 1 回目の update で丸ごと漏れていた**（実測 2026-09-21: 配布エントリを 2 行足しても 1 回目は `new=0`、CLI 自身が入れ替わった 2 回目でようやく `new=2`。検査 "installed copies in sync" は 1 回目で緑になるので気づけない）。source を解決した後、その `bin/harness` が実行中のものと内容が違えば、そちらで実行し直す（`HARNESS_FROM_SOURCE` で往復を止める）。回帰は `tests/update.sh` の U14 が止める。
