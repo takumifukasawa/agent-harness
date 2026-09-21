@@ -18,7 +18,7 @@
 |---|---|---|---|
 | T01 | `harness` スキルに「別のプロジェクトへの入れ方」を足す | **done** | 導入先には README が配られないので、そこのエージェントは入れ方を答えられなかった |
 | T02 | seed の case 衝突を init / update と doctor で検出する（#13） | 進行中 | 検出と案内だけ。**自動でリネームしない** |
-| T03 | aesthetic-comparison の `handoff.md` を session-handoff の形へ | 進行中 | 別リポジトリ。T01 と並列で回した |
+| T03 | aesthetic-comparison の `handoff.md` を session-handoff の形へ | **done** | 別リポジトリ。T01 と並列で回した |
 
 ## 決定ログ（日付・決めたこと・理由・落選案）
 
@@ -29,3 +29,4 @@
 ## 進捗ログ（セッションごとに 1〜3 行）
 
 - **2026-09-21（T01 完了）**: `harness/skills/harness/SKILL.md` に「## 別のプロジェクトへ入れる」節（23 行）。既存の 3 節と全サブコマンドの案内は無傷。導入コピーも同期済み（`c4fed96`, `4ffd0bf`）。統括の 3 点判定: `check` 20 件 pass / T01 のコミット 2 件・作業ツリー空 / 戻り値 done。
+- **2026-09-21（T03 完了）**: aesthetic-comparison の `docs/handoff.md` を `session-handoff` の形へ（106 → 50 行）。移行が完了して役目を終えた 9 節（「Macへ持っていくもの」「受け手にそのまま渡す依頼文」など）を畳み、状態の表と NEXT に集約。Windows 側の検証履歴は「参考」として保持。**捏造なし**（`npm run dev` を起動していないことを正しく「まだしていない」と書いている）。統括の 3 点判定: あちらの `check` 6 件 pass・`gc` 問題なし / `c567e47` のコミット・作業ツリー空・触ったのは `docs/handoff.md` のみ / 戻り値 done。**未 push**（push の可否は別途ユーザーに確認）。
