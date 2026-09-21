@@ -89,7 +89,7 @@ harness/                 # プロジェクトに入るペイロード
 ├── AGENTS.core.md       # AGENTS.md の managed ブロック（共通ルール。目次であって百科事典ではない）
 ├── docs-template/       # docs/ の雛形（索引・handoff・architecture・plans・decisions・learnings・tech-debt・references・spec・roles・rules）
 ├── skills/              # task-orchestrate（大きなタスクを回す）/ session-catchup / session-handoff / harness（CLI 実行）/ harness-maintain
-├── scripts/             # check.sh（検査ランナー、LLM 不使用）、session-start.sh
+├── scripts/             # check.sh（検査ランナー、LLM 不使用）、doctor.sh（診断）、gc.sh（docs の腐敗検知）、seed-case.sh（seed の case 衝突判定、doctor.sh と bin/harness が共有）、session-start.sh
 ├── checks.seed.sh       # プロジェクトが編集する検査一覧の雛形
 ├── state-template/      # progress.json / stages.json（長期タスクの機械可読な状態）
 ├── adapters/claude/     # CLAUDE.md 雛形・settings 断片・確認済み事実
