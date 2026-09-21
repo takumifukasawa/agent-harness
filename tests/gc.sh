@@ -178,6 +178,80 @@ expect_strict() {
 }
 scenario "G6: --strict は検出があれば exit 1、既定は exit 0" setup_strict expect_strict
 
+# G8. C1a（spec no-silent-failures C）: active な計画のタスク表がすべて done なのに、
+# 状態欄が「完了」になっていない＝書き戻し漏れを検出する。表記揺れ（**done** / done）両方を拾う。
+setup_plan_table_done_state_not_complete() {
+  new_proj || return 1
+  mkdir -p "$PROJ/docs/plans/active" || return 1
+  {
+    printf '# foo\n\n'
+    printf -- '- 開始: 2026-09-01\n'
+    printf -- '- 状態: 進行中\n\n'
+    printf '## タスク分解（依存順）\n\n'
+    printf '| # | タスク | 状態 | 備考 |\n'
+    printf '|---|---|---|---|\n'
+    printf '| T01 | do thing | **done** | ... |\n'
+    printf '| T02 | do other | done | ... |\n'
+  } >"$PROJ/docs/plans/active/foo.md"
+  ( cd "$PROJ" && git add -A &&
+    git -c user.email=t@t -c user.name=t commit -q -m plan ) >/dev/null 2>&1 ||
+    { errors+=("setup: コミットに失敗した"); return 1; }
+}
+expect_plan_table_done_state_not_complete() {
+  run_gc
+  expect_out '計画 docs/plans/active/foo\.md のタスク表は行が全部 done なのに状態欄が「完了」になっていない'
+  expect_not_out '問題なし'
+  expect_code 0
+}
+scenario "G8: 計画のタスク表が全行 done なのに状態欄が完了でなければ報告する（書き戻し漏れ）" \
+  setup_plan_table_done_state_not_complete expect_plan_table_done_state_not_complete
+
+# G9. C1b（spec no-silent-failures C）: 状態欄が「完了」なのに active/ に置かれたまま＝畳み忘れを検出する。
+setup_plan_state_complete_in_active() {
+  new_proj || return 1
+  mkdir -p "$PROJ/docs/plans/active" || return 1
+  printf '# bar\n\n- 開始: 2026-09-01\n- 状態: **完了（2026-09-21）**\n' >"$PROJ/docs/plans/active/bar.md"
+  ( cd "$PROJ" && git add -A &&
+    git -c user.email=t@t -c user.name=t commit -q -m plan ) >/dev/null 2>&1 ||
+    { errors+=("setup: コミットに失敗した"); return 1; }
+}
+expect_plan_state_complete_in_active() {
+  run_gc
+  expect_out '計画 docs/plans/active/bar\.md の状態欄が「完了」なのに active/ に置かれたまま'
+  expect_not_out '問題なし'
+  expect_code 0
+}
+scenario "G9: 計画の状態欄が完了なのに active/ に置かれたままなら報告する（畳み忘れ）" \
+  setup_plan_state_complete_in_active expect_plan_state_complete_in_active
+
+# G10. C3（表記揺れでは警告しない）: docs/plans/active/no-silent-failures.md の実物と同じ形
+# （タスク表に 進行中 / 未着手 が混在し、状態欄は 進行中）では、G8/G9 のどちらも報告しない。
+setup_plan_mixed_states_no_false_positive() {
+  new_proj || return 1
+  mkdir -p "$PROJ/docs/plans/active" || return 1
+  {
+    printf '# baz\n\n'
+    printf -- '- 開始: 2026-09-01\n'
+    printf -- '- 状態: 進行中\n\n'
+    printf '## タスク分解（依存順）\n\n'
+    printf '| # | タスク | 状態 | 備考 |\n'
+    printf '|---|---|---|---|\n'
+    printf '| T01 | task a | 進行中 | ... |\n'
+    printf '| T02 | task b | 未着手 | ... |\n'
+  } >"$PROJ/docs/plans/active/baz.md"
+  ( cd "$PROJ" && git add -A &&
+    git -c user.email=t@t -c user.name=t commit -q -m plan ) >/dev/null 2>&1 ||
+    { errors+=("setup: コミットに失敗した"); return 1; }
+}
+expect_plan_mixed_states_no_false_positive() {
+  run_gc
+  expect_not_out 'タスク表は行が全部 done なのに状態欄が'
+  expect_not_out '状態欄が「完了」なのに active/ に置かれたまま'
+  expect_code 0
+}
+scenario "G10: タスク表に進行中/未着手が混在し状態欄が進行中なら誤検知しない（実物と同じ形）" \
+  setup_plan_mixed_states_no_false_positive expect_plan_mixed_states_no_false_positive
+
 # ================================================================ 集計
 echo
 echo "tests/gc.sh: pass=$passed fail=$failed"
