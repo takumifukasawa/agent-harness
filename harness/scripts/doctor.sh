@@ -566,7 +566,7 @@ if [ "$manifest_ok" = 1 ]; then
     # shellcheck source=./seed-case.sh
     . "$seed_case_lib"
     seed_ci=0
-    fs_case_insensitive && seed_ci=1
+    fs_case_insensitive "$ROOT" && seed_ci=1
     if [ "$seed_ci" = 1 ]; then
       seed_conflicts=0
       while IFS=$'\t' read -r f_path f_src f_own f_sha f_srcsha; do

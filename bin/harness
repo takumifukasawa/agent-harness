@@ -453,7 +453,7 @@ apply_plan() { # agents mode(init|update)
   local seed_ci=0
   if [ -f "$PAYLOAD/scripts/seed-case.sh" ]; then
     . "$PAYLOAD/scripts/seed-case.sh"
-    fs_case_insensitive && seed_ci=1
+    fs_case_insensitive "$ROOT" && seed_ci=1
   fi
 
   ENTRIES=()
