@@ -1,6 +1,6 @@
 # handoff — 現在地
 
-最終更新: 2026-09-21（**cross-env を完了としてクローズ**（`plans/completed/`）。続けて tech-debt #12 を返済し**版 0.7.1**。`active/` の計画は空で、次の題材は未定）
+最終更新: 2026-09-21（cross-env をクローズし tech-debt #12 を返済して**版 0.7.1**。続けて**実プロジェクト（aesthetic-comparison）へ初めて実地導入**し、seed の case 衝突（#13）を発見した）
 
 ## いま何をしているか（1〜3 行）
 
@@ -39,13 +39,16 @@ B2 の中身は (1) `doctor` の B5（改行）を一括判定に（337→253ms�
 
 **フェーズ 1 と check-speed は閉じた。次は cross-env のフェーズ 2（Codex）。**
 
-1. **次の題材が未定。** `docs/plans/active/` は空で、`.harness/state/` も無い。候補は残る未着手の負債:
+1. **実プロジェクトへの初導入をやった（2026-09-21）。** `/Users/fukasawa-takumi/Documents/developer/aesthetic-comparison`（Next.js、既存の `AGENTS.md` と手書き docs 11 ファイルあり）に `harness init` を実行。**既存資産は無傷**（変更は `.gitignore` / `AGENTS.md` / `CLAUDE.md` の 3 ファイルに 65 行追加のみ、既存 docs は 0 件変更）で、`AGENTS.md` は Next.js が自動で足すブロック（`<!-- BEGIN:nextjs-agent-rules -->`）とも共存した。`doctor` FAIL 0 / `gc` 問題なし / `check` pass=2 まで持っていったが、**コミットはしていない**（ユーザーの判断待ち）。
+   - **そこで #13 を発見**（seed の case 衝突）。その場は `git mv docs/HANDOFF.md docs/handoff.md` で解消した
+   - **残りの一手**: 向こうの `.harness/checks.sh` はまだ seed の 2 件だけ。Next.js プロジェクトなので `npm run lint` / `tsc --noEmit` / `next build` を登録すると「完了の客観条件」が機能し始める
+2. **次の題材が未定。** `docs/plans/active/` は空で、`.harness/state/` も無い。候補は残る未着手の負債:
    - **#1**（`.claude/settings.json` の自動マージが node 前提。無い環境では断片を手で反映）— 配布の穴。jq 対応か bash だけの簡易マージ
    - **#2**（`harness gc` の判定がヒューリスティック）— 誤検知が出たら精度を上げる、という保留のまま
    - **#9**（`init` 直後の perms が docs=0600 / スクリプト=0711）— まだ実害を踏んでいない
    - **#10**（ハッシュ常駐サーバが中断時に一時ディレクトリを残す）— `trap` の統合が要る
    **どれも低優先。** 新しい題材（spec から書く）を立てるほうが自然なら、そちらを先に決める。
-2. **人間の作業が 1 つある（任意）: このリポジトリで Codex の hook を信頼する。** `doctor` の WARN 1 はこれ。ディレクトリで `codex` を起動し、プロジェクトの信頼を求められたら信頼したうえで `/hooks` で hook を信頼すると消える（各 PC で 1 回。git には乗らない）。**Codex をこの PC で使わないなら放置してよい。**
+3. **人間の作業が 1 つある（任意）: このリポジトリで Codex の hook を信頼する。** `doctor` の WARN 1 はこれ。ディレクトリで `codex` を起動し、プロジェクトの信頼を求められたら信頼したうえで `/hooks` で hook を信頼すると消える（各 PC で 1 回。git には乗らない）。**Codex をこの PC で使わないなら放置してよい。**
 3. （参考）**未着手の負債**: #1（settings.json の node 依存）#2（gc のヒューリスティック）#7（`tests/source.sh` への分離）#9（init の perms）#10（常駐サーバの trap 統合）。いずれも低優先で、関連箇所を触るときに一緒に返す。
 
 ## 別の PC で再開するとき
