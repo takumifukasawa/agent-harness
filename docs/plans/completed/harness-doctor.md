@@ -3,7 +3,7 @@
 **完了: 2026-09-18**（VERSION 0.4.0 で出荷）
 
 - 開始: 2026-09-17
-- 状態: 進行中（T01 から）
+- 状態: **完了（2026-09-18）**
 - 関連: `docs/spec/harness-doctor.md`（合意済 spec）、`docs/decisions/0001`
 - 進め方: `task-orchestrate`（統括 = メインセッション、実装役は 1 タスク 1 体、検査は `harness check`、レビューは最後に 1 回）。機械可読な状態は `.harness/state/`。
 
