@@ -87,6 +87,15 @@ commit_docs_only() { # <n> -> docs/ の中（README.md への追記）だけを�
   done
 }
 
+commit_docs_nonascii_only() { # <n> -> docs/ 内の非 ASCII ファイル名だけを触るコミットを n 回作る（A3 の非 ASCII 版）
+  local n="$1" i
+  for i in $(seq 1 "$n"); do
+    printf '<!-- note %s -->\n' "$i" >>"$PROJ/docs/日本語メモ.md"
+    ( cd "$PROJ" && git add -A &&
+      git -c user.email=t@t -c user.name=t commit -q -m "docs note ja $i" ) >/dev/null 2>&1 || return 1
+  done
+}
+
 # ---------------------------------------------------------------- 枠
 scenario() { # <名前> <setup関数> <expect関数>
   local name="$1" setup="$2" expect="$3"
@@ -544,6 +553,32 @@ expect_spec_plan_mismatch_stale_plan_text() {
 }
 scenario "G24: 計画の状態欄の文言が古くても completed/ の置き場所を実態として食い違いを検出する" \
   setup_spec_plan_mismatch_stale_plan_text expect_spec_plan_mismatch_stale_plan_text
+
+# G25. A3 の非 ASCII 版（最終レビュー指摘）: git は core.quotePath の既定値が true で、パスに
+# ASCII 範囲外のバイトが含まれると --name-only の出力をダブルクォート+8進エスケープで囲む
+# （例: docs/日本語メモ.md -> "docs/\346\227\245..."）。行が `"` から始まると 1b の
+# case "$line" in docs/*|"") ;; の docs/* にマッチせず、非 docs 側に誤分類される（A3 が
+# 非 ASCII ファイル名では成立しない）。git -c core.quotePath=false を付けて解消したことを、
+# 非 ASCII ファイル名の docs だけを触ったコミットで確かめる（--commits 1 で 1 件でも
+# 誤分類されれば落ちるようにする）。
+setup_commit_freshness_nonascii_docs_only_not_counted() {
+  new_proj_committed || return 1
+  # 索引未掲載（項目 3）を今回の観点と混ぜないよう、先に索引へ登録しておく
+  # （commit_docs_nonascii_only は非 ASCII ファイルだけを触るので、ここは別コミットにする）。
+  printf -- '- [日本語メモ](%s)\n' "日本語メモ.md" >>"$PROJ/docs/README.md"
+  ( cd "$PROJ" && git add -A &&
+    git -c user.email=t@t -c user.name=t commit -q -m "index ja note" ) >/dev/null 2>&1 ||
+    { errors+=("setup: 索引コミットに失敗した"); return 1; }
+  commit_docs_nonascii_only 1
+}
+expect_commit_freshness_nonascii_docs_only_not_counted() {
+  run_gc --commits 1
+  expect_not_out '最終更新から docs 以外を触ったコミットが'
+  expect_out '問題なし'
+  expect_code 0
+}
+scenario "G25: 非 ASCII ファイル名の docs だけのコミットも commit ベースの鮮度に数えない（A3・core.quotePath）" \
+  setup_commit_freshness_nonascii_docs_only_not_counted expect_commit_freshness_nonascii_docs_only_not_counted
 
 # ================================================================ 集計
 echo

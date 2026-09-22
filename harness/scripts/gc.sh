@@ -67,7 +67,12 @@ date_to_epoch() { # YYYY-MM-DD -> epoch 秒
 # コマンド置換（= 別プロセス）で呼ばれるので、変数に貯めても呼び出し元には残らない。
 UNPARSED_FILE="$(mktemp 2>/dev/null || echo "${TMPDIR:-/tmp}/harness-gc-unparsed.$$")"
 : >"$UNPARSED_FILE"
-trap 'rm -f "$UNPARSED_FILE"' EXIT INT TERM
+
+# spec/計画の対応表（節 11 で 1 回だけ作る。build_spec_plan_table() 参照）。
+SPEC_PLAN_TABLE="$(mktemp 2>/dev/null || echo "${TMPDIR:-/tmp}/harness-gc-specplan.$$")"
+: >"$SPEC_PLAN_TABLE"
+
+trap 'rm -f "$UNPARSED_FILE" "$SPEC_PLAN_TABLE"' EXIT INT TERM
 
 days_since() { # YYYY-MM-DD -> days（読めなければ非ゼロで返し、読めなかった日付を控える）
   local e
@@ -96,6 +101,11 @@ if [ -f "$DOCS/handoff.md" ]; then
   # 触ったコミットは除く（A3。handoff を直すたびに次の警告が積まれるのを防ぐ）。
   # git 呼び出しは 1 回（git log --name-only）に抑える。コミットごとに diff-tree を呼ぶと
   # コミット数が多いリポジトリで遅くなり、gc が誰にも回されなくなる（1 秒で終わる現状を壊さない）。
+  # core.quotePath=false を明示する: git は既定（true）だとパスに ASCII 範囲外のバイトが
+  # 含まれる行をダブルクォート+8進エスケープで囲む（例: docs/日本語メモ.md ->
+  # "docs/\346\227\245..."）。行が `"` から始まると下の case の docs/* にマッチせず、
+  # 非 ASCII ファイル名の doc だけを触ったコミットが「docs 以外を触った」に誤分類される
+  # （A3 が非 ASCII ファイル名で成立しない。最終レビュー指摘。回帰: tests/gc.sh G25）。
   handoff_anchor=$(git log -1 --format=%H -- "$DOCS/handoff.md" 2>/dev/null)
   if [ -n "$handoff_anchor" ]; then
     non_docs_since=0; in_commit=0; cur_non_docs=0
@@ -108,7 +118,7 @@ if [ -f "$DOCS/handoff.md" ]; then
         docs/*|"") ;;
         *) cur_non_docs=1 ;;
       esac
-    done < <(git log --format='__gc_commit__%H' --name-only "${handoff_anchor}..HEAD" 2>/dev/null)
+    done < <(git -c core.quotePath=false log --format='__gc_commit__%H' --name-only "${handoff_anchor}..HEAD" 2>/dev/null)
     [ "$in_commit" = 1 ] && [ "$cur_non_docs" = 1 ] && non_docs_since=$((non_docs_since + 1))
     [ "$non_docs_since" -ge "$COMMITS" ] && report WARN \
       "docs/handoff.md の最終更新から docs 以外を触ったコミットが ${non_docs_since} 件進んでいる（閾値 ${COMMITS}）" \
@@ -280,12 +290,34 @@ spec_state_value() { # <file> -> 「状態:」行の値（1 行。「状態:」�
   sed -n -E 's/^-? *状態: *//p' "$1" | head -1
 }
 
-spec_plan_file() { # <spec のファイル名> -> 対応する計画ファイルのパス（無ければ空。複数あれば最初の 1 件）
+# spec_plan_file() は元々 spec 1 件ごとに `grep -rlF "spec/$1" "$DOCS/plans"` で
+# docs/plans を丸ごと毎回スキャンしていた（O(spec 件数 × plans の総サイズ)）。plans は
+# `docs/plans/completed/` が削除されずに積み上がる運用なので、育つほど遅くなり「gc は
+# 1 秒だから毎回回せる」という設計前提を自ら壊す（最終レビュー実測: spec 300 件・plan 1500
+# 件で 50.15s）。docs/plans を 1 回だけ走査して「plan ファイル -> 参照している spec の
+# ファイル名」の対応表（$SPEC_PLAN_TABLE）を作ってから、spec ごとにその対応表（plans 全体
+# よりずっと小さい）を引く方式に変える。判定の意味（計画ファイル中の「spec/<ファイル名>」
+# という参照文字列で対応を取る）は変えない。連想配列は使わない（bash 3.2 互換。
+# tests/lint-bash-compat.sh が declare -A を禁止している）。
+build_spec_plan_table() { # docs/plans を 1 回だけ走査し、SPEC_PLAN_TABLE に
+                           # "<plan ファイルパス><TAB><spec のファイル名>" を書く（複数可）
   [ -d "$DOCS/plans" ] || return 0
-  grep -rlF "spec/$1" "$DOCS/plans" 2>/dev/null | sort | head -1
+  grep -roE 'spec/[^)`[:space:]]+\.md' "$DOCS/plans" 2>/dev/null |
+    sed -E 's#^([^:]*):spec/(.*)$#\1\t\2#' |
+    sort >"$SPEC_PLAN_TABLE"
+  # sort は行全体（先頭列＝plan ファイルパス）の昇順にする。元の実装は
+  # `grep -rl | sort | head -1` で「複数あれば計画パスの昇順で最初の 1 件」を選んでいた。
+  # この対応表も plan パス昇順に並べておけば、spec_plan_file() が先に見つけた行を返すだけで
+  # 同じ選び方になる。
+}
+
+spec_plan_file() { # <spec のファイル名> -> 対応する計画ファイルのパス（無ければ空。複数あれば最初の 1 件）
+  [ -s "$SPEC_PLAN_TABLE" ] || return 0
+  awk -F'\t' -v s="$1" '$2 == s { print $1; exit }' "$SPEC_PLAN_TABLE"
 }
 
 if [ -d "$DOCS/spec" ]; then
+  build_spec_plan_table
   while IFS= read -r f; do
     spec_state=$(spec_state_value "$f")
     [ -z "$spec_state" ] && continue
