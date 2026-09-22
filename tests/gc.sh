@@ -616,6 +616,65 @@ expect_commit_freshness_mixed_counted() {
 scenario "G26: docs と docs 以外が混在する 1 コミットは docs 以外を触ったコミットとして数える（A3）" \
   setup_commit_freshness_mixed_counted expect_commit_freshness_mixed_counted
 
+# G27. T06（統括が実際に踏んだ発見）: タスク表が全 done でも、状態欄が「ユーザー承認待ち」など
+# 最終レビュー完了後の正常な途中状態（task-orchestrate §3.6: 全部片付いたら phase: done、
+# ユーザーの承認を待つ）なら C1a を出さない。実物（docs/plans/active/writeback-sensors.md）と
+# 同じ「**レビュー完了・ユーザー承認待ち**（5 タスクすべて done、最終レビューの指摘も処理済み）」
+# という書き方を再現する。G13（レビュー中）と同じ形の、もう 1 つの正常な途中状態。
+setup_plan_awaiting_approval_no_false_positive() {
+  new_proj || return 1
+  mkdir -p "$PROJ/docs/plans/active" || return 1
+  {
+    printf '# grault\n\n'
+    printf -- '- 開始: 2026-09-01\n'
+    printf -- '- 状態: **レビュー完了・ユーザー承認待ち**（5 タスクすべて done、最終レビューの指摘も処理済み）\n\n'
+    printf '## タスク分解（依存順）\n\n'
+    printf '| # | タスク | 状態 | 備考 |\n'
+    printf '|---|---|---|---|\n'
+    printf '| T01 | do thing | done | ... |\n'
+    printf '| T02 | do other | **done** | ... |\n'
+  } >"$PROJ/docs/plans/active/grault.md"
+  ( cd "$PROJ" && git add -A &&
+    git -c user.email=t@t -c user.name=t commit -q -m plan ) >/dev/null 2>&1 ||
+    { errors+=("setup: コミットに失敗した"); return 1; }
+}
+expect_plan_awaiting_approval_no_false_positive() {
+  run_gc
+  expect_not_out 'タスク表は行が全部 done なのに状態欄が'
+  expect_not_out '状態欄が「完了」なのに active/ に置かれたまま'
+  expect_code 0
+}
+scenario "G27: タスク表が全 done でも状態欄がユーザー承認待ちなら誤検知しない（レビュー完了後の正常な途中状態）" \
+  setup_plan_awaiting_approval_no_false_positive expect_plan_awaiting_approval_no_false_positive
+
+# G28. T06: 「承認」という語を含むだけで「承認待ち」で終わらない無関係な状態は、G27 の緩和に
+# 巻き込まれず、これまでどおり素の書き戻し忘れとして報告する（過剰に拾わないことの逆側のガード）。
+setup_plan_mention_of_approval_not_ongoing() {
+  new_proj || return 1
+  mkdir -p "$PROJ/docs/plans/active" || return 1
+  {
+    printf '# garply\n\n'
+    printf -- '- 開始: 2026-09-01\n'
+    printf -- '- 状態: 承認フローの実装中\n\n'
+    printf '## タスク分解（依存順）\n\n'
+    printf '| # | タスク | 状態 | 備考 |\n'
+    printf '|---|---|---|---|\n'
+    printf '| T01 | do thing | done | ... |\n'
+    printf '| T02 | do other | done | ... |\n'
+  } >"$PROJ/docs/plans/active/garply.md"
+  ( cd "$PROJ" && git add -A &&
+    git -c user.email=t@t -c user.name=t commit -q -m plan ) >/dev/null 2>&1 ||
+    { errors+=("setup: コミットに失敗した"); return 1; }
+}
+expect_plan_mention_of_approval_not_ongoing() {
+  run_gc
+  expect_out '計画 docs/plans/active/garply\.md のタスク表は行が全部 done なのに状態欄が「完了」になっていない'
+  expect_not_out '問題なし'
+  expect_code 0
+}
+scenario "G28: 「承認」を含むだけで承認待ちで終わらない状態は書き戻し忘れとして報告する（過剰マッチしない）" \
+  setup_plan_mention_of_approval_not_ongoing expect_plan_mention_of_approval_not_ongoing
+
 # ================================================================ 集計
 echo
 echo "tests/gc.sh: pass=$passed fail=$failed"
