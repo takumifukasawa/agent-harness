@@ -26,8 +26,8 @@ B2 の中身は (1) `doctor` の B5（改行）を一括判定に（337→253ms�
 |---|---|---|
 | ブランチ | **`main`**（`cross-env` の 35 コミットを FF マージして `origin/main` へ push 済。`c1de264`） | `git branch -vv` |
 | VERSION | **0.7.1**（update が source 側の CLI で走る。2026-09-21）。`CHANGELOG.md` の `[0.7.1]` と `AGENTS.md` のマーカー `v=0.7.1`、`manifest.json` の `harness_version` が一致 | `VERSION`, `CHANGELOG.md` |
-| 検査 | **20 件 pass / 0 fail**（**59 秒**。0.7.0 で `codex adapter`、0.7.1 で `tests/update.sh` の U14 が増えた）。T01 で禁止検査 2 件、T02 で `githooks are executable` / `gc scenarios` / `stdin (curl \| bash) install` の 3 件が増えた | `/bin/bash .harness/bin/harness check` |
-| `harness doctor` | **OK=18 WARN=1 FAIL=0**（B12 が seed と managed の両方を見るようになった）。**WARN 1 は Codex の標準 deny hook が未信頼**（`.codex/hooks.json` は配られたが、この PC で `/hooks` による信頼をしていない。意図した挙動で、信頼すれば消える）。**T04 で B6 の重大度が WARN → FAIL になった**（フックが実行不可＝門番が不在。決定 0007）。このリポジトリは index が 100755 なので OK のまま | `/bin/bash .harness/bin/harness doctor` |
+| 検査 | **全件 pass が期待値**（件数・所要時間は都度コマンドで確認。手で数値を書かない）。0.7.0 で `codex adapter`、0.7.1 で `tests/update.sh` の U14 が追加。T01 で禁止検査、T02（no-silent-failures）で `githooks are executable` / `gc scenarios` / `stdin (curl \| bash) install` が追加された | `/bin/bash .harness/bin/harness check` |
+| `harness doctor` | **FAIL 0 が期待値**（内訳は都度コマンドで確認）。**既知の WARN が残ることがある: Codex の標準 deny hook が未信頼**（`.codex/hooks.json` は配られたが、この PC で `/hooks` による信頼をしていない。意図した挙動で、信頼すれば消える）。B12 は seed / managed / generated の case 衝突を見る。**T04 で B6 の重大度が WARN → FAIL になった**（フックが実行不可＝門番が不在。決定 0007）。このリポジトリは index が 100755 なので該当なし | `/bin/bash .harness/bin/harness doctor` |
 | macOS の素の bash | **3.2.57 のまま動く**（決定 0006 で「3.2 を切らない」と決めた）。`brew install bash` は**もう要らない** | 決定 0006 |
 | 導入コピーの drift | なし（modified=0 missing=0）。**T02 以降 `update` は mode 差分も残さない**（実行ビットを index の正にしたため） | `harness status` |
 | 決定 | 0001〜**0007**（0007: フックが実行不可なら doctor は FAIL） | `docs/decisions/` |
@@ -96,8 +96,8 @@ git clone https://github.com/takumifukasawa/agent-harness.git
 cd agent-harness
 echo "$(pwd)" > .harness/source.local
 git config core.hooksPath .githooks
-/bin/bash .harness/bin/harness doctor  # FAIL 0
-/bin/bash .harness/bin/harness check   # 18 件 pass（約 50 秒）
+/bin/bash .harness/bin/harness doctor  # FAIL 0 が期待値
+/bin/bash .harness/bin/harness check   # 全件 pass が期待値（件数・所要時間はこのコマンドで確認）
 # 実行ビットは index に入っているので chmod は要らない（0.6.0 以降）
 ```
 
