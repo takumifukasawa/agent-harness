@@ -7,11 +7,16 @@
 
 このリポジトリの「何を作るか」の大枠は `DESIGN.md` にある。個別機能の spec はここに 1 ファイルずつ置く。
 
+状態列は手で書くと腐るので、**各 spec の状態欄と計画の置き場所が正**（`harness gc` の項目 11 が食い違いを報告する）。ここは索引なので、行の追加漏れだけを見る。
+
 | ファイル | 範囲 | 状態 |
 |---|---|---|
-| [harness-doctor.md](harness-doctor.md) | `harness doctor`: 導入先の環境と導入状態の診断 | 合意済（v0.4.0 で出荷） |
-| [cross-env-support.md](cross-env-support.md) | エージェント（Claude / Codex）と OS（Windows / macOS）を問わず同じように動く | **合意済**（フェーズ 1 は 0.6.0 で出荷。フェーズ 2 = Codex が残り） |
-| [check-speed.md](check-speed.md) | `harness check` が遅いことを実測で直す（計測 → 返済 → 並列化の順） | **A のみ合意済**（B・C は A の実測後） |
+| [harness-doctor.md](harness-doctor.md) | `harness doctor`: 導入先の環境と導入状態の診断 | 完了（0.4.0 で出荷） |
+| [cross-env-support.md](cross-env-support.md) | エージェント（Claude / Codex）と OS（Windows / macOS）を問わず同じように動く | 完了（フェーズ 1 / 2 とも。Windows × Codex は範囲外） |
+| [check-speed.md](check-speed.md) | `harness check` が遅いことを実測で直す（計測 → 返済 → 並列化の順） | 完了（95s → 50s。B の 3 件目と C は[決定 0008](../decisions/0008-stop-optimizing-check-at-50s.md) で打ち切り） |
+| [onboarding-polish.md](onboarding-polish.md) | 実プロジェクトへの初導入で踏んだ穴を塞ぐ | 完了 |
+| [no-silent-failures.md](no-silent-failures.md) | 「黙って通る」経路を無くす（エラーの握り潰し、偽の緑） | 完了 |
+| [writeback-sensors.md](writeback-sensors.md) | 統括の書き戻し漏れを文章ではなく検査（sensor）に落とす | レビュー完了・承認待ち |
 
 ## 1 つの spec の書き方
 
