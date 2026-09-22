@@ -22,6 +22,9 @@
 #  10. docs/plans/active/ の計画で、タスク表と状態欄が矛盾している
 #      （a) タスク表の行がすべて done なのに状態欄が「完了」でも作業継続中（〜中）でもない
 #       (b) 状態欄が「完了」で始まる（部分文字列一致ではない）のに active/ のまま）
+#  11. docs/spec/*.md の「状態:」行が、対応する計画（docs/plans/）の状態と食い違っている
+#      （対応は計画側にある「spec/<ファイル名>」という参照文字列で取る。対応が取れない spec は
+#       警告しない。計画側の完了判定は状態欄の文字列ではなく active/・completed/ の置き場所で見る）
 set -u
 
 DAYS=14; STRICT=0; COMMITS=10
@@ -263,6 +266,41 @@ if [ -d "$DOCS/plans/active" ]; then
       fi
     fi
   done < <(find "$DOCS/plans/active" -name '*.md' | sort)
+fi
+
+# 11. spec の状態欄と対応する計画の状態の食い違い（統括の書き戻し漏れ。spec writeback-sensors 節 C）
+#     対応は、計画ファイルの中にある「spec/<spec のファイル名>」という参照文字列で取る
+#     （相対リンク `[spec](../../spec/x.md)` でも、バッククォート表記 `docs/spec/x.md` でも拾える）。
+#     対応が取れない spec は警告しない（C3。`check-speed.md` のように専用の計画を持たない spec もある）。
+#     計画側の完了判定は状態欄の文字列ではなく active/・completed/ の置き場所で見る。状態欄の文字列は
+#     畳んだ後も古いまま残ることがある（実例: docs/plans/completed/harness-doctor.md の
+#     「- 状態: 進行中（T01 から）」。completed/ に置かれているほうが実態）。C2: 中核語の判定は
+#     plan_state_core() / plan_state_is_complete() をそのまま使い、同じ判定を複製しない。
+spec_state_value() { # <file> -> 「状態:」行の値（1 行。「状態:」でも「- 状態:」でも拾う。無ければ空）
+  sed -n -E 's/^-? *状態: *//p' "$1" | head -1
+}
+
+spec_plan_file() { # <spec のファイル名> -> 対応する計画ファイルのパス（無ければ空。複数あれば最初の 1 件）
+  [ -d "$DOCS/plans" ] || return 0
+  grep -rlF "spec/$1" "$DOCS/plans" 2>/dev/null | sort | head -1
+}
+
+if [ -d "$DOCS/spec" ]; then
+  while IFS= read -r f; do
+    spec_state=$(spec_state_value "$f")
+    [ -z "$spec_state" ] && continue
+    plan_file=$(spec_plan_file "$(basename "$f")")
+    [ -z "$plan_file" ] && continue
+    case "$plan_file" in
+      */plans/completed/*) plan_complete=1; plan_label="完了";;
+      *) plan_complete=0; plan_label="未完了";;
+    esac
+    if plan_state_is_complete "$spec_state"; then spec_complete=1; spec_label="完了"; else spec_complete=0; spec_label="未完了"; fi
+    if [ "$spec_complete" != "$plan_complete" ]; then
+      report WARN "$f の状態欄が対応する計画 $plan_file と食い違っている（計画: ${plan_label}、spec: ${spec_label}）" \
+        "計画の実態（${plan_file} の置き場所）に合わせて $f の状態欄を書き戻す（統括の仕事）"
+    fi
+  done < <(find "$DOCS/spec" -maxdepth 1 -name '*.md' | sort)
 fi
 
 # 読めなかった日付は必ず出す。日付判定が効いていないまま「問題なし」と言うのが一番害が大きい

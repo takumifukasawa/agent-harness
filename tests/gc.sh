@@ -445,6 +445,106 @@ expect_handoff_never_committed() {
 scenario "G19: handoff が未コミットなら commit ベースの鮮度判定をスキップする（クラッシュしない）" \
   setup_handoff_never_committed expect_handoff_never_committed
 
+# ---------------------------------------------------------------- C: spec の状態欄と計画の食い違い
+commit_all() { # setup の最後で使う。plans/active/ を放置扱い（未コミット警告）にしないため必ず呼ぶ
+  ( cd "$PROJ" && git add -A &&
+    git -c user.email=t@t -c user.name=t commit -q -m plan ) >/dev/null 2>&1 ||
+    { errors+=("setup: コミットに失敗した"); return 1; }
+}
+
+# G20. C1（spec writeback-sensors C）: spec の状態欄が「完了」でないのに、対応する計画
+# （`- 関連:` の相対リンクで対応が取れる）が docs/plans/completed/ にある＝書き戻し漏れを検出する。
+# 実物: docs/spec/cross-env-support.md（状態「合意済み」）と docs/plans/completed/cross-env.md。
+setup_spec_plan_mismatch_completed() {
+  new_proj || return 1
+  mkdir -p "$PROJ/docs/spec" "$PROJ/docs/plans/completed" || return 1
+  printf '# foo\n\n状態: **合意済み**（準備フェーズ完了）\n' >"$PROJ/docs/spec/foo.md"
+  printf '# foo\n\n- 状態: **完了（2026-09-21）**\n- 関連: [spec](../../spec/foo.md)\n' \
+    >"$PROJ/docs/plans/completed/foo.md"
+  commit_all
+}
+expect_spec_plan_mismatch_completed() {
+  run_gc
+  expect_out 'docs/spec/foo\.md の状態欄が対応する計画 docs/plans/completed/foo\.md と食い違っている'
+  expect_not_out '問題なし'
+  expect_code 0
+}
+scenario "G20: spec が未完了なのに対応する計画が completed/ にあれば食い違いを報告する" \
+  setup_spec_plan_mismatch_completed expect_spec_plan_mismatch_completed
+
+# G21. spec も計画（completed/ 配置）も「完了」で揃っていれば報告しない（誤検知しない）。
+setup_spec_plan_match_completed() {
+  new_proj || return 1
+  mkdir -p "$PROJ/docs/spec" "$PROJ/docs/plans/completed" || return 1
+  printf '# foo\n\n状態: **完了（2026-09-21）**\n' >"$PROJ/docs/spec/foo.md"
+  printf '# foo\n\n- 状態: **完了（2026-09-21）**\n- 関連: [spec](../../spec/foo.md)\n' \
+    >"$PROJ/docs/plans/completed/foo.md"
+  commit_all
+}
+expect_spec_plan_match_completed() {
+  run_gc
+  expect_not_out 'の状態欄が対応する計画'
+  expect_out '問題なし'
+  expect_code 0
+}
+scenario "G21: spec と計画（completed/）がどちらも完了なら報告しない" \
+  setup_spec_plan_match_completed expect_spec_plan_match_completed
+
+# G22. C3: 対応する計画が無い spec（どの計画からも参照されていない）は警告しない。
+# 実物: docs/spec/check-speed.md（完了扱いだが専用の計画ファイルを持たない）。
+setup_spec_no_matching_plan() {
+  new_proj || return 1
+  mkdir -p "$PROJ/docs/spec" || return 1
+  printf '# foo\n\n状態: **合意済み**\n' >"$PROJ/docs/spec/foo.md"
+  commit_all
+}
+expect_spec_no_matching_plan() {
+  run_gc
+  expect_not_out 'の状態欄が対応する計画'
+  expect_out '問題なし'
+  expect_code 0
+}
+scenario "G22: 対応する計画が無い spec は食い違いを警告しない（C3）" \
+  setup_spec_no_matching_plan expect_spec_no_matching_plan
+
+# G23. spec も計画（active/ 配置）もどちらも未完了で揃っていれば報告しない。
+setup_spec_plan_match_active() {
+  new_proj || return 1
+  mkdir -p "$PROJ/docs/spec" "$PROJ/docs/plans/active" || return 1
+  printf '# foo\n\n状態: **反復フェーズ**\n' >"$PROJ/docs/spec/foo.md"
+  printf '# foo\n\n- 状態: 進行中\n- 関連: [spec](../../spec/foo.md)\n' \
+    >"$PROJ/docs/plans/active/foo.md"
+  commit_all
+}
+expect_spec_plan_match_active() {
+  run_gc
+  expect_not_out 'の状態欄が対応する計画'
+  expect_out '問題なし'
+  expect_code 0
+}
+scenario "G23: spec と計画（active/）がどちらも未完了なら報告しない" \
+  setup_spec_plan_match_active expect_spec_plan_match_active
+
+# G24. 計画自身の「- 状態:」の文言が古いまま（例: 「進行中」）でも、completed/ という置き場所を
+# 実態として判定に使う。文言どうしを比べるだけの実装だと、この実物と同じケース
+# （docs/plans/completed/harness-doctor.md の「- 状態: 進行中（T01 から）」）を見逃す。
+setup_spec_plan_mismatch_stale_plan_text() {
+  new_proj || return 1
+  mkdir -p "$PROJ/docs/spec" "$PROJ/docs/plans/completed" || return 1
+  printf '# foo\n\n状態: 合意済（詳細は略）\n' >"$PROJ/docs/spec/foo.md"
+  printf '# foo\n\n- 状態: 進行中（T01 から）\n- 関連: `docs/spec/foo.md`（合意済 spec）\n' \
+    >"$PROJ/docs/plans/completed/foo.md"
+  commit_all
+}
+expect_spec_plan_mismatch_stale_plan_text() {
+  run_gc
+  expect_out 'docs/spec/foo\.md の状態欄が対応する計画 docs/plans/completed/foo\.md と食い違っている'
+  expect_not_out '問題なし'
+  expect_code 0
+}
+scenario "G24: 計画の状態欄の文言が古くても completed/ の置き場所を実態として食い違いを検出する" \
+  setup_spec_plan_mismatch_stale_plan_text expect_spec_plan_mismatch_stale_plan_text
+
 # ================================================================ 集計
 echo
 echo "tests/gc.sh: pass=$passed fail=$failed"
