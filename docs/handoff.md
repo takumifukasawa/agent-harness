@@ -1,62 +1,42 @@
 # handoff — 現在地
 
-最終更新: 2026-09-22（**題材 writeback-sensors の T01 まで完了、T02 から再開**。前の題材 no-silent-failures は完了済み。2026-09-21〜22 で 4 題材を完了し、実プロジェクトへの初導入も済ませた）
+最終更新: 2026-09-22（**題材 writeback-sensors が全 6 タスク完了・最終レビュー済み。ユーザーの承認待ち**。これで 5 題材目）
 
 ## いま何をしているか（1〜3 行）
 
-題材は **cross-env**（エージェントと OS を問わず同じに動く）。**準備フェーズは完了し、合意はすべて spec と決定 0006 に書き戻してある。** **フェーズ 1（macOS で動く）は完了。** 5 タスク done、版 **0.6.0**、最終レビュー 1 回と指摘 3 件の修正（T05）まで済み、`.harness/state/progress.json` は `phase: done`（**ユーザーの承認待ち**）。残るのは main へのマージとフェーズ 2（Codex）。
+題材は **writeback-sensors**（統括の書き戻し漏れを、文章ではなく検査＝sensor に落とす）。**A / B / C すべて実装し、最終レビュー（観点 4 つ）の指摘 7 件も処理済み**で、`.harness/state/progress.json` は `phase: done`。**残るのはユーザーの承認と、それに続くクローズ作業だけ**（spec の状態欄を完了に、計画を `docs/plans/completed/` へ移す）。計画と決定ログは `docs/plans/active/writeback-sensors.md`。
 
-**`docs/spec/check-speed.md` は A（計測）完了・B は 2 件目まで完了**（`ac529ff` → `264892d` → `04c1353`）。フル `check` の推移:
-
-| | 秒 | 内訳 |
-|---|---|---|
-| A 実装時 | 95s | `doctor scenarios` 58s + `update scenarios` 30s で 93% |
-| B1（ハッシュのバッチ化）後 | 62s | 43s + 15s |
-| **B2（プロセス起動の削減）後** | **50s** | **34s + 12s**。`--fast`（pre-commit）は 1s のまま |
-
-B2 の中身は (1) `doctor` の B5（改行）を一括判定に（337→253ms）(2) `same_script` の重複 3 回 → 1 回（tech-debt #11 返済）(3) `apply_plan` の一時ファイル使い回し（`update` 793→611ms、`init` 1080→840ms）。**検査は 1 件も減らしていない**（18 件 pass のまま）。
-
-**前提の訂正**: B1b で「`doctor` 13 回 / `init` 15 回」としていたのは**静的 grep 由来で外れ**（実測は `doctor` 45 回 / `init` 5 回）。「`doctor` を速くしても効かない」という結論は取り下げた。回数は実行時に数える（`docs/learnings.md` 2026-09-21）。計画と進捗は `docs/plans/active/cross-env.md`、機械可読な状態は `.harness/state/`。
-
-**作業機は macOS（Darwin 24.6 / arm64 / 素の bash 3.2.57）。** 2026-09-20 に初めて実機で回し、`harness check` が **pass=9 fail=4** だったところを **pass=18 fail=0**（検査自体が 13 → 18 件）にした。**`.githooks/pre-commit` は T02 で本当に走るようになった**（index mode 100755）。
+**この題材で作った sensor が、作業中に自分自身の漏れを 3 件見つけた**（`docs/spec/` の状態欄 2 件、計画ファイル自身の状態欄 1 件）。一方で**最終レビューは、この題材の実装セッション自身が同じ漏れを再発させたことを見つけた**（handoff が T02 時点で停止）。**新設した sensor はそれを検出できない**ことも実測済みで、[tech-debt #18](tech-debt.md) に起票してある。
 
 ## 状態
 
 | 項目 | 状態 | 出典 |
 |---|---|---|
-| ブランチ | **`main`**（`cross-env` の 35 コミットを FF マージして `origin/main` へ push 済。`c1de264`） | `git branch -vv` |
-| VERSION | **0.7.1**（update が source 側の CLI で走る。2026-09-21）。`CHANGELOG.md` の `[0.7.1]` と `AGENTS.md` のマーカー `v=0.7.1`、`manifest.json` の `harness_version` が一致 | `VERSION`, `CHANGELOG.md` |
-| 検査 | **全件 pass が期待値**（件数・所要時間は都度コマンドで確認。手で数値を書かない）。0.7.0 で `codex adapter`、0.7.1 で `tests/update.sh` の U14 が追加。T01 で禁止検査、T02（no-silent-failures）で `githooks are executable` / `gc scenarios` / `stdin (curl \| bash) install` が追加された | `/bin/bash .harness/bin/harness check` |
-| `harness doctor` | **FAIL 0 が期待値**（内訳は都度コマンドで確認）。**既知の WARN が残ることがある: Codex の標準 deny hook が未信頼**（`.codex/hooks.json` は配られたが、この PC で `/hooks` による信頼をしていない。意図した挙動で、信頼すれば消える）。B12 は seed / managed / generated の case 衝突を見る。**T04 で B6 の重大度が WARN → FAIL になった**（フックが実行不可＝門番が不在。決定 0007）。このリポジトリは index が 100755 なので該当なし | `/bin/bash .harness/bin/harness doctor` |
-| macOS の素の bash | **3.2.57 のまま動く**（決定 0006 で「3.2 を切らない」と決めた）。`brew install bash` は**もう要らない** | 決定 0006 |
-| 導入コピーの drift | なし（modified=0 missing=0）。**T02 以降 `update` は mode 差分も残さない**（実行ビットを index の正にしたため） | `harness status` |
-| 決定 | 0001〜**0007**（0007: フックが実行不可なら doctor は FAIL） | `docs/decisions/` |
-| 題材 | **4 題材完了**（cross-env / check-speed / onboarding-polish / no-silent-failures）。**`writeback-sensors` が進行中**（T01 done / T02・T03 が残り） | `docs/plans/` |
-| 最終レビュー | 観点 4 つ（仕様突合 / **機能の完結性** / **クロス環境** / **検査の実効性**。後ろ 2 つは既定の「並行性 / 認可」から差し替え）を下位モデルで並列。**指摘 4 件、すべて単独報告かつ修正コスト低なので反証は回していない**（条件は両方満たす場合のみ） | `.harness/state/reports/review-*.md` |
-| 技術負債 | **#4 #7 #8 #11 #12 #13 #14 #15 は返済済**、**#6 は打ち切り**（決定 0008）、**#3 はほぼ返済済**。未着手は **#1 #2 #9 #10 #16** | `docs/tech-debt.md` |
+| ブランチ | **`main`**。**未 push のコミットが 10 件ある**（`origin/main` は `c1de264` のまま） | `git status -sb` |
+| VERSION | **0.7.1**。`CHANGELOG.md` の `[Unreleased]` に writeback-sensors の変更が溜まっている（**次に版を上げるときここを切り替える**） | `VERSION`, `CHANGELOG.md` |
+| 検査 | **全件 pass が期待値**（件数・所要時間は都度コマンドで確認。手で数値を書かない）。この題材で `tests/gc.sh` のシナリオが大幅に増えた | `/bin/bash .harness/bin/harness check` |
+| `harness doctor` | **FAIL 0 が期待値**（内訳は都度コマンドで確認）。**既知の WARN が残ることがある: Codex の標準 deny hook が未信頼**（この PC で `/hooks` による信頼をしていない。意図した挙動で、信頼すれば消える） | `/bin/bash .harness/bin/harness doctor` |
+| `harness gc` | **`docs/tech-debt.md` の未着手負債の INFO だけが期待値**。WARN が出たら書き戻し漏れなので直す | `/bin/bash .harness/bin/harness gc` |
+| 導入コピーの drift | なし | `harness status` |
+| 決定 | 0001〜**0009** | `docs/decisions/` |
+| 題材 | **5 題材完了**（cross-env / check-speed / onboarding-polish / no-silent-failures / **writeback-sensors は承認待ち**） | `docs/plans/` |
+| 技術負債 | 未着手は **#1 #2 #9 #10 #16 #17 #18**（#17 #18 はこの題材で起票）。返済済みと打ち切りの内訳はファイルを見る | `docs/tech-debt.md` |
 
 ## NEXT（依存順。順序制約があれば明記）
 
-1. **進行中: `writeback-sensors` の T02 から**（`docs/plans/active/writeback-sensors.md`、`.harness/state/` に進行状態あり）。**統括の書き戻し漏れを検査に落とす**題材で、3 タスク中 T01 が done。
-   - **T02**: `handoff` の雛形（`harness/docs-template/handoff.md`）と `session-handoff` スキルから、**手で書くと腐る数値を外す**（検査件数や `doctor` の内訳のような、コマンド 1 回で分かるもの）。代わりに「何を叩けば分かるか」を書く。**このリポジトリ自身の `docs/handoff.md` も直す**
-   - **T03**: `gc` が **`spec` の状態欄と計画の状態の食い違い**も見る。判定は T04（no-silent-failures）で作った「装飾と括弧を落とした中核語」の仕組みを再利用する
-   - **3 タスクとも逐次**（`gc.sh` と CHANGELOG が競合する。並列可否は「触るファイルが重なるか」ではなく「`update` のような全体同期コマンドを含むか」で見る。`docs/learnings.md` 2026-09-21）
-2. **この題材が終わったら `DESIGN.md` §11 の dogfood 項目（まだ ⬜）を埋める。** 2026-09-21〜22 に `task-orchestrate` を 2 周回した実測があるのに書き戻していない（**統括の書き戻し漏れがまた 1 件**）。確かめること として挙がっているのは「再試行『新しい 1 体』の精度とコスト」「Codex でのパス限定規律」「`checks.sh` に何を登録すると効くか」「統括が迷う箇所」。
-   **あわせて「セッションの切り方」も書き戻す**: `DESIGN.md` §5 は「統括のセッションを切らない」と解釈したことを**事実ではなく解釈**と明記し、dogfood で確かめるとしている。2026-09-22 のこのセッションは **12 タスクを 1 セッションで通してしまい、原則（`task-orchestrate` §2.3「タスクが完了したら切る」）から外れた**。T02 以降は**タスクごとにセッションを切って**進め、`session-catchup` と `task-orchestrate` §0 が実際に機能するかを確かめる。
-3. **未着手の負債**: #16（`.claude/settings.json` の case 衝突。実害は限定的で既存挙動）、#1（settings.json の node 依存）#2（gc のヒューリスティック）#9（init の perms）#10（常駐サーバの trap 統合）。
-2. ~~**次の題材は `#15` が有力。**~~ **返済済み（2026-09-21、T01）。** `bin/harness` の `hash_server_start`（`init` / `update` / `status` / `diff` が呼ぶ）が、`exec 3<>... 2>/dev/null` という**コマンドを伴わない `exec`** のせいで**その後のシェル全体の stderr を恒久的に `/dev/null` へ**流している。結果、`mkdir -p` の失敗などが**無言終了**になり、`manifest.json` が作られないので `status` / `doctor` は「未導入」としか言わない（中途半端に配られた約 28 ファイルの残骸に誰も気づけない）。**2026-09-21 の最終レビューで見つかり、反証で「起点 `24c3eac` の時点から在る既存バグ」と切り分けられた**ので、今回の題材では直さず起票した。**エラーが見えないのは診断の土台を壊すので、優先度は高い。**
-3. ~~**#14**（case 衝突の検出は `seed` のみ）~~ **返済済み。** `managed`（2026-09-21、T02）に続き **`generated` も対象になった**（2026-09-22、T05）。**`.claude/settings.json` だけは引き続き対象外**で、[#16](tech-debt.md) として起票してある（`merge_claude_settings` は manifest の管理下に無く B12 が原理的に検出できない。ただし**実害は報告と逆向き**で、既存挙動であることが反証で分かっている）。
-4. **実プロジェクトへの初導入をやった（2026-09-21）。** `/Users/fukasawa-takumi/Documents/developer/aesthetic-comparison`（Next.js、既存の `AGENTS.md` と手書き docs 11 ファイルあり）に `harness init` を実行。**既存資産は無傷**（変更は `.gitignore` / `AGENTS.md` / `CLAUDE.md` の 3 ファイルに 65 行追加のみ、既存 docs は 0 件変更）で、`AGENTS.md` は Next.js が自動で足すブロック（`<!-- BEGIN:nextjs-agent-rules -->`）とも共存した。`doctor` FAIL 0 / `gc` 問題なし / `check` pass=2 まで持っていったが、**コミットはしていない**（ユーザーの判断待ち）。
-   - **そこで #13 を発見**（seed の case 衝突）。その場は `git mv docs/HANDOFF.md docs/handoff.md` で解消した
-   - **残りの一手**: 向こうの `.harness/checks.sh` はまだ seed の 2 件だけ。Next.js プロジェクトなので `npm run lint` / `tsc --noEmit` / `next build` を登録すると「完了の客観条件」が機能し始める
-5. （参考）**その他の未着手の負債**:
-   - **#1**（`.claude/settings.json` の自動マージが node 前提。無い環境では断片を手で反映）— 配布の穴。jq 対応か bash だけの簡易マージ
-   - **#2**（`harness gc` の判定がヒューリスティック）— 誤検知が出たら精度を上げる、という保留のまま
-   - **#9**（`init` 直後の perms が docs=0600 / スクリプト=0711）— まだ実害を踏んでいない
-   - **#10**（ハッシュ常駐サーバが中断時に一時ディレクトリを残す）— `trap` の統合が要る
-   **どれも低優先。** 新しい題材（spec から書く）を立てるほうが自然なら、そちらを先に決める。
-6. **人間の作業が 1 つある（任意）: このリポジトリで Codex の hook を信頼する。** `doctor` の WARN 1 はこれ。ディレクトリで `codex` を起動し、プロジェクトの信頼を求められたら信頼したうえで `/hooks` で hook を信頼すると消える（各 PC で 1 回。git には乗らない）。**Codex をこの PC で使わないなら放置してよい。**
-3. （参考）**未着手の負債**: #1（settings.json の node 依存）#2（gc のヒューリスティック）#7（`tests/source.sh` への分離）#9（init の perms）#10（常駐サーバの trap 統合）。いずれも低優先で、関連箇所を触るときに一緒に返す。
+1. **ユーザーの承認 → writeback-sensors をクローズする。** 承認が取れたら: `docs/spec/writeback-sensors.md` の状態欄を「完了（承認済み）」に、`docs/plans/active/writeback-sensors.md` を `docs/plans/completed/` へ `git mv`、`.harness/state/` を畳む。**`gc` はこの畳み忘れも検出する**ので、移し忘れれば次のセッションで警告が出る。
+2. **`DESIGN.md` の書き戻し（統括の書き戻し漏れが 3 件たまっている）。** この題材が終わったら着手する。
+   - **§11 の状態行が「0.3.0（2026-09-17）」のまま。** 実際は **0.7.1**。5 日・5 題材ぶんの化石
+   - **⬜3 dogfood**: `task-orchestrate` を 5 題材ぶん回した実測があるのに未記入。確かめること として挙がっているのは「再試行『新しい 1 体』の精度とコスト」「Codex でのパス限定規律」「`checks.sh` に何を登録すると効くか」「統括が迷う箇所」
+   - **⬜6 `curl | bash` init**: [tech-debt #4](tech-debt.md) は「**返済済（2026-09-21）**」、macOS も #3 で実機確認済みなのに、表は ⬜ かつ「macOS / Linux 未確認」のまま
+   - **あわせて「セッションの切り方」も書き戻す**: `DESIGN.md` §5 は「統括のセッションを切らない」と解釈したことを**事実ではなく解釈**と明記し、dogfood で確かめるとしている。**2026-09-22 のセッションは 6 タスク + レビュー 4 体を 1 セッションで通してしまい、`task-orchestrate` §2.3「タスクが完了したら切る」から外れた**（前回も同じことを書いて、また守れていない）。**「守れない原則」なら原則の方を直すべきで、その判断こそ dogfood の成果**
+3. **未着手の負債**（どれも低優先。関連箇所を触るときに一緒に返す）:
+   - **#17**（`gc` の docs 全体スキャンが plans の規模で重い）— 合成データで 9.2s 残る。**`gc` が 3 秒を超えたら着手**。T04 と同じ「全体を 1 回走査して対応表を作る」手が使えるはず
+   - **#18**（A の sensor は同一セッション内の書き戻し漏れを検出しない）— 閾値を下げる案は落選済み。**別の角度が要る**（`progress.json` の `phase` と handoff の突き合わせ、または session-handoff を通らずにセッションが終わること自体の検出）
+   - **#16**（`.claude/settings.json` の case 衝突）— 実害は反証で覆っており、既存挙動。**実際の被害事例が出るまで着手しない**
+   - #1（settings.json の node 依存）/ #2（gc のヒューリスティック）/ #9（init の perms）/ #10（常駐サーバの trap 統合）
+4. **実プロジェクト（`aesthetic-comparison`）の続き（2026-09-21 に初導入済み、コミットは未）。** 向こうの `.harness/checks.sh` はまだ seed の 2 件だけ。Next.js プロジェクトなので `npm run lint` / `tsc --noEmit` / `next build` を登録すると「完了の客観条件」が機能し始める。
+5. **（任意・人間の作業）このリポジトリで Codex の hook を信頼する。** `doctor` の WARN 1 件はこれ。ディレクトリで `codex` を起動し、プロジェクトを信頼したうえで `/hooks` で hook を信頼すると消える（各 PC で 1 回。git には乗らない）。**Codex をこの PC で使わないなら放置してよい。**
 
 ## 別の PC で再開するとき
 
@@ -74,7 +54,7 @@ B2 の中身は (1) `doctor` の B5（改行）を一括判定に（337→253ms�
 | **`.harness/source.local`** | `echo '<clone した絶対パス>' > .harness/source.local`。無いと `update` / `diff` / `upstream` が公開 URL を見に行く。`doctor` が WARN で直し方ごと案内する |
 | **`core.hooksPath`** | `git config core.hooksPath .githooks`。`.git/config` は clone で引き継がれない |
 | ~~`.githooks/pre-commit` の実行ビット~~ | **T02 で不要になった。** index が 100755 になったので clone しただけで実行ビットが付く。`doctor` の B6 も実行可否まで見る（`core.filemode=false` の Windows では偽警告を出さない） |
-| `.harness/state/` | **`writeback-sensors` が進行中**（`phase: iterate` / `current_task: T02`）。捨てた場合は `docs/plans/active/writeback-sensors.md` と git log から再構成する |
+| `.harness/state/` | **`writeback-sensors` は `phase: done`**（全 6 タスク done、最終レビュー済み、承認待ち）。`reports/` にタスクとレビューの報告が入っている。捨てた場合は `docs/plans/active/writeback-sensors.md` と git log から再構成する |
 
 ### macOS の場合
 
@@ -103,12 +83,13 @@ git config core.hooksPath .githooks
 
 ## 未確定事項（人間の判断待ち）
 
-- なし。B6 の重大度は [決定 0007](decisions/0007-hook-not-executable-is-fail.md) で **FAIL に上げる**と合意し、T04 として切り出した。準備フェーズの 3 件も合意済み（spec の「合意済みの決定」と決定 0006）。
+- **`writeback-sensors` を完了としてよいか（承認待ち）。** A / B / C をすべて満たし、最終レビューの指摘 7 件も処理済み。**未解決の指摘が 1 件だけ残っている**: `tests/gc.sh` の G24 がフルスイート初回実行で単発 FAIL したという報告（直後の単体実行は PASS、フルスイート 18 回連続では再現せず、原因未特定）。重大度を下げて `.harness/state/progress.json` の `final_review.unresolved_findings` に記録してある。**再発したら G24 の一時ディレクトリと git 初期化まわりを最初に疑う。**
 
 ## このセッションで触らなかったが確認したもの
 
-- **`harness/adapters/codex/README.md`**: Codex 側の事実は公式 docs 確認済み（2026-09-17）だが、**実機確認はこれから**（spec の B2）。Codex CLI はこの機に入っている。
+- **`DESIGN.md`**: §11 に書き戻し漏れが 3 件あることを確認したが、題材の途中だったので直していない（NEXT 2）。
+- **`docs/learnings.md`**: 今回は新しい罠を踏んでいない（過去の学び「並列可否は全体同期コマンドの有無で見る」に従って 6 タスクすべて逐次にし、事故は起きなかった）。
+- **`harness/adapters/codex/README.md`**: Codex 側の事実は公式 docs 確認済み（2026-09-17）。
 - **古い macOS（15 未満）の経路**: `sha256sum` / `jq` が無い前提のコードは、この機では確かめられていない（tech-debt #3 の残り）。
 - **`harness init` の perms**: 新規導入直後が docs=0600 / スクリプト=0711 になる。踏んでいないので直していない（tech-debt #9）。
-- **`core.hooksPath` 未設定 / `.githooks/pre-commit` 自体が無いケース**: B6 の別分岐で、**WARN のまま**（決定 0007 のスコープ外。T04 の申し送り）。clone 直後の正常な途中状態でもあり、直し方も案内済み。「門番が不在なら FAIL」の論理をここまで広げるかは未検討。
-- **T05 で受け入れ条件を実測で調整した点**: C3 のスタブ化は「`ln -s` も `cp` も失敗したら落とす」と指示したが、実装役は `/usr/bin/sudo`（setuid・所有者以外読み取り不可）で `cp` が Permission denied になる実例を踏み、**「1 件も stub 化できなかったときだけ失敗」**に変えた。判断は妥当だが、**診断に要るコマンド（git / sed）だけが失敗したケースは依然見逃す**。実害が出たら区別を足す。
+- **`core.hooksPath` 未設定 / `.githooks/pre-commit` 自体が無いケース**: `doctor` B6 の別分岐で **WARN のまま**（決定 0007 のスコープ外）。clone 直後の正常な途中状態でもある。
