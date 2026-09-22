@@ -96,6 +96,20 @@ commit_docs_nonascii_only() { # <n> -> docs/ 内の非 ASCII ファイル名だ�
   done
 }
 
+commit_mixed() { # <n> -> 1 コミットで docs/ の中と外の両方を触るコミットを n 回作る
+                 # （A3: docs と docs 以外が混在する 1 コミット。決定ログで選んだ「docs 以外を
+                 # 1 つでも含めば数える」という解釈の核心ケース。commit_non_docs / commit_docs_only
+                 # はどちらも 1 コミット 1 種類のファイルしか触らないので、この混在は別途要る）。
+  local n="$1" i
+  mkdir -p "$PROJ/src" || return 1
+  for i in $(seq 1 "$n"); do
+    printf '<!-- note %s -->\n' "$i" >>"$PROJ/docs/README.md"
+    printf 'x%s\n' "$i" >"$PROJ/src/f$i.txt"
+    ( cd "$PROJ" && git add -A &&
+      git -c user.email=t@t -c user.name=t commit -q -m "mixed $i" ) >/dev/null 2>&1 || return 1
+  done
+}
+
 # ---------------------------------------------------------------- 枠
 scenario() { # <名前> <setup関数> <expect関数>
   local name="$1" setup="$2" expect="$3"
@@ -500,11 +514,15 @@ scenario "G21: spec と計画（completed/）がどちらも完了なら報告�
   setup_spec_plan_match_completed expect_spec_plan_match_completed
 
 # G22. C3: 対応する計画が無い spec（どの計画からも参照されていない）は警告しない。
-# 実物: docs/spec/check-speed.md（完了扱いだが専用の計画ファイルを持たない）。
+# 実物: docs/spec/check-speed.md（完了扱いだが専用の計画ファイルを持たない）。spec 状態は
+# 実物と同じ「完了」にする（レビュー指摘: 以前は「合意済み」＝未完了だったため、C3 のガード
+# （`[ -z "$plan_file" ] && continue`）を削除しても plan_file="" の既定値 plan_complete=0 と
+# 偶然一致して見逃していた。「完了」なら spec_complete=1 になり、ガードが無いと必ず食い違いを
+# 誤検知する）。
 setup_spec_no_matching_plan() {
   new_proj || return 1
   mkdir -p "$PROJ/docs/spec" || return 1
-  printf '# foo\n\n状態: **合意済み**\n' >"$PROJ/docs/spec/foo.md"
+  printf '# foo\n\n状態: **完了**\n' >"$PROJ/docs/spec/foo.md"
   commit_all
 }
 expect_spec_no_matching_plan() {
@@ -579,6 +597,24 @@ expect_commit_freshness_nonascii_docs_only_not_counted() {
 }
 scenario "G25: 非 ASCII ファイル名の docs だけのコミットも commit ベースの鮮度に数えない（A3・core.quotePath）" \
   setup_commit_freshness_nonascii_docs_only_not_counted expect_commit_freshness_nonascii_docs_only_not_counted
+
+# G26. A3: docs と docs 以外が混在する 1 コミットは「docs 以外を触ったコミット」として数える
+# （最終レビュー指摘: docs/plans/active/writeback-sensors.md の決定ログで明示的に選んだ解釈
+# 「docs 以外を 1 つでも含めば数える」の核心ケース。G14/G17/G25 はどれも 1 コミット 1 種類の
+# ファイルしか触らないので、混在コミットを数え損ねる劣化（「1 つでも docs を含めば数えない」と
+# いう却下された解釈への先祖返り）が起きても他のシナリオでは検知できない）。
+setup_commit_freshness_mixed_counted() {
+  new_proj_committed || return 1
+  commit_mixed 10
+}
+expect_commit_freshness_mixed_counted() {
+  run_gc
+  expect_out '最終更新から docs 以外を触ったコミットが 10 件進んでいる'
+  expect_not_out '問題なし'
+  expect_code 0
+}
+scenario "G26: docs と docs 以外が混在する 1 コミットは docs 以外を触ったコミットとして数える（A3）" \
+  setup_commit_freshness_mixed_counted expect_commit_freshness_mixed_counted
 
 # ================================================================ 集計
 echo
