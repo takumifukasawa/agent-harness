@@ -61,6 +61,32 @@ set_handoff_date() { # <日付文字列>
   printf '# handoff\n\n最終更新: %s\n' "$1" >"$PROJ/docs/handoff.md"
 }
 
+new_proj_committed() { # new_proj に加え、handoff/README を 1 回コミットする（commit ベースの鮮度判定の起点を作る）
+  new_proj || return 1
+  ( cd "$PROJ" && git add -A &&
+    git -c user.email=t@t -c user.name=t commit -q -m init ) >/dev/null 2>&1 ||
+    { errors+=("setup: 初回コミットに失敗した"); return 1; }
+}
+
+commit_non_docs() { # <n> -> docs/ の外だけを触るコミットを n 回作る（同じコミットで日付は今日のまま）
+  local n="$1" i
+  mkdir -p "$PROJ/src" || return 1
+  for i in $(seq 1 "$n"); do
+    printf 'x%s\n' "$i" >"$PROJ/src/f$i.txt"
+    ( cd "$PROJ" && git add -A &&
+      git -c user.email=t@t -c user.name=t commit -q -m "work $i" ) >/dev/null 2>&1 || return 1
+  done
+}
+
+commit_docs_only() { # <n> -> docs/ の中（README.md への追記）だけを触るコミットを n 回作る（handoff には触らない）
+  local n="$1" i
+  for i in $(seq 1 "$n"); do
+    printf '<!-- note %s -->\n' "$i" >>"$PROJ/docs/README.md"
+    ( cd "$PROJ" && git add -A &&
+      git -c user.email=t@t -c user.name=t commit -q -m "docs note $i" ) >/dev/null 2>&1 || return 1
+  done
+}
+
 # ---------------------------------------------------------------- 枠
 scenario() { # <名前> <setup関数> <expect関数>
   local name="$1" setup="$2" expect="$3"
@@ -327,6 +353,97 @@ expect_plan_review_in_progress_no_false_positive() {
 }
 scenario "G13: タスク表が全 done でも状態欄がレビュー中（末尾が「中」）なら誤検知しない（最終レビュー中の実物）" \
   setup_plan_review_in_progress_no_false_positive expect_plan_review_in_progress_no_false_positive
+
+# G14. A1/A2（spec writeback-sensors A）: docs/handoff.md を最後に触ったコミットより後、
+# docs 以外を触ったコミットが既定閾値（10）ちょうどあれば、日付とは無関係に報告する
+# （同じ日に何コミットしても「古く」ならない、という日数ベースの穴を埋める）。
+setup_commit_freshness_default() {
+  new_proj_committed || return 1
+  commit_non_docs 10
+}
+expect_commit_freshness_default() {
+  run_gc
+  expect_out '最終更新から docs 以外を触ったコミットが 10 件進んでいる'
+  expect_not_out '問題なし'
+  expect_code 0
+}
+scenario "G14: 既定閾値(10件)ちょうどの非 docs コミットで commit ベースの鮮度を報告する" \
+  setup_commit_freshness_default expect_commit_freshness_default
+
+# G15. G14 の境界: 閾値未満（9 件）なら報告しない（「常に報告する」実装で通ってしまわないようにする）
+setup_commit_freshness_below_default() {
+  new_proj_committed || return 1
+  commit_non_docs 9
+}
+expect_commit_freshness_below_default() {
+  run_gc
+  expect_not_out '最終更新から docs 以外を触ったコミットが'
+  expect_out '問題なし'
+  expect_code 0
+}
+scenario "G15: 既定閾値未満(9件)の非 docs コミットでは commit ベースの鮮度を報告しない" \
+  setup_commit_freshness_below_default expect_commit_freshness_below_default
+
+# G16. A2: --commits で閾値を調整できる（--days と同じ流儀）
+setup_commit_freshness_option() {
+  new_proj_committed || return 1
+  commit_non_docs 5
+}
+expect_commit_freshness_option() {
+  run_gc --commits 3
+  expect_out '最終更新から docs 以外を触ったコミットが 5 件進んでいる（閾値 3）'
+  run_gc --commits 10
+  expect_not_out '最終更新から docs 以外を触ったコミットが'
+}
+scenario "G16: --commits でコミット数ベースの鮮度の閾値が変わる" \
+  setup_commit_freshness_option expect_commit_freshness_option
+
+# G17. A3: docs/ だけを触ったコミットは数えない（handoff を直すたびに次の警告が積まれるのを防ぐ）
+setup_commit_freshness_docs_only_not_counted() {
+  new_proj_committed || return 1
+  commit_docs_only 15
+}
+expect_commit_freshness_docs_only_not_counted() {
+  run_gc
+  expect_not_out '最終更新から docs 以外を触ったコミットが'
+  expect_out '問題なし'
+  expect_code 0
+}
+scenario "G17: docs だけを触ったコミットは commit ベースの鮮度に数えない（A3）" \
+  setup_commit_freshness_docs_only_not_counted expect_commit_freshness_docs_only_not_counted
+
+# G18. A4: 日数ベースとコミット数ベースは別々に報告される（どちらの理由で古いのかが読み手に分かる）。
+# handoff の内容は初回コミット時点で古い日付にしておき（以後は触らない）、その後 docs 以外の
+# コミットを積む。日数は現在のファイル内容から、コミット数は git 履歴から、それぞれ独立に出る。
+setup_both_stale() {
+  new_proj || return 1
+  set_handoff_date "$(days_ago 100)"
+  ( cd "$PROJ" && git add -A &&
+    git -c user.email=t@t -c user.name=t commit -q -m init ) >/dev/null 2>&1 ||
+    { errors+=("setup: 初回コミットに失敗した"); return 1; }
+  commit_non_docs 10
+}
+expect_both_stale() {
+  run_gc
+  expect_out '最終更新が 1[0-9][0-9] 日前'
+  expect_out '最終更新から docs 以外を触ったコミットが 10 件進んでいる'
+  expect_not_out '問題なし'
+  expect_code 0
+}
+scenario "G18: 日数ベースとコミット数ベースは別々に報告される（A4）" setup_both_stale expect_both_stale
+
+# G19. handoff がまだ一度もコミットされていない場合は、commit ベースの判定を（クラッシュせず）
+# 黙ってスキップする（git log がアンカーを取れないので「〜以降」を数えようがない）。
+setup_handoff_never_committed() {
+  new_proj  # あえて commit しない
+}
+expect_handoff_never_committed() {
+  run_gc
+  expect_not_out '最終更新から docs 以外を触ったコミットが'
+  expect_code 0
+}
+scenario "G19: handoff が未コミットなら commit ベースの鮮度判定をスキップする（クラッシュしない）" \
+  setup_handoff_never_committed expect_handoff_never_committed
 
 # ================================================================ 集計
 echo

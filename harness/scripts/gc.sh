@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # harness gc — docs の腐敗を機械的に検知して一覧にする（判断と修正はしない。LLM も使わない）。
 #
-# 使い方:  bash .harness/scripts/gc.sh [--days N] [--strict]
-#   --days N   鮮度の閾値（既定 14 日）
-#   --strict   1 件でも見つかれば exit 1（CI 用）。既定は常に exit 0
+# 使い方:  bash .harness/scripts/gc.sh [--days N] [--commits N] [--strict]
+#   --days N     鮮度の閾値（既定 14 日）
+#   --commits N  handoff 以降 docs 以外を触ったコミットがこの件数以上なら報告する（既定 10）
+#   --strict     1 件でも見つかれば exit 1（CI 用）。既定は常に exit 0
 #
 # 見るもの:
-#   1. docs/handoff.md の「最終更新:」が無い / 雛形のまま / N 日より古い
+#   1. docs/handoff.md の「最終更新:」が無い / 雛形のまま / N 日より古い。
+#      加えて、最後に handoff.md を触ったコミットより後に docs 以外を触ったコミットが N 件
+#      あれば別途報告する（同じ日に何コミットしても日数だけでは古いと判定できないため。
+#      spec: docs/spec/writeback-sensors.md 節 A）
 #   2. docs/README.md（索引）にリンクされた doc が存在しない
 #   3. docs/ 直下の .md が索引に無い
 #   4. docs/**/*.md の相対リンク切れ
@@ -20,10 +24,11 @@
 #       (b) 状態欄が「完了」で始まる（部分文字列一致ではない）のに active/ のまま）
 set -u
 
-DAYS=14; STRICT=0
+DAYS=14; STRICT=0; COMMITS=10
 while [ $# -gt 0 ]; do
   case "$1" in
     --days) DAYS="$2"; shift 2;;
+    --commits) COMMITS="$2"; shift 2;;
     --strict) STRICT=1; shift;;
     *) echo "unknown option: $1" >&2; exit 2;;
   esac
@@ -81,6 +86,34 @@ if [ -f "$DOCS/handoff.md" ]; then
   else
     d=$(days_since "$upd") && [ "$d" -gt "$DAYS" ] && report WARN "docs/handoff.md の最終更新が ${d} 日前（${upd}）" "現在地が古い。session-handoff で更新するか、休止中なら明記する"
   fi
+
+  # 1b. handoff の鮮度（コミット数）。日数とは独立に判定する（A4）: 同じ日に何コミットしても
+  # 日数ベースでは古いと判定できない（実際に 10 コミット取り逃した。tech-debt / spec
+  # writeback-sensors 節 A）。docs/handoff.md を最後に触ったコミットより後を数え、docs/ だけを
+  # 触ったコミットは除く（A3。handoff を直すたびに次の警告が積まれるのを防ぐ）。
+  # git 呼び出しは 1 回（git log --name-only）に抑える。コミットごとに diff-tree を呼ぶと
+  # コミット数が多いリポジトリで遅くなり、gc が誰にも回されなくなる（1 秒で終わる現状を壊さない）。
+  handoff_anchor=$(git log -1 --format=%H -- "$DOCS/handoff.md" 2>/dev/null)
+  if [ -n "$handoff_anchor" ]; then
+    non_docs_since=0; in_commit=0; cur_non_docs=0
+    while IFS= read -r line; do
+      case "$line" in
+        __gc_commit__*)
+          [ "$in_commit" = 1 ] && [ "$cur_non_docs" = 1 ] && non_docs_since=$((non_docs_since + 1))
+          in_commit=1; cur_non_docs=0
+          ;;
+        docs/*|"") ;;
+        *) cur_non_docs=1 ;;
+      esac
+    done < <(git log --format='__gc_commit__%H' --name-only "${handoff_anchor}..HEAD" 2>/dev/null)
+    [ "$in_commit" = 1 ] && [ "$cur_non_docs" = 1 ] && non_docs_since=$((non_docs_since + 1))
+    [ "$non_docs_since" -ge "$COMMITS" ] && report WARN \
+      "docs/handoff.md の最終更新から docs 以外を触ったコミットが ${non_docs_since} 件進んでいる（閾値 ${COMMITS}）" \
+      "session-handoff で現在地を書く（同じ日でも積み上がったコミット数で古さを見ている）"
+  fi
+  # handoff_anchor が空（まだ一度もコミットされていない、または git リポジトリでない）ときは、
+  # 「〜以降」を数える起点が無いのでこの判定は黙ってスキップする（誤検知よりは沈黙を選ぶ。
+  # 日数ベースの判定は上で別途効いている）。
 else
   report ERR "docs/handoff.md が無い" "docs-template/handoff.md から作る"
 fi
