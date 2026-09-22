@@ -1,6 +1,6 @@
 # handoff — 現在地
 
-最終更新: 2026-09-22（**題材 no-silent-failures 完了**。T01〜T06、レビュー指摘 10 件も処理済み。#14 #15 を返済し #16 を起票。検査は **22 件**。2026-09-21 にはほかに check-speed / cross-env / onboarding-polish の 3 題材を完了し、実プロジェクトへの初導入も済ませた）
+最終更新: 2026-09-22（**題材 writeback-sensors の T01 まで完了、T02 から再開**。前の題材 no-silent-failures は完了済み。2026-09-21〜22 で 4 題材を完了し、実プロジェクトへの初導入も済ませた）
 
 ## いま何をしているか（1〜3 行）
 
@@ -31,15 +31,19 @@ B2 の中身は (1) `doctor` の B5（改行）を一括判定に（337→253ms�
 | macOS の素の bash | **3.2.57 のまま動く**（決定 0006 で「3.2 を切らない」と決めた）。`brew install bash` は**もう要らない** | 決定 0006 |
 | 導入コピーの drift | なし（modified=0 missing=0）。**T02 以降 `update` は mode 差分も残さない**（実行ビットを index の正にしたため） | `harness status` |
 | 決定 | 0001〜**0007**（0007: フックが実行不可なら doctor は FAIL） | `docs/decisions/` |
-| 題材 | **4 題材すべて完了**（cross-env / check-speed / onboarding-polish / no-silent-failures。`docs/plans/completed/`）。`docs/plans/active/` は空 | `docs/plans/` |
+| 題材 | **4 題材完了**（cross-env / check-speed / onboarding-polish / no-silent-failures）。**`writeback-sensors` が進行中**（T01 done / T02・T03 が残り） | `docs/plans/` |
 | 最終レビュー | 観点 4 つ（仕様突合 / **機能の完結性** / **クロス環境** / **検査の実効性**。後ろ 2 つは既定の「並行性 / 認可」から差し替え）を下位モデルで並列。**指摘 4 件、すべて単独報告かつ修正コスト低なので反証は回していない**（条件は両方満たす場合のみ） | `.harness/state/reports/review-*.md` |
 | 技術負債 | **#4 #7 #8 #11 #12 #13 #14 #15 は返済済**、**#6 は打ち切り**（決定 0008）、**#3 はほぼ返済済**。未着手は **#1 #2 #9 #10 #16** | `docs/tech-debt.md` |
 
 ## NEXT（依存順。順序制約があれば明記）
 
-**フェーズ 1 と check-speed は閉じた。次は cross-env のフェーズ 2（Codex）。**
-
-1. **次の題材は未定。** `no-silent-failures` は完了（`docs/plans/completed/`）。**統括を機械で縛る仕組みが 1 つ入った**（`gc` が「計画のタスク表と状態欄の矛盾」を見る）。この題材で残った未着手は **#16**（`.claude/settings.json` の case 衝突。実害は限定的）と、既存の #1 #2 #9 #10。
+1. **進行中: `writeback-sensors` の T02 から**（`docs/plans/active/writeback-sensors.md`、`.harness/state/` に進行状態あり）。**統括の書き戻し漏れを検査に落とす**題材で、3 タスク中 T01 が done。
+   - **T02**: `handoff` の雛形（`harness/docs-template/handoff.md`）と `session-handoff` スキルから、**手で書くと腐る数値を外す**（検査件数や `doctor` の内訳のような、コマンド 1 回で分かるもの）。代わりに「何を叩けば分かるか」を書く。**このリポジトリ自身の `docs/handoff.md` も直す**
+   - **T03**: `gc` が **`spec` の状態欄と計画の状態の食い違い**も見る。判定は T04（no-silent-failures）で作った「装飾と括弧を落とした中核語」の仕組みを再利用する
+   - **3 タスクとも逐次**（`gc.sh` と CHANGELOG が競合する。並列可否は「触るファイルが重なるか」ではなく「`update` のような全体同期コマンドを含むか」で見る。`docs/learnings.md` 2026-09-21）
+2. **この題材が終わったら `DESIGN.md` §11 の dogfood 項目（まだ ⬜）を埋める。** 2026-09-21〜22 に `task-orchestrate` を 2 周回した実測があるのに書き戻していない（**統括の書き戻し漏れがまた 1 件**）。確かめること として挙がっているのは「再試行『新しい 1 体』の精度とコスト」「Codex でのパス限定規律」「`checks.sh` に何を登録すると効くか」「統括が迷う箇所」。
+   **あわせて「セッションの切り方」も書き戻す**: `DESIGN.md` §5 は「統括のセッションを切らない」と解釈したことを**事実ではなく解釈**と明記し、dogfood で確かめるとしている。2026-09-22 のこのセッションは **12 タスクを 1 セッションで通してしまい、原則（`task-orchestrate` §2.3「タスクが完了したら切る」）から外れた**。T02 以降は**タスクごとにセッションを切って**進め、`session-catchup` と `task-orchestrate` §0 が実際に機能するかを確かめる。
+3. **未着手の負債**: #16（`.claude/settings.json` の case 衝突。実害は限定的で既存挙動）、#1（settings.json の node 依存）#2（gc のヒューリスティック）#9（init の perms）#10（常駐サーバの trap 統合）。
 2. ~~**次の題材は `#15` が有力。**~~ **返済済み（2026-09-21、T01）。** `bin/harness` の `hash_server_start`（`init` / `update` / `status` / `diff` が呼ぶ）が、`exec 3<>... 2>/dev/null` という**コマンドを伴わない `exec`** のせいで**その後のシェル全体の stderr を恒久的に `/dev/null` へ**流している。結果、`mkdir -p` の失敗などが**無言終了**になり、`manifest.json` が作られないので `status` / `doctor` は「未導入」としか言わない（中途半端に配られた約 28 ファイルの残骸に誰も気づけない）。**2026-09-21 の最終レビューで見つかり、反証で「起点 `24c3eac` の時点から在る既存バグ」と切り分けられた**ので、今回の題材では直さず起票した。**エラーが見えないのは診断の土台を壊すので、優先度は高い。**
 3. ~~**#14**（case 衝突の検出は `seed` のみ）~~ **返済済み。** `managed`（2026-09-21、T02）に続き **`generated` も対象になった**（2026-09-22、T05）。**`.claude/settings.json` だけは引き続き対象外**で、[#16](tech-debt.md) として起票してある（`merge_claude_settings` は manifest の管理下に無く B12 が原理的に検出できない。ただし**実害は報告と逆向き**で、既存挙動であることが反証で分かっている）。
 4. **実プロジェクトへの初導入をやった（2026-09-21）。** `/Users/fukasawa-takumi/Documents/developer/aesthetic-comparison`（Next.js、既存の `AGENTS.md` と手書き docs 11 ファイルあり）に `harness init` を実行。**既存資産は無傷**（変更は `.gitignore` / `AGENTS.md` / `CLAUDE.md` の 3 ファイルに 65 行追加のみ、既存 docs は 0 件変更）で、`AGENTS.md` は Next.js が自動で足すブロック（`<!-- BEGIN:nextjs-agent-rules -->`）とも共存した。`doctor` FAIL 0 / `gc` 問題なし / `check` pass=2 まで持っていったが、**コミットはしていない**（ユーザーの判断待ち）。
@@ -70,7 +74,7 @@ B2 の中身は (1) `doctor` の B5（改行）を一括判定に（337→253ms�
 | **`.harness/source.local`** | `echo '<clone した絶対パス>' > .harness/source.local`。無いと `update` / `diff` / `upstream` が公開 URL を見に行く。`doctor` が WARN で直し方ごと案内する |
 | **`core.hooksPath`** | `git config core.hooksPath .githooks`。`.git/config` は clone で引き継がれない |
 | ~~`.githooks/pre-commit` の実行ビット~~ | **T02 で不要になった。** index が 100755 になったので clone しただけで実行ビットが付く。`doctor` の B6 も実行可否まで見る（`core.filemode=false` の Windows では偽警告を出さない） |
-| `.harness/state/` | フェーズ 1 の記録（`phase: done`）。**フェーズ 2 を始めるときに作り直す**。捨てた場合は `docs/plans/active/cross-env.md` と git log から再構成する |
+| `.harness/state/` | **`writeback-sensors` が進行中**（`phase: iterate` / `current_task: T02`）。捨てた場合は `docs/plans/active/writeback-sensors.md` と git log から再構成する |
 
 ### macOS の場合
 
