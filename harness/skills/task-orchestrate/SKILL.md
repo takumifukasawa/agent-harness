@@ -41,7 +41,7 @@ CLI は `bash .harness/bin/harness <cmd>`（以下 `harness` と略す。PATH �
    - `rules`: 守らせる規律ファイル（該当パスの `AGENTS.md`）。無い場合は空配列にし、指示に「規律はルート AGENTS.md のみ」と書く。
    - `files_scope`: 触ってよい範囲。
    - `depends_on`: 先に終わっていなければならないタスク id。
-   - `model`: そのエージェントで有効なモデル名。設計余地あり（データモデル・状態遷移）→ 上位、決まった型で足す・テスト追加 → 下位。Codex はサブエージェント単位のモデル指定が無いので `inherit`。
+   - `model`: そのエージェントで有効なモデル名。設計余地あり（データモデル・状態遷移）→ 上位、決まった型で足す・テスト追加 → 下位。**Claude / Codex ともタスク単位で指定できる**（Claude はサブエージェント起動時に、Codex は `codex exec --model <MODEL>` で）。メインセッションと同じでよければ `inherit`。**分解案をユーザーに提示するとき、この `model` も一緒に示す**（合意の対象）。
 7. **検査を用意する**: 各タスクの `acceptance` が `.harness/checks.sh` の検査で判定できるかを確認し、足りなければ検査を登録する（テスト実行、テスト件数 > 0、変更ファイルが `files_scope` 内、依存方向、フラグ OFF で既存挙動）。seed 直後の `checks.sh` は docs の存在確認 1 件しか無い。**このままだと検査は常に pass し、完了判定が空洞化する。**
 8. **分解案をユーザーに提示して合意**を取る。合意したら `phase: "iterate"`、`current_task` を最初のタスクに、`progress.total` をタスク数に。`docs/plans/active/<slug>.md` を作り、`progress.plan` にそのパスを入れ、`docs/handoff.md` から参照する。
 
@@ -74,7 +74,7 @@ report_path: .harness/state/reports/T03.md
 
 起動手段はエージェントで異なる。役割文は同じ（`docs/roles/implementer.md`）。
 - Claude Code: `implementer` サブエージェント（`.claude/agents/implementer.md`）を、上の指示を本文にして起動する。モデルは `stages.json` の `model` を起動時に指定する。
-- Codex: 新しいスレッドで `$role-implementer` を呼び、上の指示を渡す。統括と同じスレッドで続けない。モデル指定は無効。
+- Codex: `codex exec --sandbox workspace-write --model <stages.json の model>` で `$role-implementer` を呼び、上の指示を渡す。統括と同じスレッドで続けない。**`< /dev/null` を付ける**（付けないと stdin を読もうとして止まる。`harness/adapters/codex/README.md`）。
 - サブエージェント機構が無い環境: ユーザーに「新しいセッションで `role-implementer` を起動し、この指示を貼る」と依頼し、戻り値を受け取る。
 
 ### 2.2 戻り値を受け取る

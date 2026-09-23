@@ -11,6 +11,7 @@
 | `.harness/scripts/*.sh` | **hook は実在する（実機）**。`<repo>/.codex/hooks.json`（または `<repo>/.codex/config.toml` の `[hooks]`）／個人は `$CODEX_HOME/hooks.json` | イベントは `SessionStart` / `UserPromptSubmit` / `PreToolUse` / `PermissionRequest` / `PostToolUse` / `SubagentStart` / `SubagentStop` / `Stop` など。形式は Claude Code に近い（`{"hooks":{"<Event>":[{"hooks":[{"type":"command","command":"...","timeout":5}]}]}}`）。**hook は stdin に JSON を受ける**（`session_id` / `turn_id` / `transcript_path` / `cwd` / `hook_event_name` / `model`、PreToolUse は加えて `tool_name` / `tool_use_id` / `tool_input`） |
 | 標準 deny | **`PreToolUse` hook で拒否できる（実機）** | hook が `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"..."}}` を返すと、コマンドは実行されず `hook: PreToolUse Blocked` になり、モデルにも拒否理由が伝わる（exit 2 + stderr でも可）。**採否と配り方は [決定 0009](../../../docs/decisions/0009-codex-deny-via-pretooluse-hook.md)** |
 | `docs/roles/<role>.md` | `.agents/skills/role-<role>/SKILL.md` | `harness init/update` が生成（generated）。**`$role-implementer` のように明示呼び出しできることを実機で確認**。統括は `task-orchestrate` の手順で新しいスレッドから呼ぶ |
+| 役割ごとのモデル | `codex exec --model <MODEL>`（`-c model="..."` でも可） | **タスク単位で指定できる（2026-09-23、codex-cli 0.154.0 の `codex exec --help` で確認）**。Claude のサブエージェント単位の指定と同じ粒度なので、`stages.json` の `model` を両方のアダプタで同じように使える。以前ここは「Codex は指定できないので `inherit`」と書いていたが誤りだった |
 
 ## 実機で分かった落とし穴（2026-09-21）
 
