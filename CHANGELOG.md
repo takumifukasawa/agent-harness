@@ -3,7 +3,7 @@
 各版に「プロジェクト側で必要な作業」を必ず書く。`harness update` はこの節を表示する。
 semver: managed ファイルの移動・マーカー形式変更は major、ルール/スキルの追加は minor、文言修正は patch。
 
-## [Unreleased]
+## [0.8.0] - 2026-09-23
 
 - 追加（T01 / spec `handoff-writeback.md` / tech-debt #18）: `harness gc` が新しい項目 12 として、**`docs/plans/active/` の計画を進めたのに `docs/handoff.md` の書き戻しを忘れていないか**を検出するようになった。既存の項目 1（handoff の鮮度）は日数・コミット数の**閾値**方式で、実測（`handoff` 更新間隔ごとの非 docs コミット数の中央値 2）に基づく既定値 10 の下に、**同じ日・1 コミットの漏れが日常的に隠れる**（2026-09-22 に `writeback-sensors` の題材自身で実際に再発。計画は `cc5e85f` / `f093250` で更新されたのに `docs/handoff.md` は 1 コミット前の `38cdef5` のまま残ったが、日数ベースもコミット数ベースも発火しなかった）。項目 12 は**頻度ではなく状態の矛盾**として見る（既存の項目 10/11 と同じ方式）: `docs/plans/active/*.md` を最後に更新したコミットと `docs/handoff.md` を最後に更新したコミットの**祖先関係**（`git merge-base --is-ancestor`）だけで判定し、日数・コミット数の閾値は使わない。計画のコミットが handoff のコミットより後（かつ同一コミットではない）なら報告する。`docs/plans/active/` が空なら何も言わない。回帰は `tests/gc.sh` の G29〜G33（検出・A4 の同一コミット除外・正しく書き戻し済みの場合の非検出・空ディレクトリの非検出・handoff 未コミット時にクラッシュしないこと）。実機で確認: このリポジトリ自身は現在 `docs/plans/active/` が空なので `gc` の出力は変わらない。
 - **プロジェクト側で必要な作業**: `bash .harness/bin/harness update` で `.harness/scripts/gc.sh` が更新される。`docs/plans/active/` に計画があり、その最終更新コミットより後で `docs/handoff.md` を更新していないプロジェクトでは、`update` 後の `gc` が新たに WARN を報告するようになる（**意図した動作**。直し方は `session-handoff` の手順で `docs/handoff.md` を更新する。`gc` 自体は検出のみで自動修正はしない）。
