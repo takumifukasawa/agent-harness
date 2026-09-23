@@ -25,9 +25,13 @@
 #  11. docs/spec/*.md の「状態:」行が、対応する計画（docs/plans/）の状態と食い違っている
 #      （対応は計画側にある「spec/<ファイル名>」という参照文字列で取る。対応が取れない spec は
 #       警告しない。計画側の完了判定は状態欄の文字列ではなく active/・completed/ の置き場所で見る）
+#  12. docs/plans/active/ の計画を最後に更新したコミットより後で、docs/handoff.md が
+#      更新されていない（統括が計画を進めたのに handoff の書き戻しを忘れている。
+#      spec: docs/spec/handoff-writeback.md）。日数やコミット数の閾値は使わない
+#      （同じ日・1 コミットの漏れでも、git のコミット祖先関係だけで捕まえる）
 set -u
 
-DAYS=14; STRICT=0; COMMITS=10
+DAYS=14; STRICT=0; COMMITS=10; handoff_anchor=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --days) DAYS="$2"; shift 2;;
@@ -340,6 +344,28 @@ if [ -d "$DOCS/spec" ]; then
         "計画の実態（${plan_file} の置き場所）に合わせて $f の状態欄を書き戻す（統括の仕事）"
     fi
   done < <(find "$DOCS/spec" -maxdepth 1 -name '*.md' | sort)
+fi
+
+# 12. 計画を進めたのに handoff の書き戻しを忘れていないか（統括の書き戻し漏れ。
+#     spec: docs/spec/handoff-writeback.md）。既存の項目 1（handoff の鮮度）は日数・コミット数の
+#     閾値方式だが、実測の中央値が低いために閾値の下に日常的な漏れが隠れる（2026-09-22 に
+#     writeback-sensors で実際に再発。同じ日・非 docs コミット 1 件だったのでどちらの閾値も
+#     発火しなかった）。ここでは頻度ではなく状態の矛盾を見る: 計画を最後に更新したコミットより
+#     後で handoff が更新されていなければ、日数やコミット数に関係なく報告する。
+#     比較は日付ではなくコミットの祖先関係（`git merge-base --is-ancestor`）で行う。
+#     `.harness/state/` と違い `docs/plans/` は git 管理下なので、コミット順序がそのまま
+#     追える（日付比較に落とすと「同じ日の漏れ」を取り逃す。spec の「合意済みの決定」参照）。
+if [ -d "$DOCS/plans/active" ]; then
+  while IFS= read -r f; do
+    plan_anchor=$(git log -1 --format=%H -- "$f" 2>/dev/null)
+    [ -z "$plan_anchor" ] && continue     # 未コミットの計画は項目 5 が別途報告する
+    [ -z "$handoff_anchor" ] && continue  # handoff が一度もコミットされていなければ判定しない（沈黙を選ぶ）
+    [ "$plan_anchor" = "$handoff_anchor" ] && continue  # 同じコミットで更新（A4）
+    if git merge-base --is-ancestor "$handoff_anchor" "$plan_anchor" 2>/dev/null; then
+      report WARN "計画 $f の更新に docs/handoff.md の書き戻しが追いついていない" \
+        "session-handoff の手順で docs/handoff.md を更新する（計画は進んでいるのに handoff がそれより前のコミットのまま）"
+    fi
+  done < <(find "$DOCS/plans/active" -name '*.md' | sort)
 fi
 
 # 読めなかった日付は必ず出す。日付判定が効いていないまま「問題なし」と言うのが一番害が大きい
