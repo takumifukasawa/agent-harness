@@ -2,7 +2,7 @@
 
 > **主役は「プロジェクトをエージェントにどう進めさせるか」のワークフロー。** それを各プロジェクトに配って更新する仕組みは、ワークフローを支える最小限の配管。
 > 対象エージェント: Claude Code / Codex CLI / 今後の他エージェント。
-> 状態: 0.3.0（2026-09-17）。ワークフローの雛形・それを回す `task-orchestrate` スキル・配管の CLI（gc と settings マージ含む）は実装済み。このリポジトリ自身に導入済み。`task-orchestrate` で機能 1 つを通す dogfood は題材待ち（§11）。
+> 状態: **0.7.1（2026-09-23）**。①の雛形・`task-orchestrate`・②の配管はすべて実装済みで、このリポジトリ自身に導入済み。**`task-orchestrate` で 5 題材を通した**が、**うち 4 題材は②の配管だった**（[決定 0010](docs/decisions/0010-stop-building-plumbing.md) で打ち止めにした）。**残る主眼は §11 の ⬜3 dogfood** —— 実プロジェクトで機能 1 つを §5 で通し、`checks.sh` に何を登録すると効くかを確かめること。
 
 ---
 
@@ -242,11 +242,11 @@ harness self-install [--dir]      # PATH に置く。Windows は harness.cmd も
 | ✅ | ② の配管: CLI 一式、所有権、manifest、Windows 対応、`harness` / `harness-maintain` スキル |
 | ✅ | ① `task-orchestrate` スキル（0.2.0）: §5 の 3 フェーズを回す手順。state の初期化、実装役への指示テンプレート、検査、再試行、最終レビューの重複排除と反証 |
 | ✅ | ① Codex 用の役割スキル生成（0.2.0）: `.agents/skills/role-{implementer,reviewer}/` |
-| ⬜ 3 | **① dogfood**: 自分のプロジェクト 1 つで機能 1 つを §5 で通す。確かめること: 再試行「新しい 1 体」の精度とコスト、Codex でのパス限定規律（cwd か明示渡し）、`checks.sh` に何を登録すると効くか、`task-orchestrate` の手順で統括が迷う箇所 |
+| ⬜ 3 | **① dogfood**: 自分のプロジェクト 1 つで機能 1 つを §5 で通す。確かめること: 再試行「新しい 1 体」の精度とコスト、Codex でのパス限定規律（cwd か明示渡し）、`checks.sh` に何を登録すると効くか、`task-orchestrate` の手順で統括が迷う箇所。**2026-09-23 時点: このリポジトリ自身では 5 題材を通したが、実プロジェクト（`aesthetic-comparison`）では `harness init` までで `checks.sh` の登録が未着手。「何を登録すると効くか」が未確認のまま残っている**（[決定 0010](docs/decisions/0010-stop-building-plumbing.md) で次の主眼に据えた） |
 | ✅ | ② `harness gc`（0.3.0）: handoff の鮮度、索引とリンクの切れ、放置された plan / state / 負債、管理ファイルの drift、古い references |
 | ✅ | ② `.claude/settings.json` の自動マージ（0.3.0）: node があれば deny と `.harness/` hooks だけを差し込み、プロジェクトの項目は保持。無ければ手順を案内 |
 | ✅ | このリポジトリ自身への導入（0.3.0）: 検査 8 件を `.harness/checks.sh` に登録。導入コピーとペイロードの同期を検査で強制 |
-| ⬜ 6 | ② GitHub からの `curl | bash` init を実機で確認。macOS / Linux 未確認（`docs/tech-debt.md`） |
+| ✅ | ② GitHub からの `curl | bash` init を実機で確認（2026-09-21、macOS。[tech-debt #4](docs/tech-debt.md) で返済済み: 素の使い捨てディレクトリに公開 URL から init して new=25 seeded=15 conflicts=0 / `doctor` FAIL 0）。**Linux は未確認** |
 
 ## 12. 非ゴール
 

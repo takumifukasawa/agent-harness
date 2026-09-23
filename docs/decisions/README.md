@@ -13,6 +13,7 @@
 | [0007](0007-hook-not-executable-is-fail.md) | フックが実行不可なら doctor は FAIL にする（WARN ではない） | 採用 | 2026-09-20 |
 | [0008](0008-stop-optimizing-check-at-50s.md) | `harness check` の最適化は 50 秒で打ち切る（B の 3 件目はやらない） | 採用 | 2026-09-21 |
 | [0009](0009-codex-deny-via-pretooluse-hook.md) | Codex の標準 deny は `PreToolUse` hook で効かせる（git hooks との二重で） | 採用 | 2026-09-21 |
+| [0010](0010-stop-building-plumbing.md) | ②配管（`gc`）の作り込みを打ち止めにして、①ワークフローに戻る | 2026-09-23 |
 
 配管・ワークフローの個別の決定（配布方式、Windows 対応、再試行の方式 など 11 件）は `../../DESIGN.md` §10 の決定ログにある。新しい決定はここに 1 ファイルずつ足す。
 

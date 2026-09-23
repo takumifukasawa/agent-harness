@@ -16,7 +16,8 @@
 | [check-speed.md](check-speed.md) | `harness check` が遅いことを実測で直す（計測 → 返済 → 並列化の順） | 完了（95s → 50s。B の 3 件目と C は[決定 0008](../decisions/0008-stop-optimizing-check-at-50s.md) で打ち切り） |
 | [onboarding-polish.md](onboarding-polish.md) | 実プロジェクトへの初導入で踏んだ穴を塞ぐ | 完了 |
 | [no-silent-failures.md](no-silent-failures.md) | 「黙って通る」経路を無くす（エラーの握り潰し、偽の緑） | 完了 |
-| [writeback-sensors.md](writeback-sensors.md) | 統括の書き戻し漏れを文章ではなく検査（sensor）に落とす | レビュー完了・承認待ち |
+| [writeback-sensors.md](writeback-sensors.md) | 統括の書き戻し漏れを文章ではなく検査（sensor）に落とす | 完了 |
+| [handoff-writeback.md](handoff-writeback.md) | 計画を進めたのに handoff を放置していないか（tech-debt #18） | 合意済み |
 
 ## 1 つの spec の書き方
 
