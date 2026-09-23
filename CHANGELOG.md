@@ -3,7 +3,7 @@
 各版に「プロジェクト側で必要な作業」を必ず書く。`harness update` はこの節を表示する。
 semver: managed ファイルの移動・マーカー形式変更は major、ルール/スキルの追加は minor、文言修正は patch。
 
-## [Unreleased]
+## [0.8.1] - 2026-09-23
 
 - 修正: **`task-orchestrate` が「Codex はサブエージェント単位のモデル指定が無いので `inherit`」と書いていたのは誤りだった。** `codex exec` には `-m, --model <MODEL>` があり（`-c model="..."` でも可）、**Claude のサブエージェント単位の指定と同じ粒度でタスクごとにモデルを選べる**（2026-09-23、codex-cli 0.154.0 の `codex exec --help` で確認）。この誤りは `DESIGN.md` §2 の原則 6「エージェント非依存」に反していた——同じ手順が片方のエージェントでだけ機能が落ちる状態を、仕様ではなく思い込みで固定していた。直したのは 3 箇所: 分解時の `model` の説明（§1.6）、実装役の起動手順（§2.1）、`stages.json` の雛形のコメント。あわせて `harness/adapters/codex/README.md` に確認日つきの行を足した（このリポジトリの規約: エージェントの仕様に依存する記述には確認日と確認元を書く）。**分解案をユーザーに提示するとき `model` も一緒に示す**ことも §1.6 に明記した（統括が `stages.json` に書くだけで合意を取らずに進めていたため）。
 - **プロジェクト側で必要な作業**: `bash .harness/bin/harness update` で `.claude/skills/task-orchestrate/SKILL.md`（と Codex 側の同名スキル）が更新される。判定・検査の動作は変わらない（手順の記述のみ）。**Codex で `task-orchestrate` を回しているプロジェクトでは、これまで `inherit` 固定だった実装役のモデルを、タスクの性質に応じて選べるようになる。**
