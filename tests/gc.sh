@@ -675,6 +675,104 @@ expect_plan_mention_of_approval_not_ongoing() {
 scenario "G28: 「承認」を含むだけで承認待ちで終わらない状態は書き戻し忘れとして報告する（過剰マッチしない）" \
   setup_plan_mention_of_approval_not_ongoing expect_plan_mention_of_approval_not_ongoing
 
+# ---------------------------------------------------------------- D: 計画の更新に handoff の書き戻しが追いついているか
+# spec: docs/spec/handoff-writeback.md。既存の項目 1（G1〜G19）は日数・コミット数の閾値方式で、
+# 実測の中央値が低いために同じ日・1 コミットの漏れが閾値の下に隠れる（2026-09-22 writeback-sensors
+# で実際に再発）。ここは閾値を使わず、計画を最後に更新したコミットとの祖先関係だけで判定する。
+
+# G29. A1/A2: 計画が更新されたコミットより後で handoff が更新されていなければ、日数・コミット数の
+# 閾値に一切関係なく（同じ日・1 コミットでも）報告する。既存の日数/コミット数ベースの警告
+# （項目 1）は出ないことも併せて確認し、これが項目 1 とは独立の検知経路であることを示す。
+setup_plan_after_handoff() {
+  new_proj_committed || return 1  # commit0: handoff(初期) + README
+  mkdir -p "$PROJ/docs/plans/active" || return 1
+  printf '# foo\n\n- 開始: 2026-09-01\n- 状態: 進行中\n' >"$PROJ/docs/plans/active/foo.md"
+  ( cd "$PROJ" && git add -A &&
+    git -c user.email=t@t -c user.name=t commit -q -m "plan foo" ) >/dev/null 2>&1 ||  # commit1: 計画のみ（commit0 より後）
+    { errors+=("setup: 計画のコミットに失敗した"); return 1; }
+}
+expect_plan_after_handoff() {
+  run_gc
+  expect_out '計画 docs/plans/active/foo\.md の更新に docs/handoff\.md の書き戻しが追いついていない'
+  expect_not_out '最終更新が'
+  expect_not_out '最終更新から docs 以外を触ったコミットが'
+  expect_not_out '問題なし'
+  expect_code 0
+}
+scenario "G29: 計画が更新されたコミットより後で handoff が更新されていなければ報告する（閾値に依存しない）" \
+  setup_plan_after_handoff expect_plan_after_handoff
+
+# G30. A4: 計画と handoff が同じコミットで更新された場合は報告しない。
+setup_plan_and_handoff_same_commit() {
+  new_proj || return 1
+  mkdir -p "$PROJ/docs/plans/active" || return 1
+  printf '# foo\n\n- 開始: 2026-09-01\n- 状態: 進行中\n' >"$PROJ/docs/plans/active/foo.md"
+  commit_all  # 1 コミットで handoff(初期) + README + 計画をまとめて入れる（同じコミット）
+}
+expect_plan_and_handoff_same_commit() {
+  run_gc
+  expect_not_out '書き戻しが追いついていない'
+  expect_out '問題なし'
+  expect_code 0
+}
+scenario "G30: 計画と handoff が同じコミットで更新されていれば報告しない（A4）" \
+  setup_plan_and_handoff_same_commit expect_plan_and_handoff_same_commit
+
+# G31. handoff が計画より後のコミットで更新されていれば（正しく書き戻し済み）報告しない。
+setup_handoff_after_plan() {
+  new_proj_committed || return 1  # commit0: handoff(初期) + README
+  mkdir -p "$PROJ/docs/plans/active" || return 1
+  printf '# foo\n\n- 開始: 2026-09-01\n- 状態: 進行中\n' >"$PROJ/docs/plans/active/foo.md"
+  ( cd "$PROJ" && git add -A &&
+    git -c user.email=t@t -c user.name=t commit -q -m "plan foo" ) >/dev/null 2>&1 ||  # commit1: 計画のみ
+    { errors+=("setup: 計画のコミットに失敗した"); return 1; }
+  printf '# handoff\n\n最終更新: %s（foo を進めた）\n' "$(days_ago 1)" >"$PROJ/docs/handoff.md"
+  ( cd "$PROJ" && git add -A &&
+    git -c user.email=t@t -c user.name=t commit -q -m "update handoff" ) >/dev/null 2>&1 ||  # commit2: handoff のみ（commit1 より後）
+    { errors+=("setup: handoff のコミットに失敗した"); return 1; }
+}
+expect_handoff_after_plan() {
+  run_gc
+  expect_not_out '書き戻しが追いついていない'
+  expect_out '問題なし'
+  expect_code 0
+}
+scenario "G31: handoff が計画より後のコミットで更新されていれば報告しない（正しく書き戻し済み）" \
+  setup_handoff_after_plan expect_handoff_after_plan
+
+# G32. A3: docs/plans/active/ が存在しても空（計画ファイルが 1 件も無い）なら何も言わない。
+setup_empty_active_plans_dir() {
+  new_proj_committed || return 1
+  mkdir -p "$PROJ/docs/plans/active" || return 1
+}
+expect_empty_active_plans_dir() {
+  run_gc
+  expect_not_out '書き戻しが追いついていない'
+  expect_out '問題なし'
+  expect_code 0
+}
+scenario "G32: docs/plans/active/ が空なら書き戻しチェックは何も言わない（A3）" \
+  setup_empty_active_plans_dir expect_empty_active_plans_dir
+
+# G33. handoff が一度もコミットされていない（起点が無い）場合はクラッシュせず黙ってスキップする
+# （G19 の commit ベース鮮度判定と同じ「沈黙を選ぶ」方針。計画だけを個別にコミットして、
+# handoff/README は未コミットのまま残す）。
+setup_plan_committed_handoff_never_committed() {
+  new_proj || return 1  # handoff.md / README.md を作るがコミットしない
+  mkdir -p "$PROJ/docs/plans/active" || return 1
+  printf '# foo\n' >"$PROJ/docs/plans/active/foo.md"
+  ( cd "$PROJ" && git add docs/plans/active/foo.md &&
+    git -c user.email=t@t -c user.name=t commit -q -m "plan foo only" ) >/dev/null 2>&1 ||
+    { errors+=("setup: 計画のコミットに失敗した"); return 1; }
+}
+expect_plan_committed_handoff_never_committed() {
+  run_gc
+  expect_not_out '書き戻しが追いついていない'
+  expect_code 0
+}
+scenario "G33: handoff が一度もコミットされていなければ書き戻しチェックをスキップする（クラッシュしない）" \
+  setup_plan_committed_handoff_never_committed expect_plan_committed_handoff_never_committed
+
 # ================================================================ 集計
 echo
 echo "tests/gc.sh: pass=$passed fail=$failed"
