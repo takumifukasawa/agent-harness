@@ -3,6 +3,11 @@
 各版に「プロジェクト側で必要な作業」を必ず書く。`harness update` はこの節を表示する。
 semver: managed ファイルの移動・マーカー形式変更は major、ルール/スキルの追加は minor、文言修正は patch。
 
+## [Unreleased]
+
+- 追加（T01 / spec `docs/spec/task-timing.md`）: **`harness task start <id>` / `harness task done <id>` を追加した。** 統括が「あとどれくらいで終わるか」を毎回その場の推測で答えていた問題（`task-timing.md` の背景）に対し、まず記録の入口だけを作る。`id` はタスク（`T01` 等）でもレビュー（`review` 等）でもよく、**同じ仕組みで扱う**（`stages.json` の `tasks` 配列を一切見ないので、そこに無い任意の id でも同じように動く。レビューを特別扱いしない）。時刻は ISO 8601 / UTC（`date -u +書式` のみで取り、GNU 専用の `date -d` は使わない。tech-debt #8 の再発防止）。`.harness/state/stages.json` に新しい `"timings"` 配列を持たせ、既存の `"tasks"` 配列には一切触れない（jq を前提にせず、行指向の sed/awk だけで読み書きする。`manifest.json` の書き方に合わせた）。`.harness/state/` や `stages.json` が無い場合、start していない id に done した場合、start/done を 2 回呼んだ場合は、いずれも黙って失敗/黙って上書きせず、何が起きたかを出力する（`docs/spec/no-silent-failures.md` と同じ姿勢）。回帰は `tests/task-timing.sh`（15 シナリオ）に置き、`.harness/checks.sh` の fast 検査に登録した。
+- **プロジェクト側で必要な作業**: `bash .harness/bin/harness update` で `.harness/bin/harness` が更新され、`harness task start <id>` / `harness task done <id>` が使えるようになる。既存の `.harness/state/stages.json` に手を加える必要はない（`"timings"` フィールドが無くても壊れず、初回の `start`/`done`呼び出し時に自動で追加される）。
+
 ## [0.8.1] - 2026-09-23
 
 - 修正: **`task-orchestrate` が「Codex はサブエージェント単位のモデル指定が無いので `inherit`」と書いていたのは誤りだった。** `codex exec` には `-m, --model <MODEL>` があり（`-c model="..."` でも可）、**Claude のサブエージェント単位の指定と同じ粒度でタスクごとにモデルを選べる**（2026-09-23、codex-cli 0.154.0 の `codex exec --help` で確認）。この誤りは `DESIGN.md` §2 の原則 6「エージェント非依存」に反していた——同じ手順が片方のエージェントでだけ機能が落ちる状態を、仕様ではなく思い込みで固定していた。直したのは 3 箇所: 分解時の `model` の説明（§1.6）、実装役の起動手順（§2.1）、`stages.json` の雛形のコメント。あわせて `harness/adapters/codex/README.md` に確認日つきの行を足した（このリポジトリの規約: エージェントの仕様に依存する記述には確認日と確認元を書く）。**分解案をユーザーに提示するとき `model` も一緒に示す**ことも §1.6 に明記した（統括が `stages.json` に書くだけで合意を取らずに進めていたため）。

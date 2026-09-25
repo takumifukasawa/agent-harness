@@ -9,6 +9,7 @@
 #   harness check  [--fast]
 #   harness gc     [--days N] [--strict]  # docs の腐敗検知
 #   harness doctor                        # 環境と導入状態の診断
+#   harness task   start|done <id>        # 所要時間の記録。id はタスクでもレビューでもよい（docs/spec/task-timing.md）
 #   harness self-install [--dir <dir>]   # `harness` を PATH に置く（Windows は harness.cmd も）
 #   harness version
 #
@@ -913,6 +914,188 @@ cmd_upstream() {
   info "次: $src でレビュー → commit → CHANGELOG.md に「プロジェクト側で必要な作業」→ VERSION を上げる"
 }
 
+# ---------------------------------------------------------------- task timing（spec: docs/spec/task-timing.md）
+# `harness task start <id>` / `harness task done <id>` が .harness/state/stages.json に時刻を書く。
+# id はタスク（T01 等）でもレビュー（review）でもよく、同じ仕組みで扱う（spec C1）。レビューを
+# 特別扱いしない＝ここは stages.json の "tasks" 配列の中身を一切見ない（review はそこに存在しない）。
+#
+# 時刻は ISO 8601 / UTC。`date -d` は GNU 専用で、過去に無言スキップの事故を起こしている
+# （tech-debt #8）。ここは `-d` を使わず `date -u +書式` だけで取るので GNU / BSD どちらでも同じ。
+#
+# jq を前提にしない（AGENTS.md: 依存は git と bash だけ）。stages.json の既存の "tasks" 配列
+# （orchestrator / implementer が自由形式で書く）には一切触れず、新しい "timings" 配列だけを
+# 読み書きする。1 エントリ 1 行の JSON にして、manifest.json / write_manifest と同じ「行指向で
+# 読み書きする」流儀に揃える（jq が無い環境でも動く経路を残す）。
+#
+# "timings" は常に stages.json の先頭 "{" の直後（他のどのキーより前）に挿入する。位置を固定
+# することで、閉じ "]" の後ろには常にコンマが要る（後ろに必ず他のキーが続く）と決め打てる。
+
+utc_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+valid_timing_id() { case "$1" in ""|*[!A-Za-z0-9_.-]*) return 1;; *) return 0;; esac; }
+
+# stages.json に "timings": [] を（無ければ）先頭の "{" の直後に挿入する。既にあれば何もしない
+# （A3: 時刻フィールドが無い既存の stages.json でも壊れない）。
+timings_ensure_block() { # stages_file
+  local f="$1" first tmp
+  if grep -qE '^[[:space:]]*"timings"[[:space:]]*:[[:space:]]*\[' "$f"; then
+    return 0
+  fi
+  first="$(sed -n '1p' "$f")"
+  if [ "$first" != "{" ]; then
+    die "${f} の 1 行目が '{' ではない（想定と違う形式なので timings を追加できない）。手動で \"timings\": [] を足してから再実行する。"
+  fi
+  tmp="$(mktemp)"
+  { sed -n '1p' "$f"; printf '  "timings": [\n  ],\n'; sed -n '2,$p' "$f"; } >"$tmp"
+  mv "$tmp" "$f"
+}
+
+# "timings" 配列 -> 一時 TSV（id\tstarted_at\tdone_at。値が無ければ "-"＝null 相当）。
+# タスク配列側の "id" フィールド等を巻き込まないよう、timings 配列の中の行だけを見る。
+#
+# 値の無いフィールドを空文字のまま TSV に置くと、後段の `IFS=$'\t' read` で壊れる: bash の
+# read はタブを「IFS 空白」として扱い、連続するタブ（＝空フィールド）を 1 つの区切りとして
+# まとめてしまうため、フィールドがずれて started_at と done_at が入れ替わる（実機で踏んだ。
+# manifest.json 側が値の無い sha256 に "-" を使っているのも同じ理由と見られる）。ここでは
+# 「値が無い」を必ず "-" という非空文字で表し、空フィールドを一切作らないことでこれを避ける。
+timings_extract() { # stages_file
+  awk '
+    /^[[:space:]]*"timings"[[:space:]]*:[[:space:]]*\[/ { intbl=1; next }
+    intbl && /^[[:space:]]*\][,]?[[:space:]]*$/ { intbl=0; next }
+    intbl && NF { print }
+  ' "$1" | sed -E 's/.*"id": *"([^"]*)".*"started_at": *(null|"([^"]*)").*"done_at": *(null|"([^"]*)").*/\1\t\3\t\5/' \
+    | awk -F'\t' -v OFS='\t' '{ if ($2=="") $2="-"; if ($3=="") $3="-"; print }'
+}
+
+# TSV の id 行を新しい started_at/done_at に置き換える（無ければ末尾に足す）。既存の並びは保つ。
+# new_started/new_done は「無い」を空文字で渡してよい（ここで "-" に正規化する）。
+timings_upsert_tsv() { # tsv_file id new_started new_done
+  local tsv="$1" id="$2" ns="$3" nd="$4" tmp
+  tmp="$(mktemp)"
+  awk -F'\t' -v OFS='\t' -v id="$id" -v ns="$ns" -v nd="$nd" '
+    BEGIN { if (ns=="") ns="-"; if (nd=="") nd="-" }
+    $1==id { print id, ns, nd; done=1; next }
+    { print }
+    END { if (!done) print id, ns, nd }
+  ' "$tsv" >"$tmp"
+  mv "$tmp" "$tsv"
+}
+
+# TSV -> "timings": [ ... ], ブロック全体（キー行〜閉じ "]," まで）を標準出力へ
+timings_render_block() { # tsv_file
+  local tsv="$1" n i=0 id s d sq dq comma
+  n="$(wc -l <"$tsv" | tr -d '[:space:]')"
+  if [ -z "$n" ]; then n=0; fi
+  echo '  "timings": ['
+  while IFS=$'\t' read -r id s d; do
+    i=$((i + 1))
+    sq="null"
+    if [ -n "$s" ] && [ "$s" != "-" ]; then sq="\"$s\""; fi
+    dq="null"
+    if [ -n "$d" ] && [ "$d" != "-" ]; then dq="\"$d\""; fi
+    comma=","
+    if [ "$i" -eq "$n" ]; then comma=""; fi
+    printf '    {"id": "%s", "started_at": %s, "done_at": %s}%s\n' "$id" "$sq" "$dq" "$comma"
+  done <"$tsv"
+  echo '  ],'
+}
+
+# stages.json の "timings" ブロックを新しい内容に丸ごと差し替える（配列の外側は一切触らない）。
+timings_splice() { # stages_file block_file
+  local f="$1" blockfile="$2" tmp
+  tmp="$(mktemp)"
+  awk -v blockfile="$blockfile" '
+    BEGIN { while ((getline line < blockfile) > 0) { n++; block[n] = line }; close(blockfile) }
+    /^[[:space:]]*"timings"[[:space:]]*:[[:space:]]*\[/ {
+      for (i = 1; i <= n; i++) print block[i]
+      inblock = 1
+      next
+    }
+    inblock && /^[[:space:]]*\][,]?[[:space:]]*$/ { inblock = 0; next }
+    inblock { next }
+    { print }
+  ' "$f" >"$tmp"
+  mv "$tmp" "$f"
+}
+
+# harness task <start|done> <id>
+cmd_task() {
+  local sub="${1:-}"
+  case "$sub" in
+    start|done) : ;;
+    "") die "usage: harness task <start|done> <id>";;
+    *)  die "unknown task subcommand: ${sub} (usage: harness task <start|done> <id>)";;
+  esac
+  shift
+  local id="${1:-}"
+  [ -n "$id" ] || die "usage: harness task ${sub} <id>"
+  valid_timing_id "$id" || die "id に使える文字は英数字・_・.・- のみ: '${id}'"
+
+  ROOT="$(project_root)"
+  local state_dir="$ROOT/.harness/state" stages
+  stages="$state_dir/stages.json"
+  # A2/5（no-silent-failures）: state が無い / stages.json が無いのは、task-orchestrate をまだ
+  # 始めていない普通の状態でもある。黙って何もしないのではなく、はっきり案内して exit 1 にする。
+  if [ ! -d "$state_dir" ]; then
+    die "${state_dir} が無い（task-orchestrate をまだ始めていないか、ここが対象のプロジェクトではない）。task-orchestrate の準備フェーズで .harness/state/stages.json を作ってから使う。"
+  fi
+  if [ ! -f "$stages" ]; then
+    die "${stages} が無い。${state_dir} に stages.json を用意してから使う（task-orchestrate の準備フェーズを見る）。"
+  fi
+
+  timings_ensure_block "$stages"
+
+  local tsv; tsv="$(mktemp)"
+  timings_extract "$stages" >"$tsv"
+
+  local existing had_entry=0 old_started="" old_done="" rid
+  existing="$(awk -F'\t' -v id="$id" '$1==id{print; exit}' "$tsv")"
+  if [ -n "$existing" ]; then
+    had_entry=1
+    IFS=$'\t' read -r rid old_started old_done <<<"$existing"
+    # timings_extract は「値が無い」を "-" で表す（TSV の空フィールドは read で壊れるため）。
+    # ここから先の判定は空文字を「無い」として比較するので、"-" を空文字へ戻す。
+    if [ "$old_started" = "-" ]; then old_started=""; fi
+    if [ "$old_done" = "-" ]; then old_done=""; fi
+  fi
+
+  local now note=""
+  now="$(utc_now)"
+  local new_started="$old_started" new_done="$old_done"
+
+  # 3/5（no-silent-failures）: id が stages.json に見つからなくても失敗しない（review は
+  # tasks 配列に無いのが正常なので、tasks 配列自体を見ない＝特別扱いしない。C1）。ただし
+  # start/done の対応が取れない組み合わせ（二重 start、start 無し done 等）は note で知らせる。
+  if [ "$sub" = start ]; then
+    if [ "$had_entry" = 1 ] && [ -n "$old_started" ] && [ -z "$old_done" ]; then
+      note="${id} はすでに ${old_started} に start 済み。started_at を ${now} に上書きした。"
+    elif [ "$had_entry" = 1 ] && [ -n "$old_done" ]; then
+      note="${id} は ${old_done} に done 済みの記録があった。再び start したので done_at をクリアした。"
+    fi
+    new_started="$now"; new_done=""
+  else
+    if [ "$had_entry" = 0 ]; then
+      note="${id} の start 記録が無い（先に harness task start ${id} を呼んでいない）。started_at は不明のまま done_at だけ記録する。"
+    elif [ -z "$old_started" ]; then
+      note="${id} は started_at が記録されていない（不明）。done_at だけ記録する。"
+    elif [ -n "$old_done" ]; then
+      note="${id} はすでに ${old_done} に done 済み。done_at を ${now} に上書きした。"
+    fi
+    new_done="$now"
+  fi
+
+  timings_upsert_tsv "$tsv" "$id" "$new_started" "$new_done"
+  local block; block="$(mktemp)"
+  timings_render_block "$tsv" >"$block"
+  timings_splice "$stages" "$block"
+  rm -f "$tsv" "$block"
+
+  info "task ${sub} ${id}: ${now}"
+  if [ -n "$note" ]; then
+    info "$note"
+  fi
+}
+
 cmd_check() {
   ROOT="$(project_root)"
   [ -f "$ROOT/.harness/scripts/check.sh" ] || die "未導入（.harness/scripts/check.sh が無い）"
@@ -975,9 +1158,9 @@ cmd_self_install() {
 usage() { # 冒頭のコメントをそのまま usage にする。標準入力から実行中は読み出せないので短縮版を出す
   local src="${BASH_SOURCE[0]:-}"
   if [ -n "$src" ] && [ -f "$src" ]; then
-    sed -n '2,18p' "$src" | sed 's/^# \{0,1\}//'
+    sed -n '2,19p' "$src" | sed 's/^# \{0,1\}//'
   else
-    echo "harness <init|update|status|diff|upstream|check|gc|doctor|self-install|version>"
+    echo "harness <init|update|status|diff|upstream|check|gc|doctor|task|self-install|version>"
     echo "  標準入力から実行中のため詳しい usage を読み出せない。clone した bin/harness か、導入済みプロジェクトの .harness/bin/harness から実行する。"
   fi
 }
@@ -1025,6 +1208,7 @@ if [ "$HARNESS_SOURCED" = 0 ]; then
     check)    shift; cmd_check "$@";;
     gc)       shift; cmd_gc "$@";;
     doctor)   shift; cmd_doctor "$@";;
+    task)     shift; cmd_task "$@";;
     version|--version|-v) cmd_version;;
     ""|help|-h|--help) usage;;
     *) die "unknown command: $1 (harness help)";;

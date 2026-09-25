@@ -19,5 +19,7 @@
         "note_for_next": ""
       }
     }
-  ]
+  ],
+  "timings": [],
+  "_timings_doc": "harness task start <id> / harness task done <id> が書く（docs/spec/task-timing.md）。id はタスク（T01 等）でもレビュー（review 等）でもよく、この tasks 配列に無くても構わない（レビューを特別扱いしない）。このキー自体が無くても harness task は壊れず、無ければ先頭に自動で足す。手で編集しない。"
 }
