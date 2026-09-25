@@ -25,6 +25,9 @@ check fast "gc scenarios"                 "bash tests/gc.sh"
 # harness task start/done の実行経路（docs/spec/task-timing.md T01）。id はタスクでもレビューでも
 # 良いこと、既存の tasks 配列を壊さないこと、state/stages.json が無い場合に黙って失敗しないことを見る。
 check fast "task timing scenarios"        "bash tests/task-timing.sh"
+# harness eta の実行経路（docs/spec/task-timing.md T02）。完了数/全体数・経過時間・残りの推定
+# （幅、単純平均にしない）・レビューの固定枠・実績不足時の「不明」・記録欠けの指摘・--json を見る。
+check fast "eta scenarios"                "bash tests/eta.sh"
 # seed の case 衝突判定（tech-debt #13）。実 FS の case 区別はテストから切り替えられないので、
 # 判定関数 seed_case_collision() を単体で呼ぶ（衝突あり/衝突なし/case を区別する環境の 3 系統）。
 check fast "seed case collision (unit)"   "bash tests/seed-case.sh"
