@@ -10,6 +10,7 @@
 #   harness gc     [--days N] [--strict]  # docs の腐敗検知
 #   harness doctor                        # 環境と導入状態の診断
 #   harness task   start|done <id>        # 所要時間の記録。id はタスクでもレビューでもよい（docs/spec/task-timing.md）
+#   harness eta    [--json]               # 進捗と残り時間の推定を出す（docs/spec/task-timing.md）
 #   harness self-install [--dir <dir>]   # `harness` を PATH に置く（Windows は harness.cmd も）
 #   harness version
 #
@@ -958,8 +959,16 @@ timings_ensure_block() { # stages_file
 # まとめてしまうため、フィールドがずれて started_at と done_at が入れ替わる（実機で踏んだ。
 # manifest.json 側が値の無い sha256 に "-" を使っているのも同じ理由と見られる）。ここでは
 # 「値が無い」を必ず "-" という非空文字で表し、空フィールドを一切作らないことでこれを避ける。
+#
+# harness/state-template/stages.json は初期状態の "timings" を 1 行の空配列 `"timings": [],`
+# として配る。この形は開き "[" と閉じ "]" が同じ行にあるので、以前は開き括弧の regex にだけ
+# マッチして intbl=1 のまま次の行（"_timings_doc" 等）へ突入し、それを timings のエントリと
+# 誤認して食い込んでいた（実機で再現: 配布直後の stages.json に harness task start を初めて
+# 呼ぶと、"_timings_doc" の文字列や閉じ "}" が id として書き込まれ、JSON が壊れる）。
+# 1 行で閉じている空配列は中身が無いので、intbl に入れず読み飛ばす。
 timings_extract() { # stages_file
   awk '
+    /^[[:space:]]*"timings"[[:space:]]*:[[:space:]]*\[[[:space:]]*\][,]?[[:space:]]*$/ { next }
     /^[[:space:]]*"timings"[[:space:]]*:[[:space:]]*\[/ { intbl=1; next }
     intbl && /^[[:space:]]*\][,]?[[:space:]]*$/ { intbl=0; next }
     intbl && NF { print }
@@ -1018,6 +1027,22 @@ timings_splice() { # stages_file block_file
   mv "$tmp" "$f"
 }
 
+# .harness/state/ や stages.json が無いのは、task-orchestrate をまだ始めていない普通の状態で
+# もある。黙って何もしないのではなく、はっきり案内して exit 1 にする（no-silent-failures）。
+# `harness task` と `harness eta` の両方から使い、案内文言を 1 か所に揃える。
+require_stages_file() { # root -> 標準出力に stages.json のパス（無ければ die で exit 1）
+  local root="$1" state_dir stages
+  state_dir="${root}/.harness/state"
+  stages="${state_dir}/stages.json"
+  if [ ! -d "$state_dir" ]; then
+    die "${state_dir} が無い（task-orchestrate をまだ始めていないか、ここが対象のプロジェクトではない）。task-orchestrate の準備フェーズで .harness/state/stages.json を作ってから使う。"
+  fi
+  if [ ! -f "$stages" ]; then
+    die "${stages} が無い。${state_dir} に stages.json を用意してから使う（task-orchestrate の準備フェーズを見る）。"
+  fi
+  printf '%s' "$stages"
+}
+
 # harness task <start|done> <id>
 cmd_task() {
   local sub="${1:-}"
@@ -1032,16 +1057,7 @@ cmd_task() {
   valid_timing_id "$id" || die "id に使える文字は英数字・_・.・- のみ: '${id}'"
 
   ROOT="$(project_root)"
-  local state_dir="$ROOT/.harness/state" stages
-  stages="$state_dir/stages.json"
-  # A2/5（no-silent-failures）: state が無い / stages.json が無いのは、task-orchestrate をまだ
-  # 始めていない普通の状態でもある。黙って何もしないのではなく、はっきり案内して exit 1 にする。
-  if [ ! -d "$state_dir" ]; then
-    die "${state_dir} が無い（task-orchestrate をまだ始めていないか、ここが対象のプロジェクトではない）。task-orchestrate の準備フェーズで .harness/state/stages.json を作ってから使う。"
-  fi
-  if [ ! -f "$stages" ]; then
-    die "${stages} が無い。${state_dir} に stages.json を用意してから使う（task-orchestrate の準備フェーズを見る）。"
-  fi
+  local stages; stages="$(require_stages_file "$ROOT")"
 
   timings_ensure_block "$stages"
 
@@ -1094,6 +1110,404 @@ cmd_task() {
   if [ -n "$note" ]; then
     info "$note"
   fi
+}
+
+# ---------------------------------------------------------------- eta（docs/spec/task-timing.md）
+#
+# `harness task start/done` が残した記録から、進捗と残り時間を出す。設計は spec の B/C 節どおり:
+#   B1/B1b : 完了数/全体数・経過時間・残りの推定・推定完了時刻（幅）を出す。記録は UTC だが
+#            表示はローカルタイム（iso_to_epoch / epoch_to_local で変換する。GNU/BSD 両対応）。
+#   B2     : 残りの推定は「完了タスクの実測 最小〜最大」を残タスク数に**そのまま掛ける**。
+#            単純平均は使わない（実測が数倍ばらつくため。ばらつきをならすと大きく外す）。
+#   B3     : 実績（完了タスクの実測）が 0 件、または進行中の題材が無ければ「不明」と言う。
+#            数字を捏造しない。**レビューも同じ扱い**にする: id "review" の timings が
+#            started_at/done_at ともそろって初めて「実績あり」とし、無ければ不明。
+#            docs/spec/task-timing.md の C2 は過去の実測（17/10/10 分）を書き残しているが、
+#            それを既定値としてここに埋め込まない: 実際にレビューを回すまでは "review" の
+#            timings は存在しない設計（C1）なので、その既定値が効くのは「タスク実行中で
+#            まだレビューをしていない」まさに知りたい局面ではなく、レビューが終わった後
+#            （もう要らなくなった後）だけになる。古い数値を機械の中に静かに固定するより、
+#            「不明」と言い切るほうが B3 の趣旨に合う（判断の理由は T02 の report にも書いた）。
+#   C2     : レビューの推定は「残数 × 幅」ではなく**固定枠**（観点を増やしても並列なので
+#            さほど伸びない）。今回の実装では review の timings 1 件（started_at/done_at）を
+#            そのままその固定枠として使う（複数回ぶんの履歴を溜める設計は範囲外。spec の
+#            「範囲外」節: 履歴を溜めてタスクの性質ごとに見積もることはしない）。
+#   B6     : 記録が欠けているタスク（done/in_progress なのに timings が無い・不完全）を
+#            出力自身が指摘する。gc に検査を足す方式は取らない（決定 0010）。
+#
+# tasks_extract は timings_extract と姉妹関係にあるが、"tasks" 配列の要素はネストした配列・
+# オブジェクト（acceptance / spec_refs / rules / files_scope / depends_on / result）を含む
+# 複数行オブジェクトなので、"{" / "}" の対応関係だけを追って各タスクの境界を判定する
+# （"[" / "]" は見ない。acceptance 等の配列はこの depth 計算に影響しない）。値の中に含まれる
+# "{" "}" は文字列を取り除いてから数えるので、日本語の説明文に中括弧が混ざっても壊れない。
+tasks_extract() { # stages_file -> TSV: id\tstatus
+  awk '
+    function strip_strings(s,    r) {
+      r = s
+      gsub(/"([^"\\]|\\.)*"/, "\"\"", r)
+      return r
+    }
+    /^[[:space:]]*"tasks"[[:space:]]*:[[:space:]]*\[[[:space:]]*\][,]?[[:space:]]*$/ { next }
+    /^[[:space:]]*"tasks"[[:space:]]*:[[:space:]]*\[/ { intbl=1; depth=0; id=""; status=""; next }
+    intbl && depth==0 && /^[[:space:]]*\][,]?[[:space:]]*$/ { intbl=0; next }
+    intbl {
+      if (depth == 1) {
+        if (id == "" && $0 ~ /^[[:space:]]*"id"[[:space:]]*:/) {
+          t = $0
+          sub(/^[[:space:]]*"id"[[:space:]]*:[[:space:]]*"/, "", t)
+          sub(/".*/, "", t)
+          id = t
+        }
+        if (status == "" && $0 ~ /^[[:space:]]*"status"[[:space:]]*:/) {
+          t = $0
+          sub(/^[[:space:]]*"status"[[:space:]]*:[[:space:]]*"/, "", t)
+          sub(/".*/, "", t)
+          status = t
+        }
+      }
+      line = strip_strings($0)
+      opens = gsub(/\{/, "{", line)
+      closes = gsub(/\}/, "}", line)
+      depth += opens - closes
+      if (depth == 0 && id != "") {
+        print id "\t" (status == "" ? "unknown" : status)
+        id = ""; status = ""
+      }
+      next
+    }
+  ' "$1"
+}
+
+# timings TSV から 1 id 分の行を引く。"started\tdone"（値が無ければ "-"）を返す。
+# id 自体が見つからなければ何も出力しない（呼び出し側は `[ -z "$look" ]` で判定する）。
+timing_lookup() { # timings_tsv id
+  awk -F'\t' -v id="$2" '$1==id{print $2"\t"$3; exit}' "$1"
+}
+
+# ISO 8601 UTC（"2026-09-25T09:27:07Z"）-> epoch 秒。GNU/BSD date の両方言に対応する
+# （gc.sh の date_to_epoch と同じ理由。tech-debt #8: date -d は GNU 専用）。
+# 読めなければ何も出力せず非 0 を返す（呼び出し側で「解釈できない」を報告する）。
+iso_to_epoch() { # iso8601_utc
+  date -u -d "$1" +%s 2>/dev/null && return 0
+  date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "$1" +%s 2>/dev/null && return 0
+  return 1
+}
+
+# epoch 秒 -> ローカルタイムの "HH:MM"（B1b: 記録は UTC だが表示は人間が読むローカルタイム）。
+# GNU は `date -d @epoch`、BSD/macOS は `date -r epoch`（どちらも既定でローカルタイムに直す）。
+epoch_to_local_hm() { # epoch
+  date -d "@$1" +%H:%M 2>/dev/null && return 0
+  date -r "$1" +%H:%M 2>/dev/null && return 0
+  return 1
+}
+
+# 秒 -> 分（四捨五入）。表示用（JSON 側は秒のまま出すので丸めない）。
+human_minutes() { # seconds
+  local s="$1"
+  echo $(( (s + 30) / 60 ))
+}
+
+# JSON 文字列の中身をエスケープする（前後のダブルクォートは呼び出し側で付ける）。
+json_esc() { # string
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
+# harness eta [--json]
+cmd_eta() {
+  local json=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --json) json=1; shift;;
+      *) die "unknown option: $1 (usage: harness eta [--json])";;
+    esac
+  done
+
+  ROOT="$(project_root)"
+  local stages; stages="$(require_stages_file "$ROOT")"
+
+  local now_epoch generated_at
+  now_epoch="$(date +%s)"
+  generated_at="$(utc_now)"
+
+  local tasks_tsv timings_tsv
+  tasks_tsv="$(mktemp)"; timings_tsv="$(mktemp)"
+  tasks_extract "$stages" >"$tasks_tsv"
+  timings_extract "$stages" >"$timings_tsv"
+
+  local total done_count
+  total="$(wc -l <"$tasks_tsv" | tr -d '[:space:]')"; [ -z "$total" ] && total=0
+  done_count="$(awk -F'\t' '$2=="done"{c++} END{print c+0}' "$tasks_tsv")"
+
+  # 完了タスクの所要時間（秒）のサンプルと、記録が欠けているタスクの一覧（B6）を集める。
+  # todo はまだ着手していないのが正常なので見ない。in_progress/done/blocked/failed は
+  # 着手した（started_at があるはず）とみなして見る。
+  local sample_count=0 sample_min="" sample_max=""
+  local missing_lines=() missing_json=()
+  local tid tstatus
+  while IFS=$'\t' read -r tid tstatus; do
+    [ -z "$tid" ] && continue
+    [ "$tstatus" = "todo" ] && continue
+    local look started dat
+    look="$(timing_lookup "$timings_tsv" "$tid")"
+    if [ -z "$look" ]; then
+      missing_lines+=("${tid}（${tstatus}）: 記録が無い（harness task start ${tid} を呼んでいない）")
+      missing_json+=("{\"id\": \"$(json_esc "$tid")\", \"status\": \"$(json_esc "$tstatus")\", \"reason\": \"no_record\"}")
+      continue
+    fi
+    IFS=$'\t' read -r started dat <<<"$look"
+    if [ "$started" = "-" ]; then
+      missing_lines+=("${tid}（${tstatus}）: started_at が記録されていない")
+      missing_json+=("{\"id\": \"$(json_esc "$tid")\", \"status\": \"$(json_esc "$tstatus")\", \"reason\": \"missing_started_at\"}")
+      continue
+    fi
+    [ "$tstatus" != "done" ] && continue   # in_progress 等は started_at さえあれば正常
+    if [ "$dat" = "-" ]; then
+      missing_lines+=("${tid}（${tstatus}）: done_at が記録されていない")
+      missing_json+=("{\"id\": \"$(json_esc "$tid")\", \"status\": \"$(json_esc "$tstatus")\", \"reason\": \"missing_done_at\"}")
+      continue
+    fi
+    local se de
+    if ! se="$(iso_to_epoch "$started")"; then
+      missing_lines+=("${tid}（${tstatus}）: started_at '${started}' を解釈できない")
+      missing_json+=("{\"id\": \"$(json_esc "$tid")\", \"status\": \"$(json_esc "$tstatus")\", \"reason\": \"unparseable_started_at\"}")
+      continue
+    fi
+    if ! de="$(iso_to_epoch "$dat")"; then
+      missing_lines+=("${tid}（${tstatus}）: done_at '${dat}' を解釈できない")
+      missing_json+=("{\"id\": \"$(json_esc "$tid")\", \"status\": \"$(json_esc "$tstatus")\", \"reason\": \"unparseable_done_at\"}")
+      continue
+    fi
+    if [ "$de" -lt "$se" ]; then
+      missing_lines+=("${tid}（${tstatus}）: done_at が started_at より前になっている")
+      missing_json+=("{\"id\": \"$(json_esc "$tid")\", \"status\": \"$(json_esc "$tstatus")\", \"reason\": \"done_before_start\"}")
+      continue
+    fi
+    local dur=$((de - se))
+    sample_count=$((sample_count + 1))
+    if [ -z "$sample_min" ] || [ "$dur" -lt "$sample_min" ]; then sample_min="$dur"; fi
+    if [ -z "$sample_max" ] || [ "$dur" -gt "$sample_max" ]; then sample_max="$dur"; fi
+  done <"$tasks_tsv"
+
+  local in_progress_id
+  in_progress_id="$(awk -F'\t' '$2=="in_progress"{print $1; exit}' "$tasks_tsv")"
+
+  # review（C1: tasks 配列には無い id。C2: 固定枠として扱うため、started/done がそろった
+  # 1 件をそのまま「レビューの所要時間」の実績とする）。
+  local review_look review_started review_done
+  review_look="$(timing_lookup "$timings_tsv" "review")"
+  review_started=""; review_done=""
+  if [ -n "$review_look" ]; then
+    IFS=$'\t' read -r review_started review_done <<<"$review_look"
+    [ "$review_started" = "-" ] && review_started=""
+    [ "$review_done" = "-" ] && review_done=""
+  fi
+  local review_known=0 review_min="" review_max=""
+  if [ -n "$review_started" ] && [ -n "$review_done" ]; then
+    local rse rde
+    if rse="$(iso_to_epoch "$review_started")" && rde="$(iso_to_epoch "$review_done")" && [ "$rde" -ge "$rse" ]; then
+      review_known=1; review_min=$((rde - rse)); review_max=$review_min
+    fi
+  fi
+
+  # 経過時間（B1）: timings（タスク・review 問わず）の最も早い started_at から今まで。
+  local earliest_epoch=""
+  local rid rs rd
+  while IFS=$'\t' read -r rid rs rd; do
+    [ "$rs" = "-" ] && continue
+    local e
+    e="$(iso_to_epoch "$rs")" || continue
+    if [ -z "$earliest_epoch" ] || [ "$e" -lt "$earliest_epoch" ]; then earliest_epoch="$e"; fi
+  done <"$timings_tsv"
+  local elapsed_seconds=""
+  [ -n "$earliest_epoch" ] && elapsed_seconds=$((now_epoch - earliest_epoch))
+
+  # 現在の題材（B1: 進行中の題材について出す。B3: 進行中の題材が無ければ不明）。
+  # 優先順位: 実行中のタスク > 実行中のレビュー > 全部完了 > レビュー待ち > 未着手待ち。
+  local phase
+  if [ "$total" -eq 0 ]; then
+    phase="no_tasks"
+  elif [ -n "$in_progress_id" ]; then
+    phase="task_in_progress"
+  elif [ -n "$review_started" ] && [ -z "$review_done" ]; then
+    phase="review_in_progress"
+  elif [ "$done_count" -eq "$total" ] && [ -n "$review_done" ]; then
+    phase="all_done"
+  elif [ "$done_count" -eq "$total" ]; then
+    phase="awaiting_review"
+  else
+    phase="pending"
+  fi
+
+  local current_kind="" current_id="" current_started_epoch="" current_elapsed=""
+  case "$phase" in
+    task_in_progress)
+      current_kind="task"; current_id="$in_progress_id"
+      local look started
+      look="$(timing_lookup "$timings_tsv" "$in_progress_id")"
+      if [ -n "$look" ]; then
+        IFS=$'\t' read -r started _ <<<"$look"
+        if [ "$started" != "-" ] && current_started_epoch="$(iso_to_epoch "$started")"; then
+          current_elapsed=$((now_epoch - current_started_epoch))
+        fi
+      fi
+      ;;
+    review_in_progress)
+      current_kind="review"; current_id="review"
+      if current_started_epoch="$(iso_to_epoch "$review_started")"; then
+        current_elapsed=$((now_epoch - current_started_epoch))
+      fi
+      ;;
+  esac
+
+  # 残りタスク数への掛け算（B2: 残タスク数 × 実測の最小/最大。単純平均はしない）。
+  # 残り 0 件なら実績が無くても「0」と言い切れる（掛ける対象が無いだけで、捏造ではない）。
+  local remaining_count=$((total - done_count))
+  [ "$remaining_count" -lt 0 ] && remaining_count=0
+  local task_known=0 remain_min=0 remain_max=0
+  if [ "$remaining_count" -eq 0 ]; then
+    task_known=1
+  elif [ "$sample_count" -gt 0 ]; then
+    task_known=1
+    remain_min=$((remaining_count * sample_min))
+    remain_max=$((remaining_count * sample_max))
+  fi
+  local eta_tasks_min_epoch="" eta_tasks_max_epoch=""
+  if [ "$task_known" -eq 1 ]; then
+    eta_tasks_min_epoch=$((now_epoch + remain_min))
+    eta_tasks_max_epoch=$((now_epoch + remain_max))
+  fi
+
+  # レビュー込みの完了見込み（C2: 固定枠をタスク側の見込みに足すだけ。レビューが既に
+  # done ならその分の追加時間は 0 として扱う＝all_done）。
+  local eta_review_known=0 eta_review_min_epoch="" eta_review_max_epoch=""
+  if [ "$task_known" -eq 1 ]; then
+    if [ "$phase" = "all_done" ]; then
+      eta_review_known=1
+      eta_review_min_epoch="$eta_tasks_min_epoch"; eta_review_max_epoch="$eta_tasks_max_epoch"
+    elif [ "$review_known" -eq 1 ]; then
+      eta_review_known=1
+      eta_review_min_epoch=$((eta_tasks_min_epoch + review_min))
+      eta_review_max_epoch=$((eta_tasks_max_epoch + review_max))
+    fi
+  fi
+
+  if [ "$json" -eq 1 ]; then
+    printf '{\n'
+    printf '  "generated_at": "%s",\n' "$(json_esc "$generated_at")"
+    printf '  "phase": "%s",\n' "$phase"
+    printf '  "done_tasks": %s,\n' "$done_count"
+    printf '  "total_tasks": %s,\n' "$total"
+    printf '  "remaining_tasks": %s,\n' "$remaining_count"
+    if [ -n "$elapsed_seconds" ]; then printf '  "elapsed_seconds": %s,\n' "$elapsed_seconds"
+    else printf '  "elapsed_seconds": null,\n'; fi
+    case "$phase" in
+      task_in_progress|review_in_progress)
+        if [ -n "$current_elapsed" ]; then
+          printf '  "current": {"kind": "%s", "id": "%s", "elapsed_seconds": %s},\n' "$current_kind" "$(json_esc "$current_id")" "$current_elapsed"
+        else
+          printf '  "current": {"kind": "%s", "id": "%s", "elapsed_seconds": null},\n' "$current_kind" "$(json_esc "$current_id")"
+        fi
+        ;;
+      *) printf '  "current": {"kind": "%s"},\n' "$phase";;
+    esac
+    if [ "$sample_count" -gt 0 ]; then
+      printf '  "task_duration": {"known": true, "sample_count": %s, "min_seconds": %s, "max_seconds": %s},\n' "$sample_count" "$sample_min" "$sample_max"
+    else
+      printf '  "task_duration": {"known": false, "sample_count": 0, "min_seconds": null, "max_seconds": null},\n'
+    fi
+    if [ "$review_known" -eq 1 ]; then
+      printf '  "review_duration": {"known": true, "min_seconds": %s, "max_seconds": %s},\n' "$review_min" "$review_max"
+    else
+      printf '  "review_duration": {"known": false, "min_seconds": null, "max_seconds": null},\n'
+    fi
+    if [ "$task_known" -eq 1 ]; then
+      printf '  "eta_tasks_only": {"known": true, "min_epoch": %s, "max_epoch": %s},\n' "$eta_tasks_min_epoch" "$eta_tasks_max_epoch"
+    else
+      printf '  "eta_tasks_only": {"known": false, "min_epoch": null, "max_epoch": null},\n'
+    fi
+    if [ "$eta_review_known" -eq 1 ]; then
+      printf '  "eta_with_review": {"known": true, "min_epoch": %s, "max_epoch": %s},\n' "$eta_review_min_epoch" "$eta_review_max_epoch"
+    else
+      printf '  "eta_with_review": {"known": false, "min_epoch": null, "max_epoch": null},\n'
+    fi
+    printf '  "missing_records": ['
+    if [ "${#missing_json[@]}" -eq 0 ]; then
+      printf ']\n'
+    else
+      printf '\n'
+      local i n; n="${#missing_json[@]}"
+      i=0
+      while [ "$i" -lt "$n" ]; do
+        if [ "$i" -lt $((n - 1)) ]; then printf '    %s,\n' "${missing_json[$i]}"
+        else printf '    %s\n' "${missing_json[$i]}"; fi
+        i=$((i + 1))
+      done
+      printf '  ]\n'
+    fi
+    printf '}\n'
+  else
+    if [ "$phase" = "no_tasks" ]; then
+      echo "harness eta: 不明（${stages} に tasks が無い）"
+    else
+      local head="harness eta: ${done_count}/${total} done"
+      if [ -n "$elapsed_seconds" ]; then head="${head}（経過 $(human_minutes "$elapsed_seconds") 分）"
+      else head="${head}（経過 不明）"; fi
+      echo "$head"
+
+      case "$phase" in
+        task_in_progress)
+          if [ -n "$current_elapsed" ]; then
+            echo "  実行中: ${current_id}（$(epoch_to_local_hm "$current_started_epoch") 開始、$(human_minutes "$current_elapsed") 分経過）"
+          else
+            echo "  実行中: ${current_id}（開始時刻は記録されていない）"
+          fi
+          ;;
+        review_in_progress)
+          if [ -n "$current_elapsed" ]; then
+            echo "  実行中: レビュー（$(epoch_to_local_hm "$current_started_epoch") 開始、$(human_minutes "$current_elapsed") 分経過）"
+          else
+            echo "  実行中: レビュー（開始時刻は記録されていない）"
+          fi
+          ;;
+        awaiting_review) echo "  タスクは全て完了。レビュー未着手（harness task start review 待ち）";;
+        all_done)        echo "  完了（タスク・レビューとも done）";;
+        pending)         echo "  実行中のタスクなし（次のタスク未着手）";;
+      esac
+
+      if [ "$remaining_count" -gt 0 ]; then
+        echo "  残りタスク: ${remaining_count} 件"
+        if [ "$sample_count" -gt 0 ]; then
+          echo "  タスクの所要時間の推定: $(human_minutes "$sample_min")〜$(human_minutes "$sample_max") 分/件（完了実績 ${sample_count} 件） → 残り計 $(human_minutes "$remain_min")〜$(human_minutes "$remain_max") 分"
+          echo "  完了見込み（タスクのみ）: $(epoch_to_local_hm "$eta_tasks_min_epoch")〜$(epoch_to_local_hm "$eta_tasks_max_epoch")"
+        else
+          echo "  タスクの所要時間の推定: 不明（完了実績が 0 件）"
+        fi
+      fi
+
+      if [ "$phase" != "all_done" ]; then
+        if [ "$review_known" -eq 1 ]; then
+          echo "  レビューの所要時間の推定: $(human_minutes "$review_min")〜$(human_minutes "$review_max") 分（固定枠。観点数を増やしても残数には掛けない）"
+        else
+          echo "  レビューの所要時間の推定: 不明（review の実績記録が無い）"
+        fi
+        if [ "$eta_review_known" -eq 1 ]; then
+          echo "  完了見込み（レビュー込み）: $(epoch_to_local_hm "$eta_review_min_epoch")〜$(epoch_to_local_hm "$eta_review_max_epoch")"
+        else
+          echo "  完了見込み（レビュー込み）: 不明"
+        fi
+      fi
+
+      if [ "${#missing_lines[@]}" -gt 0 ]; then
+        echo "  ※ 記録が欠けている:"
+        local m
+        for m in "${missing_lines[@]}"; do
+          echo "    - ${m}"
+        done
+      fi
+    fi
+  fi
+
+  rm -f "$tasks_tsv" "$timings_tsv"
 }
 
 cmd_check() {
@@ -1160,7 +1574,7 @@ usage() { # 冒頭のコメントをそのまま usage にする。標準入力�
   if [ -n "$src" ] && [ -f "$src" ]; then
     sed -n '2,19p' "$src" | sed 's/^# \{0,1\}//'
   else
-    echo "harness <init|update|status|diff|upstream|check|gc|doctor|task|self-install|version>"
+    echo "harness <init|update|status|diff|upstream|check|gc|doctor|task|eta|self-install|version>"
     echo "  標準入力から実行中のため詳しい usage を読み出せない。clone した bin/harness か、導入済みプロジェクトの .harness/bin/harness から実行する。"
   fi
 }
@@ -1209,6 +1623,7 @@ if [ "$HARNESS_SOURCED" = 0 ]; then
     gc)       shift; cmd_gc "$@";;
     doctor)   shift; cmd_doctor "$@";;
     task)     shift; cmd_task "$@";;
+    eta)      shift; cmd_eta "$@";;
     version|--version|-v) cmd_version;;
     ""|help|-h|--help) usage;;
     *) die "unknown command: $1 (harness help)";;
