@@ -1203,6 +1203,22 @@ cmd_task() {
 # 複数行オブジェクトなので、"{" / "}" の対応関係だけを追って各タスクの境界を判定する
 # （"[" / "]" は見ない。acceptance 等の配列はこの depth 計算に影響しない）。値の中に含まれる
 # "{" "}" は文字列を取り除いてから数えるので、日本語の説明文に中括弧が混ざっても壊れない。
+#
+# レビュー指摘（T05 #5）: id/status の捕捉が「(a) 行頭が \"id\": で始まる」という
+# 位置固定の正規表現に加えて「(b) depth==1 になってから初めて捕捉を試みる」という条件つきだった
+# ため、1 タスク 1 行の圧縮形式（例: {"id": "T01", "status": "done"}）は読めなかった: 圧縮形式は
+# 開き "{" と "id" が同じ行にあり、その行を処理する時点ではまだ depth が 0（この行の分の "{" を
+# 数える前）のため (b) が常に成立せず、(a) も行頭が "{" なので不成立になる。展開形式（1 フィール
+# ド 1 行）はこの直後の行で depth が既に 1 になっているのでたまたま両方成立していただけで、実際は
+# 2 つの読み方が偶然噛み合っていた。CHANGELOG（T03）は「tasks_extract は既に圧縮 1 行・展開の
+# 両方を読める」と書いていたが、これは誤りだった（実測で反証: 圧縮形式のタスクは無警告で
+# total_tasks から消える）。timings_extract の extract_val（行内のどこにあっても "key": の値を
+# 拾う非固定位置マッチ）と entered フラグ（"{" を見た後で depth が 0 に戻ったら 1 エントリ分と
+# 見なす）に方式を揃え、depth==1 という前提を外した。これで展開形式・圧縮形式のどちらも同じ
+# コードで読める（jq/node には頼らない）。id/status はタスクの最上位フィールドにしか現れない
+# 前提（result オブジェクトのフィールドは commit/questions/report_path/note_for_next で
+# id/status と衝突しない）で、timings_extract と同じ「最初に見つかった値を採用し、以降は
+# 上書きしない」規則を使う。
 tasks_extract() { # stages_file -> TSV: id\tstatus
   awk '
     function strip_strings(s,    r) {
@@ -1210,31 +1226,28 @@ tasks_extract() { # stages_file -> TSV: id\tstatus
       gsub(/"([^"\\]|\\.)*"/, "\"\"", r)
       return r
     }
+    function extract_val(line, key,    t) {
+      if (line !~ ("\"" key "\"[[:space:]]*:")) return ""
+      t = line
+      sub(("^.*\"" key "\"[[:space:]]*:[[:space:]]*"), "", t)
+      sub(/^"/, "", t)
+      sub(/".*/, "", t)
+      return t
+    }
     /^[[:space:]]*"tasks"[[:space:]]*:[[:space:]]*\[[[:space:]]*\][,]?[[:space:]]*$/ { next }
-    /^[[:space:]]*"tasks"[[:space:]]*:[[:space:]]*\[/ { intbl=1; depth=0; id=""; status=""; next }
+    /^[[:space:]]*"tasks"[[:space:]]*:[[:space:]]*\[/ { intbl=1; depth=0; id=""; status=""; entered=0; next }
     intbl && depth==0 && /^[[:space:]]*\][,]?[[:space:]]*$/ { intbl=0; next }
     intbl {
-      if (depth == 1) {
-        if (id == "" && $0 ~ /^[[:space:]]*"id"[[:space:]]*:/) {
-          t = $0
-          sub(/^[[:space:]]*"id"[[:space:]]*:[[:space:]]*"/, "", t)
-          sub(/".*/, "", t)
-          id = t
-        }
-        if (status == "" && $0 ~ /^[[:space:]]*"status"[[:space:]]*:/) {
-          t = $0
-          sub(/^[[:space:]]*"status"[[:space:]]*:[[:space:]]*"/, "", t)
-          sub(/".*/, "", t)
-          status = t
-        }
-      }
+      if ($0 ~ /\{/) entered=1
+      v = extract_val($0, "id");     if (v != "" && id == "")     id = v
+      v = extract_val($0, "status"); if (v != "" && status == "") status = v
       line = strip_strings($0)
       opens = gsub(/\{/, "{", line)
       closes = gsub(/\}/, "}", line)
       depth += opens - closes
-      if (depth == 0 && id != "") {
+      if (depth == 0 && entered == 1) {
         print id "\t" (status == "" ? "unknown" : status)
-        id = ""; status = ""
+        id = ""; status = ""; entered = 0
       }
       next
     }
