@@ -661,6 +661,369 @@ expect_review_done_unparseable_json() {
 scenario "ETA18b: 同じ状況の --json は phase: review_in_progress のまま timings_parse_warnings に理由を出す（レビューT04#2）" \
   new_proj_review_done_unparseable expect_review_done_unparseable_json
 
+# ETA19: レビュー指摘（review-effectiveness #2）— phase: pending を検証するシナリオが 0 件だった。
+# ETA5 と全く同じ入力（実行中のタスクも done も review も無い）が phase: pending を実際に
+# 通っているのに、ETA5 はテキストの「経過 不明」等しか見ておらず phase 自体を確認していなかった
+# （判定を丸ごと無効化しても検出できなかった）。同じ setup を再利用し、pending 固有の出力を見る。
+expect_no_timings_phase_pending_text() {
+  run_eta
+  expect_code 0
+  expect_out '実行中のタスクなし（次のタスク未着手）'
+}
+scenario "ETA19: 実行中・done・review のいずれも無いとき phase: pending 固有のテキストを出す（レビュー指摘: phase 未検証#1）" \
+  new_proj_no_timings expect_no_timings_phase_pending_text
+
+expect_no_timings_phase_pending_json() {
+  run_eta --json
+  expect_code 0
+  expect_out '"phase": "pending"'
+  expect_out '"current": \{"kind": "pending"\}'
+}
+scenario "ETA19b: 同じ状況の --json は phase: pending / current.kind: pending を出す" \
+  new_proj_no_timings expect_no_timings_phase_pending_json
+
+# ETA20: レビュー指摘（review-effectiveness #2）— phase: review_in_progress を検証するシナリオが
+# 0 件だった。しかも「このリポジトリが今まさにその状態を通った」（review の started_at はあるが
+# done_at はまだ無い、書式は正常）という最も基本的な形。ETA17/18 は started_at/done_at の
+# 「解釈できない」異常系のついでにこの分岐へ落ちていただけで、正常系だけの単独シナリオは無かった。
+new_proj_review_in_progress_clean() {
+  local t1s t1d revs
+  t1s="$(ago_iso 1800)"; t1d="$(ago_iso 1440)"   # T01 は完了済み（6分）
+  revs="$(ago_iso 300)"                           # review は 5分前に開始、done_at はまだ null
+  new_proj_with "{
+  \"timings\": [
+    {\"id\": \"T01\", \"started_at\": \"${t1s}\", \"done_at\": \"${t1d}\"},
+    {\"id\": \"review\", \"started_at\": \"${revs}\", \"done_at\": null}
+  ],
+  \"_doc\": \"d\",
+  \"tasks\": [
+    {
+      \"id\": \"T01\",
+      \"status\": \"done\"
+    }
+  ]
+}"
+}
+expect_review_in_progress_clean_text() {
+  run_eta
+  expect_code 0
+  expect_out '1/1 done'
+  expect_out '実行中: レビュー'
+  expect_out '5 分経過'
+  expect_not_out 'を解釈できない'
+  expect_not_out '記録が欠けている'
+}
+scenario "ETA20: review が started_at のみ（done_at は null）の正常系で phase: review_in_progress を検証する（レビュー指摘: phase 未検証#1）" \
+  new_proj_review_in_progress_clean expect_review_in_progress_clean_text
+
+expect_review_in_progress_clean_json() {
+  run_eta --json
+  expect_code 0
+  expect_out '"phase": "review_in_progress"'
+  expect_out '"current": \{"kind": "review", "id": "review", "elapsed_seconds": [0-9]+\}'
+  expect_out '"timings_parse_warnings": \[\]'
+}
+scenario "ETA20b: 同じ状況の --json は phase: review_in_progress を警告なしで出す" \
+  new_proj_review_in_progress_clean expect_review_in_progress_clean_json
+
+# ETA21〜24: レビュー指摘（review-effectiveness #3）— B6 の異常系検出 6 分岐のうち
+# missing_started_at / unparseable_started_at / unparseable_done_at / done_before_start の
+# 4 つは「見逃し方向」（判定を無効化しても検出できない）のシナリオが無かった（no_record と
+# missing_done_at の 2 つにしかテストが無かった）。4 分岐それぞれを単独で再現し、(a) 専用の
+# reason コードで区別されること、(b) 実績サンプル（sample_min/max）を汚染しないことの両方を見る。
+
+# ETA21: timings のエントリ自体はあるが started_at が null（no_record とは別扱いになること）。
+new_proj_missing_started_at() {
+  new_proj_with '{
+  "timings": [
+    {"id": "T01", "started_at": null, "done_at": null}
+  ],
+  "_doc": "d",
+  "tasks": [
+    {
+      "id": "T01",
+      "status": "in_progress"
+    }
+  ]
+}'
+}
+expect_missing_started_at_text() {
+  run_eta
+  expect_code 0
+  expect_out '記録が欠けている'
+  expect_out 'T01（in_progress）: started_at が記録されていない'
+  expect_not_out 'T01（in_progress）: 記録が無い'
+}
+scenario "ETA21: timings は有るが started_at が無いのを missing_started_at として no_record と区別する（レビュー指摘#2・見逃し方向）" \
+  new_proj_missing_started_at expect_missing_started_at_text
+
+expect_missing_started_at_json() {
+  run_eta --json
+  expect_code 0
+  expect_out '"id": "T01", "status": "in_progress", "reason": "missing_started_at"'
+}
+scenario "ETA21b: 同じ状況の --json は reason: missing_started_at を出す" \
+  new_proj_missing_started_at expect_missing_started_at_json
+
+# ETA22: started_at が非空だが日付として解釈できない（review 以外＝タスク本体で確認するのは初）。
+new_proj_unparseable_started_at() {
+  new_proj_with '{
+  "timings": [
+    {"id": "T01", "started_at": "not-a-real-timestamp", "done_at": "2026-09-27T06:00:00Z"}
+  ],
+  "_doc": "d",
+  "tasks": [
+    {
+      "id": "T01",
+      "status": "done"
+    },
+    {
+      "id": "T02",
+      "status": "todo"
+    }
+  ]
+}'
+}
+expect_unparseable_started_at_text() {
+  run_eta
+  expect_code 0
+  expect_out '記録が欠けている'
+  expect_out 'T01（done）: started_at .*を解釈できない'
+  expect_out 'タスクの所要時間の推定: 不明（完了実績が 0 件）'
+}
+scenario "ETA22: task の started_at が解釈できない値を unparseable_started_at として区別し、実績サンプルに混ぜない（レビュー指摘#2・見逃し方向）" \
+  new_proj_unparseable_started_at expect_unparseable_started_at_text
+
+expect_unparseable_started_at_json() {
+  run_eta --json
+  expect_code 0
+  expect_out '"id": "T01", "status": "done", "reason": "unparseable_started_at"'
+  expect_out '"task_duration": \{"known": false, "sample_count": 0'
+}
+scenario "ETA22b: 同じ状況の --json は reason: unparseable_started_at を出し、sample_count に混ぜない" \
+  new_proj_unparseable_started_at expect_unparseable_started_at_json
+
+# ETA23: done_at が非空だが日付として解釈できない（started_at は妥当）。
+new_proj_unparseable_done_at() {
+  new_proj_with '{
+  "timings": [
+    {"id": "T01", "started_at": "2026-09-27T05:00:00Z", "done_at": "not-a-real-timestamp"}
+  ],
+  "_doc": "d",
+  "tasks": [
+    {
+      "id": "T01",
+      "status": "done"
+    },
+    {
+      "id": "T02",
+      "status": "todo"
+    }
+  ]
+}'
+}
+expect_unparseable_done_at_text() {
+  run_eta
+  expect_code 0
+  expect_out '記録が欠けている'
+  expect_out 'T01（done）: done_at .*を解釈できない'
+  expect_out 'タスクの所要時間の推定: 不明（完了実績が 0 件）'
+}
+scenario "ETA23: task の done_at が解釈できない値を unparseable_done_at として区別し、実績サンプルに混ぜない（レビュー指摘#2・見逃し方向）" \
+  new_proj_unparseable_done_at expect_unparseable_done_at_text
+
+expect_unparseable_done_at_json() {
+  run_eta --json
+  expect_code 0
+  expect_out '"id": "T01", "status": "done", "reason": "unparseable_done_at"'
+  expect_out '"task_duration": \{"known": false, "sample_count": 0'
+}
+scenario "ETA23b: 同じ状況の --json は reason: unparseable_done_at を出す" \
+  new_proj_unparseable_done_at expect_unparseable_done_at_json
+
+# ETA24: done_at が started_at より前（負の所要時間）。T04 のコメントにある通り、この分岐を
+# 「反転」すると通常系破壊で拾われてしまうが「無効化」だと無傷になる非対称があるため、あえて
+# 正常なサンプル（T01, 6分）と混在させ、サンプル統計（sample_count/min/max）が壊れた T02 の
+# 負の所要時間で汚染されないことを直接見る（remaining_count が 0 だと該当の出力行自体が
+# スキップされるため、todo の T03 を足して残数を 1 件のまま残す）。
+new_proj_done_before_start() {
+  local t1s t1d
+  t1s="$(ago_iso 1800)"; t1d="$(ago_iso 1440)"   # 妥当な実績: 6分
+  new_proj_with "{
+  \"timings\": [
+    {\"id\": \"T01\", \"started_at\": \"${t1s}\", \"done_at\": \"${t1d}\"},
+    {\"id\": \"T02\", \"started_at\": \"2026-09-27T06:00:00Z\", \"done_at\": \"2026-09-27T05:00:00Z\"}
+  ],
+  \"_doc\": \"d\",
+  \"tasks\": [
+    {
+      \"id\": \"T01\",
+      \"status\": \"done\"
+    },
+    {
+      \"id\": \"T02\",
+      \"status\": \"done\"
+    },
+    {
+      \"id\": \"T03\",
+      \"status\": \"todo\"
+    }
+  ]
+}"
+}
+expect_done_before_start_text() {
+  run_eta
+  expect_code 0
+  expect_out '2/3 done'
+  expect_out '記録が欠けている'
+  expect_out 'T02（done）: done_at が started_at より前になっている'
+  expect_out '残りタスク: 1 件'
+  expect_out '6〜6 分/件'
+  expect_out '完了実績 1 件'
+  expect_out '残り計 6〜6 分'
+}
+scenario "ETA24: done_at が started_at より前の記録を done_before_start として除外し、実績サンプルを汚染しない（レビュー指摘#2・見逃し方向）" \
+  new_proj_done_before_start expect_done_before_start_text
+
+expect_done_before_start_json() {
+  run_eta --json
+  expect_code 0
+  expect_out '"id": "T02", "status": "done", "reason": "done_before_start"'
+  expect_out '"task_duration": \{"known": true, "sample_count": 1, "min_seconds": 360, "max_seconds": 360\}'
+}
+scenario "ETA24b: 同じ状況の --json は reason: done_before_start を出し、負の所要時間を混ぜない" \
+  new_proj_done_before_start expect_done_before_start_json
+
+# ETA25/25b: レビュー指摘（review-effectiveness #4）— strip_strings（JSON 文字列中の不釣り合いな
+# 中括弧を無害化する防御。timings_extract/tasks_extract 双方にある）を検証するフィクスチャが
+# 無かった。無効化すると tasks_extract が status を取り違え、後続タスクを丸ごと取りこぼす
+# （レビュアーが実証）。開き "{" 単独・閉じ "}" 単独の両方向を title に入れて確認する。
+#
+# 単に total_tasks/done_tasks の件数だけを見ると、strip_strings を無効化したときに depth が
+# ずれて「T01 が unknown に化け、空 id の幽霊エントリが T02 の代わりに 1 件出る」という壊れ方を
+# しても件数（2 件）がたまたま一致してしまい検出できない（実際に確認済み。閉じ "}" 方向で再現）。
+# T01 に実測の timings（task_duration の値まで検証できる）を持たせ、T02 は in_progress かつ
+# timings 記録が無い状態にして missing_records に T02 の完全な行が出ることまで確認することで、
+# 件数の偶然一致に頼らない。
+new_proj_brace_in_title_open() {
+  local t1s t1d
+  t1s="$(ago_iso 1800)"; t1d="$(ago_iso 1440)"   # 6分
+  new_proj_with "{
+  \"timings\": [
+    {\"id\": \"T01\", \"started_at\": \"${t1s}\", \"done_at\": \"${t1d}\"}
+  ],
+  \"_doc\": \"d\",
+  \"tasks\": [
+    {
+      \"id\": \"T01\",
+      \"title\": \"設定 { 形式のサンプル（閉じ括弧なし）\",
+      \"status\": \"done\"
+    },
+    {
+      \"id\": \"T02\",
+      \"status\": \"in_progress\"
+    }
+  ]
+}"
+}
+expect_brace_in_title_open() {
+  run_eta --json
+  expect_code 0
+  expect_out '"total_tasks": 2'
+  expect_out '"done_tasks": 1'
+  expect_out '"task_duration": \{"known": true, "sample_count": 1, "min_seconds": 360, "max_seconds": 360\}'
+  expect_out '"id": "T02", "status": "in_progress", "reason": "no_record"'
+}
+scenario "ETA25: title に対にならない開き { が入っていても後続タスクを取りこぼさない（strip_strings 防御。レビュー指摘#4）" \
+  new_proj_brace_in_title_open expect_brace_in_title_open
+
+new_proj_brace_in_title_close() {
+  local t1s t1d
+  t1s="$(ago_iso 1800)"; t1d="$(ago_iso 1440)"   # 6分
+  new_proj_with "{
+  \"timings\": [
+    {\"id\": \"T01\", \"started_at\": \"${t1s}\", \"done_at\": \"${t1d}\"}
+  ],
+  \"_doc\": \"d\",
+  \"tasks\": [
+    {
+      \"id\": \"T01\",
+      \"title\": \"閉じ括弧のみ } のサンプル\",
+      \"status\": \"done\"
+    },
+    {
+      \"id\": \"T02\",
+      \"status\": \"in_progress\"
+    }
+  ]
+}"
+}
+expect_brace_in_title_close() {
+  run_eta --json
+  expect_code 0
+  expect_out '"total_tasks": 2'
+  expect_out '"done_tasks": 1'
+  expect_out '"task_duration": \{"known": true, "sample_count": 1, "min_seconds": 360, "max_seconds": 360\}'
+  expect_out '"id": "T02", "status": "in_progress", "reason": "no_record"'
+}
+scenario "ETA25b: title に対にならない閉じ } が入っていても後続タスクを取りこぼさない（strip_strings 防御。レビュー指摘#4・反対方向）" \
+  new_proj_brace_in_title_close expect_brace_in_title_close
+
+# ETA26: レビュー指摘（review-effectiveness #5）— all_done 時の eta_with_review の JSON 値
+# そのものを確認するテストが無かった（ETA12 はテキストの「残り行が出ない」ことしか見ていない）。
+# eta_with_review は eta_tasks_only と同じ min_epoch/max_epoch になるはず（review 込みでも
+# レビューは既に done なので追加時間 0）。この一致を実測値どうしの比較で確認する（epoch は
+# 実行時刻に依存するため固定値をハードコードしない）。
+expect_all_done_eta_with_review_matches() {
+  run_eta --json
+  expect_code 0
+  expect_out '"eta_tasks_only": \{"known": true'
+  expect_out '"eta_with_review": \{"known": true'
+  local tasks_part review_part t_min t_max r_min r_max
+  tasks_part="$(printf '%s' "$OUT" | grep -o '"eta_tasks_only": {"known": true, "min_epoch": [0-9]*, "max_epoch": [0-9]*}')"
+  review_part="$(printf '%s' "$OUT" | grep -o '"eta_with_review": {"known": true, "min_epoch": [0-9]*, "max_epoch": [0-9]*}')"
+  t_min="$(printf '%s' "$tasks_part" | sed -n 's/.*"min_epoch": \([0-9]*\).*/\1/p')"
+  t_max="$(printf '%s' "$tasks_part" | sed -n 's/.*"max_epoch": \([0-9]*\).*/\1/p')"
+  r_min="$(printf '%s' "$review_part" | sed -n 's/.*"min_epoch": \([0-9]*\).*/\1/p')"
+  r_max="$(printf '%s' "$review_part" | sed -n 's/.*"max_epoch": \([0-9]*\).*/\1/p')"
+  [ -n "$t_min" ] || errors+=("eta_tasks_only.min_epoch を取得できなかった")
+  [ "$t_min" = "$r_min" ] || errors+=("eta_with_review.min_epoch(${r_min}) が eta_tasks_only.min_epoch(${t_min}) と一致しない")
+  [ "$t_max" = "$r_max" ] || errors+=("eta_with_review.max_epoch(${r_max}) が eta_tasks_only.max_epoch(${t_max}) と一致しない")
+}
+scenario "ETA26: all_done 時、eta_with_review の JSON 値が eta_tasks_only と一致することを検証する（レビュー指摘#5）" \
+  new_proj_all_done expect_all_done_eta_with_review_matches
+
+# ETA27/27b: レビュー指摘（review-spec #7）— tasks が「1 タスク 1 行」の圧縮形式だと
+# tasks_extract が無警告で該当タスクを無視していた（T03 の CHANGELOG は「圧縮 1 行・展開の
+# 両方を読める」と書いていたが実態と食い違っていた）。T05 で tasks_extract を timings_extract と
+# 同じ非固定位置マッチ（depth==1 のガードを外す）に揃え、圧縮形式でも読めるようにした
+# （判断: 「読めるようにする」を選んだ。理由は report 参照）。
+new_proj_compressed_tasks() {
+  new_proj_with '{
+  "_doc": "d",
+  "tasks": [
+    {"id": "T01", "status": "done"},
+    {"id": "T02", "status": "todo"}
+  ]
+}'
+}
+expect_compressed_tasks_text() {
+  run_eta
+  expect_code 0
+  expect_out '1/2 done'
+}
+scenario "ETA27: tasks が圧縮1行形式（1 タスク 1 行）でも取りこぼさず読める（tasks_extract。レビュー指摘#7）" \
+  new_proj_compressed_tasks expect_compressed_tasks_text
+
+expect_compressed_tasks_json() {
+  run_eta --json
+  expect_code 0
+  expect_out '"total_tasks": 2'
+  expect_out '"done_tasks": 1'
+}
+scenario "ETA27b: 同じ状況の --json も total_tasks/done_tasks を圧縮形式のまま正しく数える" \
+  new_proj_compressed_tasks expect_compressed_tasks_json
+
 # ================================================================ 集計
 echo
 echo "tests/eta.sh: pass=$passed fail=$failed"
