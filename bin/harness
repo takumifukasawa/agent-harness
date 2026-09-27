@@ -1061,11 +1061,23 @@ timings_render_block() { # tsv_file
 }
 
 # stages.json の "timings" ブロックを新しい内容に丸ごと差し替える（配列の外側は一切触らない）。
+#
+# レビュー指摘（T04 #1）: harness/state-template/stages.json は初期状態の "timings": [] を
+# 1 行で閉じた空配列として配る（開き "[" と閉じ "]" が同じ行）。この行を「開き "[" のある行」
+# としてしか見ていないと、閉じ単独の行が二度と来ないまま inblock が真の EOF まで居座り、
+# timings ブロックより後ろの行（"_timings_doc" ・末尾の閉じ "}" すら）を丸ごと読み飛ばして
+# 出力から消してしまう（実機で再現。配布直後の stages.json に初めて `harness task start` を
+# 呼ぶと必ず踏む）。timings_extract（読み取り側）の同じパターン用ガードと揃え、1 行で
+# 閉じている場合は inblock に入れず、その行だけを新しい内容へ置き換えて次の行へ進む。
 timings_splice() { # stages_file block_file
   local f="$1" blockfile="$2" tmp
   tmp="$(mktemp)"
   awk -v blockfile="$blockfile" '
     BEGIN { while ((getline line < blockfile) > 0) { n++; block[n] = line }; close(blockfile) }
+    /^[[:space:]]*"timings"[[:space:]]*:[[:space:]]*\[[[:space:]]*\][,]?[[:space:]]*$/ {
+      for (i = 1; i <= n; i++) print block[i]
+      next
+    }
     /^[[:space:]]*"timings"[[:space:]]*:[[:space:]]*\[/ {
       for (i = 1; i <= n; i++) print block[i]
       inblock = 1
@@ -1379,12 +1391,31 @@ cmd_eta() {
     [ "$review_started" = "-" ] && review_started=""
     [ "$review_done" = "-" ] && review_done=""
   fi
+  # レビュー指摘（T04 #2）: started_at/done_at が非空だが日付として解釈できない値
+  # （コピペミスで "T"/"Z" が欠けた・別形式で書いた等）のとき、以前は phase 判定側だけが
+  # 「非空なら有効」という別の緩い基準を使っており、review_known と食い違って黙って
+  # all_done / *_in_progress と誤認していた（no-silent-failures 再発）。ここで review_known
+  # と同じ iso_to_epoch 検証を行い、解釈できない値は phase 判定でも「無い」ものとして扱い、
+  # かつ黙らせず timings_parse_warnings へ回す（B6 の「記録が無い」とは別の理由として書く）。
   local review_known=0 review_min="" review_max=""
-  if [ -n "$review_started" ] && [ -n "$review_done" ]; then
-    local rse rde
-    if rse="$(iso_to_epoch "$review_started")" && rde="$(iso_to_epoch "$review_done")" && [ "$rde" -ge "$rse" ]; then
-      review_known=1; review_min=$((rde - rse)); review_max=$review_min
+  local review_started_valid=0 review_done_valid=0
+  local rse="" rde=""
+  if [ -n "$review_started" ]; then
+    if rse="$(iso_to_epoch "$review_started")"; then
+      review_started_valid=1
+    else
+      parse_warnings+=("review の started_at '${review_started}' を解釈できない")
     fi
+  fi
+  if [ -n "$review_done" ]; then
+    if rde="$(iso_to_epoch "$review_done")"; then
+      review_done_valid=1
+    else
+      parse_warnings+=("review の done_at '${review_done}' を解釈できない")
+    fi
+  fi
+  if [ "$review_started_valid" -eq 1 ] && [ "$review_done_valid" -eq 1 ] && [ "$rde" -ge "$rse" ]; then
+    review_known=1; review_min=$((rde - rse)); review_max=$review_min
   fi
 
   # 経過時間（B1）: timings（タスク・review 問わず）の最も早い started_at から今まで。
@@ -1406,9 +1437,12 @@ cmd_eta() {
     phase="no_tasks"
   elif [ -n "$in_progress_id" ]; then
     phase="task_in_progress"
-  elif [ -n "$review_started" ] && [ -z "$review_done" ]; then
+  elif [ "$review_started_valid" -eq 1 ] && [ "$review_done_valid" -eq 0 ]; then
     phase="review_in_progress"
-  elif [ "$done_count" -eq "$total" ] && [ -n "$review_done" ]; then
+  elif [ "$done_count" -eq "$total" ] && [ "$review_known" -eq 1 ]; then
+    # review_known（started_at/done_at 双方が解釈でき、順序も正しい）を使う。review_done_valid
+    # だけで判定すると、started_at が壊れていても done_at さえ読めれば all_done と言えてしまい、
+    # review_duration.known:false と矛盾する（レビュー指摘 T04 #2 の自己矛盾そのもの）。
     phase="all_done"
   elif [ "$done_count" -eq "$total" ]; then
     phase="awaiting_review"
@@ -1439,10 +1473,17 @@ cmd_eta() {
 
   # 残りタスク数への掛け算（B2: 残タスク数 × 実測の最小/最大。単純平均はしない）。
   # 残り 0 件なら実績が無くても「0」と言い切れる（掛ける対象が無いだけで、捏造ではない）。
+  #
+  # レビュー指摘（T04 #3）: total==0（tasks が 1 件も無い＝phase: no_tasks）でも
+  # remaining_count は 0-0=0 になり、「残り 0 件で確定」と区別できず known:true（epoch=今）を
+  # 捏造していた。total==0 は「掛ける対象が無い」ではなく「そもそも題材が無い」なので、
+  # 同じ入力のテキスト出力（B3: 不明）と揃え、先に task_known=0 のまま確定させる。
   local remaining_count=$((total - done_count))
   [ "$remaining_count" -lt 0 ] && remaining_count=0
   local task_known=0 remain_min=0 remain_max=0
-  if [ "$remaining_count" -eq 0 ]; then
+  if [ "$total" -eq 0 ]; then
+    task_known=0
+  elif [ "$remaining_count" -eq 0 ]; then
     task_known=1
   elif [ "$sample_count" -gt 0 ]; then
     task_known=1

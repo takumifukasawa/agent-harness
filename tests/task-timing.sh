@@ -46,8 +46,12 @@ run_task() { # [args...]
 stages_file() { printf '%s/.harness/state/stages.json' "$PROJ"; }
 
 # id の timings 行（1 行）を取り出す。無ければ空文字。
+# timings のエントリは常に "{\"id\": \"...\"" で始まる 1 行 JSON（timings_render_block が書く形）
+# なので、行頭アンカーで絞る。アンカー無しの "\"id\": \"...\"" だけだと、"tasks" 配列側の展開形式
+# （1 フィールド 1 行）の id 行にも誤ってマッチし得る（timings が tasks より後ろに元々ある
+# stages.json、例えば配布テンプレートそのままの並びで踏む。TT16 で再現・回帰済み）。
 timing_line() { # id
-  grep -E "\"id\": \"$1\"" "$(stages_file)" 2>/dev/null | head -1
+  grep -E "^[[:space:]]*\{\"id\": \"$1\"" "$(stages_file)" 2>/dev/null | head -1
 }
 
 # id の指定フィールドの値。null なら文字列 "null"、値があれば生の値、id 自体が無ければ "__NOTFOUND__"。
@@ -356,6 +360,32 @@ expect_first_call_inserts_timings_block() {
 }
 scenario "TT15: 初回の start が既存の stages.json を壊さずに timings ブロックを先頭直後へ挿入する（A3）" \
   new_proj expect_first_call_inserts_timings_block
+
+# TT16: レビュー指摘（T04）— 配布テンプレート（harness/state-template/stages.json）は
+# "timings": [] を 1 行で閉じた空配列として持つ。この状態で初めて start すると、
+# timings_splice が「開き [ と閉じ ] が同じ行」を考慮せず inblock に居座り続け、
+# それ以降の行（_timings_doc、末尾の閉じ }）を丸ごと消してしまう（実機で再現済み）。
+new_proj_from_seed_template() {
+  PROJ="$WORK/p"; mkdir -p "$PROJ/.harness/state" || return 1
+  ( cd "$PROJ" && git init -q . ) >/dev/null 2>&1 || { errors+=("setup: git init に失敗した"); return 1; }
+  cp "$REPO/harness/state-template/stages.json" "$PROJ/.harness/state/stages.json" \
+    || { errors+=("setup: state-template/stages.json のコピーに失敗した"); return 1; }
+  grep -qE '^[[:space:]]*"timings"[[:space:]]*:[[:space:]]*\[\][,]?[[:space:]]*$' "$PROJ/.harness/state/stages.json" \
+    || { errors+=("setup: state-template/stages.json の想定（1 行で閉じた空 timings 配列）と違う"); return 1; }
+}
+expect_seed_template_start_does_not_break_json() {
+  run_task start T01
+  expect_code 0
+  expect_json_valid_if_node
+  grep -q '"_timings_doc"' "$(stages_file)" \
+    || errors+=("_timings_doc が消えた（timings_splice が閉じ } まで巻き込んで消した疑い）")
+  # 末尾がちゃんと閉じていること（node が無い環境でも壊れを検出できるようにする）
+  tail -1 "$(stages_file)" | grep -qE '^\}[[:space:]]*$' \
+    || errors+=("stages.json の末尾が '}' で終わっていない（JSON が壊れている疑い）")
+  expect_timing_iso8601 T01 started_at
+}
+scenario "TT16: 配布テンプレートの1行空timings配列に初めてstartしてもJSONが壊れない（レビューT04#1）" \
+  new_proj_from_seed_template expect_seed_template_start_does_not_break_json
 
 # ================================================================ 集計
 echo

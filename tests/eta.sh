@@ -159,6 +159,19 @@ expect_empty_tasks_json() {
 scenario "ETA4b: tasks が空のとき --json は phase: no_tasks を出す" \
   new_proj_empty_tasks expect_empty_tasks_json
 
+# ETA4c: レビュー指摘（T04 #3）— tasks が 0 件（phase: no_tasks）のとき、eta_tasks_only /
+# eta_with_review が known: true（epoch = 今）を捏造してはいけない（B3）。テキスト出力は
+# 正しく「不明」と言うのに --json だけ矛盾していた（remaining_count が偶然 0 になるのを
+# 「残り 0 件で確定」と区別できていなかった）。
+expect_empty_tasks_json_not_fabricated() {
+  run_eta --json
+  expect_code 0
+  expect_out '"eta_tasks_only": \{"known": false'
+  expect_out '"eta_with_review": \{"known": false'
+}
+scenario "ETA4c: tasks が空のとき eta_tasks_only/eta_with_review の known を捏造しない（レビューT04#3）" \
+  new_proj_empty_tasks expect_empty_tasks_json_not_fabricated
+
 # ETA5: 実績が 1 件も無い（timings 自体が無い）→ 経過・タスク推定とも不明。
 new_proj_no_timings() {
   new_proj_with '{
@@ -562,6 +575,91 @@ expect_unparseable_entry_json() {
 }
 scenario "ETA16b: 同じ状況の --json は timings_parse_warnings に理由を出す" \
   new_proj_unparseable_entry expect_unparseable_entry_json
+
+# ETA17: レビュー指摘（T04 #2）— review の started_at が非空だが日付として解釈できない値
+# （"not-a-real-timestamp" 等）で、done_at だけは妥当なとき、phase 判定が非空チェックだけで
+# 「有効な記録」と誤認し、黙って all_done と言ってしまう（no-silent-failures 再発）。
+# review_known の計算と同じ iso_to_epoch 検証を phase 判定にも使い、解釈できない場合は
+# 警告（timings_parse_warnings）へ回すことを確かめる。
+new_proj_review_started_unparseable() {
+  new_proj_with '{
+  "timings": [
+    {"id": "TA", "started_at": "2026-09-27T05:00:00Z", "done_at": "2026-09-27T05:10:00Z"},
+    {"id": "review", "started_at": "not-a-real-timestamp", "done_at": "2026-09-27T06:00:00Z"}
+  ],
+  "_doc": "d",
+  "tasks": [
+    {
+      "id": "TA",
+      "status": "done"
+    }
+  ]
+}'
+}
+expect_review_started_unparseable() {
+  run_eta
+  expect_code 0
+  expect_out 'review の started_at .*を解釈できない'
+  # done_at 自体は妥当な値だが、started_at が壊れている以上 review_known（両方揃って初めて
+  # 実績とみなす）は成立しないので、黙って「完了」と言い切ってはいけない（B3・自己矛盾の解消）。
+  expect_not_out '完了（タスク・レビューとも done）'
+}
+scenario "ETA17: review の started_at が解釈できない値でも黙って完了と言わず警告する（レビューT04#2）" \
+  new_proj_review_started_unparseable expect_review_started_unparseable
+
+expect_review_started_unparseable_json() {
+  run_eta --json
+  expect_code 0
+  expect_out '"timings_parse_warnings": \['
+  expect_out 'review の started_at .*を解釈できない'
+  # review_duration.known: false と phase が矛盾なく揃っていること（started_at 不明のまま
+  # phase: all_done を名乗らない。以前は phase: "all_done" なのに review_duration.known: false
+  # という自己矛盾を出していた）。
+  expect_out '"review_duration": \{"known": false'
+  expect_not_out '"phase": "all_done"'
+}
+scenario "ETA17b: 同じ状況の --json も timings_parse_warnings に理由を出し、phase を all_done と矛盾させない（レビューT04#2）" \
+  new_proj_review_started_unparseable expect_review_started_unparseable_json
+
+# ETA18: レビュー指摘（T04 #2 の対称ケース）— started_at は妥当だが done_at が解釈できない値。
+# done_at を信頼できない以上「完了」とは言えないので review_in_progress 側に倒れる。
+# ただし黙らせず、done_at が読めなかったことを警告することを確かめる。
+new_proj_review_done_unparseable() {
+  local revs
+  revs="$(ago_iso 600)"
+  new_proj_with "{
+  \"timings\": [
+    {\"id\": \"TA\", \"started_at\": \"2026-09-27T05:00:00Z\", \"done_at\": \"2026-09-27T05:10:00Z\"},
+    {\"id\": \"review\", \"started_at\": \"${revs}\", \"done_at\": \"not-a-real-timestamp\"}
+  ],
+  \"_doc\": \"d\",
+  \"tasks\": [
+    {
+      \"id\": \"TA\",
+      \"status\": \"done\"
+    }
+  ]
+}"
+}
+expect_review_done_unparseable() {
+  run_eta
+  expect_code 0
+  expect_out 'review の done_at .*を解釈できない'
+  expect_out '実行中: レビュー'
+  expect_not_out '完了（タスク・レビューとも done）'
+}
+scenario "ETA18: review の done_at が解釈できない値でも警告し、完了と誤認しない（レビューT04#2 対称ケース）" \
+  new_proj_review_done_unparseable expect_review_done_unparseable
+
+expect_review_done_unparseable_json() {
+  run_eta --json
+  expect_code 0
+  expect_out '"timings_parse_warnings": \['
+  expect_out 'review の done_at .*を解釈できない'
+  expect_out '"phase": "review_in_progress"'
+}
+scenario "ETA18b: 同じ状況の --json は phase: review_in_progress のまま timings_parse_warnings に理由を出す（レビューT04#2）" \
+  new_proj_review_done_unparseable expect_review_done_unparseable_json
 
 # ================================================================ 集計
 echo
