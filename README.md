@@ -65,6 +65,8 @@ harness status
 | `check [--fast]` | `.harness/checks.sh` に登録した検査を回す（`--fast` は pre-commit 用） |
 | `gc [--days N] [--strict]` | docs の腐敗検知（handoff の鮮度、索引やリンクの切れ、放置された計画・負債・state、管理ファイルの drift） |
 | `doctor` | 環境と導入状態の診断（ツール確認、manifest、改行、アダプタ、source の新版など）。OK/WARN/FAIL の一覧と集計を表示 |
+| `task start <id>` / `task done <id>` | タスクやレビューの所要時間を記録する（`.harness/state/stages.json` の `timings`）。id はタスク（`T01`）でもレビュー（`review`）でもよい |
+| `eta [--json]` | 進捗と残りの推定を出す。完了数 / 全体数、経過、幅のある推定、推定完了時刻。実績が足りなければ「不明」と言う |
 
 ### ハーネスの中身を更新する
 

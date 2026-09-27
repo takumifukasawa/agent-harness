@@ -13,6 +13,11 @@ CLI は `bash .harness/bin/harness <cmd>`（以下 `harness` と略す。PATH �
 2. **spec 本文とレビュー全文を自分の文脈に載せない。** 例外は準備フェーズ（§1）だけ。合意形成のために spec を読むが、反復に入ったら節見出しと受け入れ条件だけを持つ。
 3. **完了判定は検査・git・状態の 3 点を自分で確認して決める。** 実装役の「できました」も、戻り値の `commit` も、判定材料にしない。
 
+## 進捗を聞かれたら
+
+**`harness eta` を叩く。** 推測で答えない。完了数 / 全体数、経過時間、残りの推定（実測の最小〜最大の幅）、推定完了時刻を出す。実績が足りなければ「不明」と言う（数字を捏造しない）。外部ツールに渡すなら `harness eta --json`。
+記録は `harness task start/done` で貯まる（§2.1 / §2.3 / §3）。**叩き忘れたタスクは `eta` が「記録が欠けている」と指摘する。**
+
 ## 0. 毎ターンの最初にやること
 
 1. `.harness/state/progress.json` を読む。
@@ -50,6 +55,7 @@ CLI は `bash .harness/bin/harness <cmd>`（以下 `harness` と略す。PATH �
 ### 2.1 実装役を起動する
 
 まず `stages.json` の該当タスクを `status: "in_progress"`、`progress.current_task` を更新する（セッションが死んでも §0 で再開点が分かる）。
+**続けて `harness task start <task_id>` を叩く**（所要時間の記録。これが無いと `harness eta` が「記録が欠けている」と言う）。
 
 **毎回新しい 1 体**。前のタスクや前の試行を担当した実装役を続けて使わない。渡すのは次の内容だけ（spec 全体・他タスク・レビューの話は渡さない）。
 
@@ -92,7 +98,7 @@ report_path: .harness/state/reports/T03.md
 2. **git**: `git log --oneline <base_commit>..HEAD` に task_id を含むコミットがあること。`git status --porcelain` が空であること（未コミットの変更を残して「done」と言われても認めない）。
 3. **状態**: 戻り値の `status` が `done`。
 
-3 点そろったら **done**: タスクの `status: "done"`、`progress.done` を +1、`done_summaries` に 1 行、`current_task` を依存順で次のタスクへ、`retry_count: 0`。`docs/plans/active/<slug>.md` の進捗に 1 行。**3 行で実装内容を報告してセッションを終える。** 統括のセッションは再試行の間は切らないが、タスクが完了したら切る（次のタスクに文脈を持ち越さないため）。
+3 点そろったら **done**: **`harness task done <task_id>` を叩き**、タスクの `status: "done"`、`progress.done` を +1、`done_summaries` に 1 行、`current_task` を依存順で次のタスクへ、`retry_count: 0`。`docs/plans/active/<slug>.md` の進捗に 1 行。**3 行で実装内容を報告してセッションを終える。** 統括のセッションは再試行の間は切らないが、タスクが完了したら切る（次のタスクに文脈を持ち越さないため）。
 
 ### 2.4 fail のとき
 
@@ -109,7 +115,7 @@ report_path: .harness/state/reports/T03.md
 
 ## 3. 最終レビュー（全タスク完了後に 1 回だけ）
 
-1. 全タスクが `done` であることを確認する。`blocked` が 1 つでも残っていればレビューに入らず、ユーザーに返す。`phase: "review"`。
+1. 全タスクが `done` であることを確認する。`blocked` が 1 つでも残っていればレビューに入らず、ユーザーに返す。`phase: "review"`。**`harness task start review` を叩く**（レビューも所要時間を記録する。終わったら `harness task done review`）。
 2. **観点別に起動**する（毎タスクでは起動しない）。既定の 4 観点は `docs/roles/reviewer.md`: 仕様突合 / 並行性 / 認可 / 機能の完結性。各レビュアーに渡すのは「観点」「差分範囲 `base_commit..HEAD`」「spec の該当節」「報告の形式（場所・問題・コード上の証拠・再現手順・重大度・修正コスト高/低）」「報告の書き先 `.harness/state/reports/review-<spec|concurrency|authz|completeness>.md`」。統括が受け取るのは**要約（件数・重大度・場所・見出し・修正コスト高/低）だけ**。**修正コストを要約に含めるのは、4 の反証の条件を統括が report 本文を開かずに判定するため**（入っていなければ本文を開かず当人に聞き返す）。
    - **モデルは既定で下位**（統括だけ上位を保つ）。レビュアーも反証役も根拠を「コードの該当行かテストの出力」に縛ってあるので下位で足りる。**上位モデルを観点ぶん並列に起動するとセッションのレート上限に当たり、途中で止まる**（実測: 4 体中 3 体が起動直後に停止し、報告は 1 件も残らなかった）。
    - Claude Code: `reviewer` サブエージェントを観点ごとに 1 体、1 メッセージで並列起動。止まったら破棄せず、上限のリセット後に同じエージェントへ「中断地点から再開」を送る（文脈を保ったまま続きを書かせられる）。
