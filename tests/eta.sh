@@ -4,13 +4,17 @@
 # 使い方:  bash tests/eta.sh [<シナリオ名の部分一致>]
 # 終了コード: 全シナリオ pass で 0、1 つでも落ちれば 1。フィルタに 1 件も一致しなければ 1。
 #
-# 対象仕様: docs/spec/task-timing.md（T02: B1/B1b/B2/B3/B4/B6, C2, D1/D2）。
+# 対象仕様: docs/spec/task-timing.md（T02: B1/B1b/B2/B3/B4/B6, C2, D1/D2。T03: A3/B6 の追補）。
 #   - B1/B1b: 完了数/全体数・経過時間・残りの推定・推定完了時刻（幅、ローカルタイム表示）
 #   - B2    : 残りの推定は完了タスクの実測「最小〜最大」を残タスク数に掛ける（単純平均はしない）
 #   - B3    : 実績が無い／進行中の題材が無いときは「不明」と言う（数字を捏造しない）
 #   - B4    : --json で機械可読な出力も出す
-#   - B6    : 記録が欠けているタスク（done/in_progress なのに timings が無い・不完全）を指摘する
+#   - B6    : 記録が欠けているタスク（done/in_progress なのに timings が無い・不完全）を指摘する。
+#             T03 で追加: 記録が欠けている（無い）のと、timings の書式を解釈できない（あるが
+#             読めない）のは別物として区別する（ETA16/16b）
 #   - C2    : レビューは「残数 × 幅」ではなく固定枠（review の 1 件の実測をそのまま使う）
+#   - A3    : T03 で追加: timings が「展開形式」（1 フィールド 1 行。python json.dump(indent=2)
+#             相当）でも壊れずに読める（ETA15/15b）
 #
 # 枠は tests/task-timing.sh と同じ: scenario "<名前>" <setup関数> <expect関数>
 set -u
@@ -466,6 +470,98 @@ expect_json_is_valid() {
 }
 scenario "ETA14: --json は妥当な JSON を出す（B4）" \
   new_proj_two_samples expect_json_is_valid
+
+# ETA15: timings が「展開形式」（1 フィールド 1 行。統括が実際に stages.json を
+# `python -c "json.dump(..., indent=2)"` で書き換えた後に踏んだ形そのもの）でも読めること。
+# 既存のフィクスチャは ETA1〜14 まで全て「1 エントリ 1 行」なので、この穴は原理的に検出できな
+# かった（T03 の受け入れ条件 3）。started_at/done_at は固定の実時刻にして、経過時間の分
+# （09:55:49 - 09:27:07 = 1722 秒 = 29 分）を「今」に依存させず再現できるようにする。
+new_proj_expanded_format() {
+  new_proj_with '{
+  "timings": [
+    {
+      "id": "T01",
+      "started_at": "2026-09-25T09:27:07Z",
+      "done_at": "2026-09-25T09:55:49Z"
+    }
+  ],
+  "_doc": "d",
+  "tasks": [
+    {
+      "id": "T01",
+      "status": "done"
+    },
+    {
+      "id": "T02",
+      "status": "todo"
+    }
+  ]
+}'
+}
+expect_expanded_format() {
+  run_eta
+  expect_code 0
+  expect_out '1/2 done'
+  expect_not_out '記録が欠けている'
+  expect_out '残りタスク: 1 件'
+  expect_out '29〜29 分/件'
+  expect_out '完了実績 1 件'
+  expect_out '残り計 29〜29 分'
+}
+scenario "ETA15: timings が展開形式（1 フィールド 1 行。python json.dump 相当）でも読める" \
+  new_proj_expanded_format expect_expanded_format
+
+expect_expanded_format_json() {
+  run_eta --json
+  expect_code 0
+  expect_out '"sample_count": 1'
+  expect_out '"min_seconds": 1722'
+  expect_out '"max_seconds": 1722'
+  expect_out '"missing_records": \[\]'
+  expect_out '"timings_parse_warnings": \[\]'
+}
+scenario "ETA15b: 同じ展開形式の --json も正しい秒数を拾い、missing_records/timings_parse_warnings とも空" \
+  new_proj_expanded_format expect_expanded_format_json
+
+# ETA16: timings のエントリに "id" を読み取れない（キー名が想定と違う）場合は、黙って
+# 「記録が無い」と言わず「書式が想定と違う」と言う（T03 の受け入れ条件 4。no-silent-failures）。
+# 「記録が無い」と区別がつくことが要求なので、両方の文言を実際に出しつつ書き分ける。
+new_proj_unparseable_entry() {
+  new_proj_with '{
+  "timings": [
+    {
+      "task_id": "T01",
+      "started_at": "2026-09-25T09:27:07Z",
+      "done_at": "2026-09-25T09:55:49Z"
+    }
+  ],
+  "_doc": "d",
+  "tasks": [
+    {
+      "id": "T01",
+      "status": "done"
+    }
+  ]
+}'
+}
+expect_unparseable_entry() {
+  run_eta
+  expect_code 0
+  expect_out 'ではなく書式が想定と違う可能性がある'
+  expect_out 'id を読み取れないエントリ'
+  expect_out 'T01（done）: 記録が無い'
+}
+scenario "ETA16: id を読み取れない timings エントリは「記録が無い」と区別して警告する（B6）" \
+  new_proj_unparseable_entry expect_unparseable_entry
+
+expect_unparseable_entry_json() {
+  run_eta --json
+  expect_code 0
+  expect_out '"timings_parse_warnings": \['
+  expect_out 'id を読み取れないエントリ'
+}
+scenario "ETA16b: 同じ状況の --json は timings_parse_warnings に理由を出す" \
+  new_proj_unparseable_entry expect_unparseable_entry_json
 
 # ================================================================ 集計
 echo

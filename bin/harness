@@ -951,8 +951,16 @@ timings_ensure_block() { # stages_file
   mv "$tmp" "$f"
 }
 
-# "timings" 配列 -> 一時 TSV（id\tstarted_at\tdone_at。値が無ければ "-"＝null 相当）。
-# タスク配列側の "id" フィールド等を巻き込まないよう、timings 配列の中の行だけを見る。
+# "timings" 配列 -> 標準出力: TSV（id\tstarted_at\tdone_at。値が無ければ "-"＝null 相当）。
+# 標準エラー: 解釈できなかった箇所の警告（1 行 1 件。何も無ければ何も出さない）。
+#
+# tasks_extract と同じ、"{" / "}" の depth を追う状態機械にする。以前はここだけ「1 エントリ
+# 1 行」を前提にした単一の sed で id/started_at/done_at を一度に拾っており、統括が
+# stages.json を `python -c "json.dump(..., indent=2)"` で書き換えて生まれる展開形式
+# （1 フィールド 1 行）を読めなかった。しかもエラーを出さず「記録が無い」と言っていた
+# （no-silent-failures 違反。docs/spec/no-silent-failures.md。実機で踏んだ）。tasks_extract は
+# 既にこの depth 方式で「圧縮 1 行」「展開（1 フィールド 1 行）」のどちらも区別なく読めているので、
+# 同じ書き方に揃える（同じファイル内で読み方の方式が 2 つあるのをやめる。jq/node には頼らない）。
 #
 # 値の無いフィールドを空文字のまま TSV に置くと、後段の `IFS=$'\t' read` で壊れる: bash の
 # read はタブを「IFS 空白」として扱い、連続するタブ（＝空フィールド）を 1 つの区切りとして
@@ -961,19 +969,62 @@ timings_ensure_block() { # stages_file
 # 「値が無い」を必ず "-" という非空文字で表し、空フィールドを一切作らないことでこれを避ける。
 #
 # harness/state-template/stages.json は初期状態の "timings" を 1 行の空配列 `"timings": [],`
-# として配る。この形は開き "[" と閉じ "]" が同じ行にあるので、以前は開き括弧の regex にだけ
-# マッチして intbl=1 のまま次の行（"_timings_doc" 等）へ突入し、それを timings のエントリと
-# 誤認して食い込んでいた（実機で再現: 配布直後の stages.json に harness task start を初めて
-# 呼ぶと、"_timings_doc" の文字列や閉じ "}" が id として書き込まれ、JSON が壊れる）。
-# 1 行で閉じている空配列は中身が無いので、intbl に入れず読み飛ばす。
+# として配る。この形は開き "[" と閉じ "]" が同じ行にあるので、開き括弧の regex にだけマッチして
+# intbl=1 のまま次の行へ突入すると、それを timings のエントリと誤認して食い込む（実機で再現。
+# 配布直後の stages.json に harness task start を初めて呼ぶと壊れる）。1 行で閉じている
+# 空配列は中身が無いので、intbl に入れず読み飛ばす。
+#
+# 「記録が無い」（該当 id の timings 自体が無い）と「書式が想定と違って読めない」（id を
+# 読み取れないエントリがある／配列が閉じないまま入力が終わった）は別物なので混同しない
+# （B6 / no-silent-failures）。後者は標準エラーへ出し、呼び出し側の cmd_eta がまとめて
+# 「記録が無い」とは別扱いで報告する。
 timings_extract() { # stages_file
   awk '
+    function strip_strings(s,    r) {
+      r = s
+      gsub(/"([^"\\]|\\.)*"/, "\"\"", r)
+      return r
+    }
+    # 1 行から "key": の値を取り出す。無ければ ""。JSON の null は文字列 "null" として返す。
+    function extract_val(line, key,    t) {
+      if (line !~ ("\"" key "\"[[:space:]]*:")) return ""
+      t = line
+      sub(("^.*\"" key "\"[[:space:]]*:[[:space:]]*"), "", t)
+      if (t ~ /^null/) return "null"
+      sub(/^"/, "", t)
+      sub(/".*/, "", t)
+      return t
+    }
     /^[[:space:]]*"timings"[[:space:]]*:[[:space:]]*\[[[:space:]]*\][,]?[[:space:]]*$/ { next }
-    /^[[:space:]]*"timings"[[:space:]]*:[[:space:]]*\[/ { intbl=1; next }
-    intbl && /^[[:space:]]*\][,]?[[:space:]]*$/ { intbl=0; next }
-    intbl && NF { print }
-  ' "$1" | sed -E 's/.*"id": *"([^"]*)".*"started_at": *(null|"([^"]*)").*"done_at": *(null|"([^"]*)").*/\1\t\3\t\5/' \
-    | awk -F'\t' -v OFS='\t' '{ if ($2=="") $2="-"; if ($3=="") $3="-"; print }'
+    /^[[:space:]]*"timings"[[:space:]]*:[[:space:]]*\[/ {
+      intbl=1; depth=0; id=""; started=""; doneat=""; entered=0; next
+    }
+    intbl && depth==0 && /^[[:space:]]*\][,]?[[:space:]]*$/ { intbl=0; next }
+    intbl {
+      if ($0 ~ /\{/) entered=1
+      v = extract_val($0, "id");         if (v != "" && id == "")      id = v
+      v = extract_val($0, "started_at"); if (v != "" && started == "") started = (v == "null") ? "-" : v
+      v = extract_val($0, "done_at");    if (v != "" && doneat == "")  doneat  = (v == "null") ? "-" : v
+      line = strip_strings($0)
+      opens = gsub(/\{/, "{", line)
+      closes = gsub(/\}/, "}", line)
+      depth += opens - closes
+      if (depth == 0 && entered == 1) {
+        if (id != "") {
+          print id "\t" (started == "" ? "-" : started) "\t" (doneat == "" ? "-" : doneat)
+        } else {
+          print "timings 配列の中に id を読み取れないエントリがある（書式が想定と違う可能性がある）" > "/dev/stderr"
+        }
+        id=""; started=""; doneat=""; entered=0
+      }
+      next
+    }
+    END {
+      if (intbl == 1) {
+        print "timings 配列の閉じ \"]\" が見つからないまま入力が終わった（書式が想定と違う可能性がある）" > "/dev/stderr"
+      }
+    }
+  ' "$1"
 }
 
 # TSV の id 行を新しい started_at/done_at に置き換える（無ければ末尾に足す）。既存の並びは保つ。
@@ -1207,6 +1258,22 @@ human_minutes() { # seconds
   echo $(( (s + 30) / 60 ))
 }
 
+# 秒 -> 人が読みやすい経過表記（末尾の単位まで込みで返す）。60 分未満は今までどおり "NN 分"、
+# 以上は "H時間M分"（統括が実機で「経過 2732 分」を踏んだ。セッションが日をまたぐと分だけの
+# 積算は読みにくい。表示だけの改善で、中断を考慮しない計算そのものは変えない＝spec の
+# 「範囲外」節どおり）。JSON 側は秒のままで変えない（機械可読なので丸めや単位変換をしない）。
+human_duration() { # seconds
+  local s="$1" total_min h m
+  total_min=$(( (s + 30) / 60 ))
+  h=$(( total_min / 60 ))
+  m=$(( total_min % 60 ))
+  if [ "$h" -gt 0 ]; then
+    printf '%s時間%s分' "$h" "$m"
+  else
+    printf '%s 分' "$m"
+  fi
+}
+
 # JSON 文字列の中身をエスケープする（前後のダブルクォートは呼び出し側で付ける）。
 json_esc() { # string
   printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
@@ -1229,10 +1296,21 @@ cmd_eta() {
   now_epoch="$(date +%s)"
   generated_at="$(utc_now)"
 
-  local tasks_tsv timings_tsv
-  tasks_tsv="$(mktemp)"; timings_tsv="$(mktemp)"
+  local tasks_tsv timings_tsv timings_warn
+  tasks_tsv="$(mktemp)"; timings_tsv="$(mktemp)"; timings_warn="$(mktemp)"
   tasks_extract "$stages" >"$tasks_tsv"
-  timings_extract "$stages" >"$timings_tsv"
+  timings_extract "$stages" >"$timings_tsv" 2>"$timings_warn"
+
+  # timings_extract が標準エラーへ出した「書式が想定と違って読めない」警告を集める。B6 の
+  # 「記録が無い」（missing_lines/missing_json）とは別物として扱う（区別がつくことが受け入れ
+  # 条件）。0 件なら以降は素通りする。
+  local parse_warnings=() pw_line
+  if [ -s "$timings_warn" ]; then
+    while IFS= read -r pw_line; do
+      [ -n "$pw_line" ] && parse_warnings+=("$pw_line")
+    done <"$timings_warn"
+  fi
+  rm -f "$timings_warn"
 
   local total done_count
   total="$(wc -l <"$tasks_tsv" | tr -d '[:space:]')"; [ -z "$total" ] && total=0
@@ -1432,7 +1510,7 @@ cmd_eta() {
     fi
     printf '  "missing_records": ['
     if [ "${#missing_json[@]}" -eq 0 ]; then
-      printf ']\n'
+      printf '],\n'
     else
       printf '\n'
       local i n; n="${#missing_json[@]}"
@@ -1442,29 +1520,54 @@ cmd_eta() {
         else printf '    %s\n' "${missing_json[$i]}"; fi
         i=$((i + 1))
       done
+      printf '  ],\n'
+    fi
+    # B6 / no-silent-failures: 「記録が無い」（missing_records）とは別に、timings 自体を
+    # 解釈できなかった箇所を出す（timings_extract のコメント参照）。空なら [] のまま。
+    printf '  "timings_parse_warnings": ['
+    if [ "${#parse_warnings[@]}" -eq 0 ]; then
+      printf ']\n'
+    else
+      printf '\n'
+      local j m; m="${#parse_warnings[@]}"
+      j=0
+      while [ "$j" -lt "$m" ]; do
+        if [ "$j" -lt $((m - 1)) ]; then printf '    "%s",\n' "$(json_esc "${parse_warnings[$j]}")"
+        else printf '    "%s"\n' "$(json_esc "${parse_warnings[$j]}")"; fi
+        j=$((j + 1))
+      done
       printf '  ]\n'
     fi
     printf '}\n'
   else
+    # B6 / no-silent-failures: phase を問わず先に出す。「記録が無い」（後段の missing_lines）
+    # とは別物であることが分かるよう、文言も分けて書く（受け入れ条件: 区別がつくこと）。
+    if [ "${#parse_warnings[@]}" -gt 0 ]; then
+      echo "harness eta: ※ timings の書式の一部を解釈できなかった（「記録が無い」ではなく書式が想定と違う可能性がある）:"
+      local pw
+      for pw in "${parse_warnings[@]}"; do
+        echo "  - ${pw}"
+      done
+    fi
     if [ "$phase" = "no_tasks" ]; then
       echo "harness eta: 不明（${stages} に tasks が無い）"
     else
       local head="harness eta: ${done_count}/${total} done"
-      if [ -n "$elapsed_seconds" ]; then head="${head}（経過 $(human_minutes "$elapsed_seconds") 分）"
+      if [ -n "$elapsed_seconds" ]; then head="${head}（経過 $(human_duration "$elapsed_seconds")）"
       else head="${head}（経過 不明）"; fi
       echo "$head"
 
       case "$phase" in
         task_in_progress)
           if [ -n "$current_elapsed" ]; then
-            echo "  実行中: ${current_id}（$(epoch_to_local_hm "$current_started_epoch") 開始、$(human_minutes "$current_elapsed") 分経過）"
+            echo "  実行中: ${current_id}（$(epoch_to_local_hm "$current_started_epoch") 開始、$(human_duration "$current_elapsed")経過）"
           else
             echo "  実行中: ${current_id}（開始時刻は記録されていない）"
           fi
           ;;
         review_in_progress)
           if [ -n "$current_elapsed" ]; then
-            echo "  実行中: レビュー（$(epoch_to_local_hm "$current_started_epoch") 開始、$(human_minutes "$current_elapsed") 分経過）"
+            echo "  実行中: レビュー（$(epoch_to_local_hm "$current_started_epoch") 開始、$(human_duration "$current_elapsed")経過）"
           else
             echo "  実行中: レビュー（開始時刻は記録されていない）"
           fi
