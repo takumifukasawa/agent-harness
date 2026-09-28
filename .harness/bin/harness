@@ -1092,7 +1092,9 @@ timings_splice() { # stages_file block_file
 
 # .harness/state/ や stages.json が無いのは、task-orchestrate をまだ始めていない普通の状態で
 # もある。黙って何もしないのではなく、はっきり案内して exit 1 にする（no-silent-failures）。
-# `harness task` と `harness eta` の両方から使い、案内文言を 1 か所に揃える。
+# `harness eta`（読む側）専用: 記録が無いところを読んでも仕方が無いので、eta は今回も state を
+# 自動で作らない（作るのは書く側の `harness task` だけ。docs/spec/timing-anywhere.md A1 が
+# 対象にしているのは `harness task start` であって `harness eta` ではない。T02 の担当範囲）。
 require_stages_file() { # root -> 標準出力に stages.json のパス（無ければ die で exit 1）
   local root="$1" state_dir stages
   state_dir="${root}/.harness/state"
@@ -1104,6 +1106,54 @@ require_stages_file() { # root -> 標準出力に stages.json のパス（無け
     die "${stages} が無い。${state_dir} に stages.json を用意してから使う（task-orchestrate の準備フェーズを見る）。"
   fi
   printf '%s' "$stages"
+}
+
+# ---------------------------------------------------------------- timing-anywhere（docs/spec/timing-anywhere.md T01）
+# A1: `.harness/state/` が無い状態で `harness task start <id>` を叩いても記録を始められる。
+# 最小限の state（tasks: [], timings: []）をここで自動で作る。A2: 作ったことは黙らない
+# （info で必ず言う。no-silent-failures は「黙って失敗しない」だけでなく「黙って動作を
+# 変えない」side にも及ぶと解釈した）。
+#
+# 実装上の注意: この関数は require_stages_file と違い、呼び出し側で `$(...)` に包んで呼ばない
+# （state_dir/stages のパスを引数で受け取り、標準出力には何も返さない）。info は標準出力に
+# 書くので、もし `stages="$(ensure_task_state ...)"` のように command substitution 経由で
+# 呼ぶと、info が出したメッセージまで stages 変数に混入して壊れる。cmd_task 側は先にパスを
+# 自分で組み立ててから、このデータ状態確認用の関数を「素通し呼び出し」する。
+#
+# 境界の判断（TT5: .harness/state/ はあるが stages.json だけが無い場合をどう扱うか。spec が
+# 実装者の判断に委ねている点）: ディレクトリの有無は実装の都合であり、使う側から見れば
+# 「.harness/state/ 一式が無い」（旧 TT4）も「ディレクトリだけあって stages.json が無い」
+# （旧 TT5）も、どちらも「この題材の記録をまだ始めていない」という同じ状態にしか見えない。
+# ここでディレクトリの有無で挙動を分けると「たまたま .harness/state/ が空で存在していた」
+# ような些末な違いで記録できたりできなかったりする（実際 .harness/state/ 配下には
+# reports/ のように stages.json より先に作られ得るディレクトリがある）。よってどちらも
+# 「無ければ作る」側に倒す。
+#
+# 一方で stages.json が**存在するのに**読めない・想定した形式でない場合（例: 1 行目が "{" で
+# 始まらない、JSON として壊れている）は「無い」ではなく「壊れている」であり、A4 のとおり
+# 引き続き失敗させる（弱めない）。ここでは新規作成しかしない＝既存ファイルの中身の妥当性には
+# 一切踏み込まず、その判定は既存の timings_ensure_block の die にそのまま委ねる。
+ensure_task_state() { # state_dir stages
+  local state_dir="$1" stages="$2" dir_created=0 file_created=0
+  if [ ! -d "$state_dir" ]; then
+    mkdir -p "$state_dir" || die "${state_dir} を作れなかった（権限を確認する）。"
+    dir_created=1
+  fi
+  if [ ! -f "$stages" ]; then
+    # 順序に注意: "timings" を最後のキーにしない。timings_render_block / timings_splice は
+    # 「timings の後ろに必ず他のキーが続く」という前提で閉じ "]" の直後に常にコンマを打つ
+    # （コメント参照: timings_render_block の直前）。ここで "timings" を最後に置くと、次に
+    # `harness task start` が timings ブロックを差し替えた瞬間に「トレーリングカンマ + 閉じ
+    # "}"」という壊れた JSON になる（実機で踏んだ）。"tasks" を後ろに置いて回避する。
+    printf '%s\n' '{' '  "timings": [],' '  "tasks": []' '}' >"$stages" \
+      || die "${stages} を作れなかった（権限を確認する）。"
+    file_created=1
+  fi
+  if [ "$dir_created" = 1 ]; then
+    info "${state_dir} が無かったので作った（tasks: [] / timings: [] の最小 state）。計画を立てない小さな作業でも harness task start/done は使える（docs/spec/timing-anywhere.md A1）。"
+  elif [ "$file_created" = 1 ]; then
+    info "${stages} が無かったので作った（tasks: [] / timings: [] の最小 state）。計画を立てない小さな作業でも harness task start/done は使える（docs/spec/timing-anywhere.md A1）。"
+  fi
 }
 
 # harness task <start|done> <id>
@@ -1120,7 +1170,9 @@ cmd_task() {
   valid_timing_id "$id" || die "id に使える文字は英数字・_・.・- のみ: '${id}'"
 
   ROOT="$(project_root)"
-  local stages; stages="$(require_stages_file "$ROOT")"
+  local state_dir="${ROOT}/.harness/state"
+  local stages="${state_dir}/stages.json"
+  ensure_task_state "$state_dir" "$stages"
 
   timings_ensure_block "$stages"
 

@@ -4,14 +4,30 @@
 # 使い方:  bash tests/task-timing.sh [<シナリオ名の部分一致>]
 # 終了コード: 全シナリオ pass で 0、1 つでも落ちれば 1。フィルタに 1 件も一致しなければ 1。
 #
-# 対象仕様: docs/spec/task-timing.md（T01: A1〜A4, C1, D1/D2）。
+# 対象仕様: docs/spec/task-timing.md（T01: A1〜A4, C1, D1/D2）
+#          + docs/spec/timing-anywhere.md（T01: A1〜A4。「state が無くても記録を始められる」）。
 #   - A2: 記録は CLI（harness task start/done）で行う
 #   - A4/実装ノート: 時刻は ISO 8601 / UTC。`date -d`（GNU 専用）は使わない（tech-debt #8）
 #   - A3: 時刻フィールドが無い既存の stages.json でも壊れない
 #   - C1: id はタスク（T01 等）でもレビュー（review 等）でもよい。レビューを特別扱いしない
 #     （実装は "tasks" 配列を一切見ないので、tasks に無い任意の id でも同じように動くはず）
-#   - no-silent-failures: .harness/state/ が無い / stages.json が無い / start と done が
-#     対応しない、を黙って通さない
+#   - no-silent-failures: start と done が対応しない、を黙って通さない
+#
+# timing-anywhere（2026-09-28）による仕様変更: 以前は「.harness/state/ が無い」「stages.json が
+# 無い」の両方を exit 1 で拒否していた（旧 TT4/TT5）。task-orchestrate の計画を立てない小さな
+# 作業（1 タスクで終わる負債返済など）では、その前に .harness/state/ を用意する手順自体が
+# 「計画がいる」ことになってしまい、実際に「1 タスクで終わるから」と state を作らず、記録が
+# 取れなかった（docs/spec/timing-anywhere.md 冒頭の実例）。これを受けて `harness task
+# start/done`（書く側）だけ、state が無ければ黙って作るように変えた。「弱める」のではなく
+# 「無ければ死ぬ」から「無ければ作る」への**仕様変更**であることを明記しておく
+# （AGENTS.md「検査を通すためにテストや検査そのものを弱めない」に反しない、という判断）。
+# 一方 `harness eta`（読む側）は変えていない（記録が無いところを読んでも仕方が無いので、
+# 読む操作が state を作る理由が無い。T02 の担当範囲）。
+#
+# 新 TT4/TT5 の境界（.harness/state/ 自体が無い vs ディレクトリはあるが stages.json だけが
+# 無い）は、どちらも「まだこの題材の記録を始めていない」という同じ状態と見なし、両方とも
+# 自動で作る側に倒した。stages.json が**存在するのに**読めない・想定した形式でない場合
+# （TT17 で確認）は、引き続き exit 1 で拒否する（そこは弱めない）。
 #
 # 枠は tests/gc.sh と同じ: scenario "<名前>" <setup関数> <expect関数>
 set -u
@@ -130,6 +146,12 @@ new_proj_state_no_stages() { # .harness/state/ はあるが stages.json が無�
   ( cd "$PROJ" && git init -q . ) >/dev/null 2>&1 || { errors+=("setup: git init に失敗した"); return 1; }
 }
 
+new_proj_corrupt_stages() { # stages.json は存在するが JSON として読めない（"{" で始まらない）
+  PROJ="$WORK/p"; mkdir -p "$PROJ/.harness/state" || return 1
+  ( cd "$PROJ" && git init -q . ) >/dev/null 2>&1 || { errors+=("setup: git init に失敗した"); return 1; }
+  printf 'this is not json\n' >"$PROJ/.harness/state/stages.json"
+}
+
 # ---------------------------------------------------------------- 枠
 scenario() { # <名前> <setup関数> <expect関数>
   local name="$1" setup="$2" expect="$3"
@@ -219,24 +241,35 @@ expect_preserves_existing_tasks_array() {
 scenario "TT3: timings を足しても既存の tasks 配列・_doc は一切変わらない（A3）" \
   new_proj expect_preserves_existing_tasks_array
 
-# TT4: .harness/state/ が無い場合は黙って失敗せず、はっきり案内して exit 1。
-expect_no_state_dir() {
+# TT4（timing-anywhere A1/A2 で仕様変更）: 以前は「.harness/state/ が無ければ exit 1」だった。
+# 計画を立てない小さな作業ではその前に .harness/state/ を用意する手順自体が「計画がいる」こと
+# になり、実際に記録を取り損ねた（docs/spec/timing-anywhere.md 冒頭）。いまは黙って作るのでは
+# なく、**作ったことを言った上で**記録を始める（A2: 黙らない）。
+expect_no_state_dir_creates_and_starts() {
   run_task start T01
-  expect_code 1
-  expect_out '\.harness/state が無い'
-  expect_out 'task-orchestrate'
+  expect_code 0
+  expect_out '\.harness/state.*が無かったので作った'
+  expect_out 'timing-anywhere'
+  expect_timing_iso8601 T01 started_at
+  expect_json_valid_if_node
 }
-scenario "TT4: .harness/state/ が無ければ黙って失敗せず案内して exit 1" \
-  new_proj_no_state expect_no_state_dir
+scenario "TT4: .harness/state/ が無ければ黙って作って記録を始める（timing-anywhere A1/A2）" \
+  new_proj_no_state expect_no_state_dir_creates_and_starts
 
-# TT5: .harness/state/ はあるが stages.json が無い場合も同様。
-expect_no_stages_file() {
+# TT5（timing-anywhere A1 で仕様変更。境界の判断は bin/harness の ensure_task_state のコメントに
+# 書いた理由のとおり）: .harness/state/ ディレクトリだけあって stages.json が無い状態も、
+# ユーザーから見れば TT4 と同じ「まだ記録を始めていない」状態でしかないので、同じく作って
+# 記録を始める側に倒した（TT4 と挙動を分けない）。
+expect_no_stages_file_creates_and_starts() {
   run_task start T01
-  expect_code 1
-  expect_out 'stages\.json が無い'
+  expect_code 0
+  expect_out 'stages\.json.*が無かったので作った'
+  expect_out 'timing-anywhere'
+  expect_timing_iso8601 T01 started_at
+  expect_json_valid_if_node
 }
-scenario "TT5: stages.json が無ければ黙って失敗せず案内して exit 1" \
-  new_proj_state_no_stages expect_no_stages_file
+scenario "TT5: .harness/state/ はあるが stages.json が無くても黙って作って記録を始める（timing-anywhere A1）" \
+  new_proj_state_no_stages expect_no_stages_file_creates_and_starts
 
 # TT6: done を start より先に呼んでも黙って通さない（started_at 不明のまま done_at だけ記録し、
 # その旨を出力する）。no-silent-failures の「id が見つからない」に対応。
@@ -386,6 +419,36 @@ expect_seed_template_start_does_not_break_json() {
 }
 scenario "TT16: 配布テンプレートの1行空timings配列に初めてstartしてもJSONが壊れない（レビューT04#1）" \
   new_proj_from_seed_template expect_seed_template_start_does_not_break_json
+
+# TT17（timing-anywhere A4: 「無い」と「壊れている」は区別する。弱めない）:
+# stages.json が存在するのに読める形式でない（1 行目が "{" ではない）場合は、TT4/TT5 と違って
+# 自動では直さず、引き続き exit 1 で拒否する。
+expect_corrupt_stages_still_fails() {
+  run_task start T01
+  expect_code 1
+  expect_out "1 行目が.*ではない"
+  grep -qF 'this is not json' "$(stages_file)" \
+    || errors+=("壊れた stages.json の中身が書き換えられてしまった（触らずに拒否するはず）")
+}
+scenario "TT17: stages.json が存在するのに読めない形式なら引き続き exit 1（timing-anywhere A4・弱めない）" \
+  new_proj_corrupt_stages expect_corrupt_stages_still_fails
+
+# TT18（timing-anywhere A3 の核心）: .harness/state/ が無い状態から始めても、tasks 配列が
+# 空のまま timings だけで独立して記録できる（計画を立てない作業ではタスク一覧が無いのが正常）。
+expect_no_state_records_with_empty_tasks() {
+  run_task start adhoc
+  expect_code 0
+  grep -qE '^[[:space:]]*"tasks"[[:space:]]*:[[:space:]]*\[\][,]?[[:space:]]*$' "$(stages_file)" \
+    || errors+=("tasks が空配列のまま作られていない")
+  expect_timing_iso8601 adhoc started_at
+
+  run_task done adhoc
+  expect_code 0
+  expect_timing_iso8601 adhoc done_at
+  expect_json_valid_if_node
+}
+scenario "TT18: state が無い状態からでも tasks が空のまま timings だけで start/done できる（timing-anywhere A3）" \
+  new_proj_no_state expect_no_state_records_with_empty_tasks
 
 # ================================================================ 集計
 echo
