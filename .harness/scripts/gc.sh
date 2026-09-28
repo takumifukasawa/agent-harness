@@ -29,6 +29,11 @@
 #      更新されていない（統括が計画を進めたのに handoff の書き戻しを忘れている。
 #      spec: docs/spec/handoff-writeback.md）。日数やコミット数の閾値は使わない
 #      （同じ日・1 コミットの漏れでも、git のコミット祖先関係だけで捕まえる）
+#  13. docs/spec/*.md が spec の索引（docs/spec/README.md の表）に無い（決定 0010 参照。
+#      2026-09-28、「新しく作った案内を索引に書き戻し忘れる」を 2 回踏んだので 1 項目だけ
+#      再開した）。docs/spec/README.md 自身は対象外。docs/spec/README.md が無い、または
+#      表の体をなしていない（区切り行 `|---|` が無い）プロジェクトでは何も言わない
+#      （配布先が spec を表形式の索引で持つとは限らない。項目 3 と作法を揃える）
 set -u
 
 DAYS=14; STRICT=0; COMMITS=10; handoff_anchor=""
@@ -366,6 +371,20 @@ if [ -d "$DOCS/plans/active" ]; then
         "session-handoff の手順で docs/handoff.md を更新する（計画は進んでいるのに handoff がそれより前のコミットのまま）"
     fi
   done < <(find "$DOCS/plans/active" -name '*.md' | sort)
+fi
+
+# 13. docs/spec/*.md が spec の索引（docs/spec/README.md）に無い（決定 0010、2026-09-28 再開）。
+#     作法は項目 3（docs/ 直下の .md が索引に無い）に揃える: 索引ファイル自身は対象外、
+#     `grep -qF "($rel"` で行の有無を見る。項目 3 と違うのは、docs/spec/README.md が無い・
+#     表の体をなしていない場合に**何も言わない**こと（docs/README.md は必須の索引として
+#     項目 3 で ERR にしているが、docs/spec/README.md は配布先の任意の運用なので沈黙を選ぶ）。
+#     「表の体をなしている」は区切り行（例: `|---|---|`）の有無で判定する。
+if [ -d "$DOCS/spec" ] && [ -f "$DOCS/spec/README.md" ] && grep -qE '^\|[-:| ]+\|$' "$DOCS/spec/README.md"; then
+  while IFS= read -r f; do
+    rel="${f#"$DOCS/spec"/}"
+    [ "$rel" = "README.md" ] && continue
+    grep -qF "($rel" "$DOCS/spec/README.md" || report WARN "docs/spec/$rel が spec の索引（docs/spec/README.md）に無い" "docs/spec/README.md の表に行を足す（索引に無い spec は次のセッションから見落とされる）"
+  done < <(find "$DOCS/spec" -maxdepth 1 -name '*.md' | sort)
 fi
 
 # 読めなかった日付は必ず出す。日付判定が効いていないまま「問題なし」と言うのが一番害が大きい
