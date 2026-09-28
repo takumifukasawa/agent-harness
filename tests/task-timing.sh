@@ -248,7 +248,14 @@ scenario "TT3: timings を足しても既存の tasks 配列・_doc は一切変
 expect_no_state_dir_creates_and_starts() {
   run_task start T01
   expect_code 0
-  expect_out '\.harness/state.*が無かったので作った'
+  # レビュー指摘（T03 #4）: 以前は '\.harness/state.*が無かったので作った'（.* が緩い）で、
+  # TT5 用メッセージ（"…/.harness/state/stages.json が無かったので作った"）にも部分一致して
+  # しまい、2 つの info メッセージ（ディレクトリ用/ファイル用）を入れ替えるバグを TT4 単体では
+  # 検出できなかった（TT5 は検出するので非対称だった。実際に入れ替えて確認済み）。
+  # ".harness/state" の直後に空白を挟んで "が無かった" が続くことを要求し、間に
+  # "/stages.json" が挟まる TT5 側のメッセージとは一致しないようにする。
+  expect_out '\.harness/state が無かったので作った'
+  expect_not_out 'stages\.json'
   expect_out 'timing-anywhere'
   expect_timing_iso8601 T01 started_at
   expect_json_valid_if_node
@@ -449,6 +456,29 @@ expect_no_state_records_with_empty_tasks() {
 }
 scenario "TT18: state が無い状態からでも tasks が空のまま timings だけで start/done できる（timing-anywhere A3）" \
   new_proj_no_state expect_no_state_records_with_empty_tasks
+
+# TT19（レビュー指摘 T03 #3・観点4の核心）: stages.json は存在するが、キーが 1 つも無い
+# "{\n}\n"（空オブジェクト）状態から start すると、以前は timings が唯一かつ最後のキーになり、
+# timings_render_block/timings_splice が常に打っていた末尾カンマがそのまま閉じ "}" の直前に
+# 残って、exit 0 のまま壊れた JSON を書いていた（実機で再現・report 参照）。
+# timings_write_block（「timings の後ろにカンマが要るか」を実物から 1 箇所で判断する）で直した。
+new_proj_empty_object_stages() { # .harness/state/stages.json は存在するがキーが 1 つも無い
+  PROJ="$WORK/p"; mkdir -p "$PROJ/.harness/state" || return 1
+  ( cd "$PROJ" && git init -q . ) >/dev/null 2>&1 || { errors+=("setup: git init に失敗した"); return 1; }
+  printf '{\n}\n' >"$PROJ/.harness/state/stages.json"
+}
+expect_empty_object_stages_does_not_break_json() {
+  run_task start x
+  expect_code 0
+  expect_json_valid_if_node
+  expect_timing_iso8601 x started_at
+  # node が無い環境でも壊れを検出できるように、末尾がトレーリングカンマ付きの "}," ではなく
+  # ちゃんと "}" 単独で終わっていることも見る。
+  tail -1 "$(stages_file)" | grep -qE '^\}[[:space:]]*$' \
+    || errors+=("stages.json の末尾が '}' で終わっていない（トレーリングカンマで JSON が壊れている疑い）")
+}
+scenario "TT19: キーが 1 つも無い stages.json（{}）に初めて start しても壊れない（レビュー指摘 T03 #3）" \
+  new_proj_empty_object_stages expect_empty_object_stages_does_not_break_json
 
 # ================================================================ 集計
 echo

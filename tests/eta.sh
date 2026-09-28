@@ -4,7 +4,10 @@
 # 使い方:  bash tests/eta.sh [<シナリオ名の部分一致>]
 # 終了コード: 全シナリオ pass で 0、1 つでも落ちれば 1。フィルタに 1 件も一致しなければ 1。
 #
-# 対象仕様: docs/spec/task-timing.md（T02: B1/B1b/B2/B3/B4/B6, C2, D1/D2。T03: A3/B6 の追補）。
+# 対象仕様: docs/spec/task-timing.md（T02: B1/B1b/B2/B3/B4/B6, C2, D1/D2。T03: A3/B6 の追補）
+#          + docs/spec/timing-anywhere.md（T02: B1〜B4。tasks が空でも timings の実績で所要時間・
+#            実行中の経過時間を出す。T03: no_tasks 経路の 3 防御の回帰と --json の JSON 妥当性
+#            検証の追補）。
 #   - B1/B1b: 完了数/全体数・経過時間・残りの推定・推定完了時刻（幅、ローカルタイム表示）
 #   - B2    : 残りの推定は完了タスクの実測「最小〜最大」を残タスク数に掛ける（単純平均はしない）
 #   - B3    : 実績が無い／進行中の題材が無いときは「不明」と言う（数字を捏造しない）
@@ -484,13 +487,23 @@ expect_awaiting_review() {
 scenario "ETA13: 全タスク done でレビュー未着手ならそう言い、レビュー推定は不明のまま" \
   new_proj_awaiting_review expect_awaiting_review
 
+# node があるときだけ、直近の run_eta --json の $OUT を実際に JSON.parse に通す。
+#
+# レビュー指摘（T03 #3）: --json の全体的な妥当性検証はこれまで ETA14（tasks/timings とも
+# 中身があるフィクスチャ）だけが行っており、no_tasks 経路（records/running_records）は
+# regex 一致（expect_out）だけで、構造的に壊れた JSON（例: 末尾要素にも常にカンマを打つ）を
+# 検出できなかった（実際に 1 行だけ書き換えて再現・確認済み。report 参照）。ここを 1 箇所に
+# 切り出し、no_tasks 系の *_json expect 関数からも呼べるようにする。
+assert_valid_json_if_node() {
+  command -v node >/dev/null 2>&1 || return 0
+  printf '%s' "$OUT" | node -e 'JSON.parse(require("fs").readFileSync(0,"utf8"))' \
+    || errors+=("--json の出力が妥当な JSON ではない")
+}
 # ETA14: --json が JSON として妥当であること（node があるときだけ厳密に検証）。
 expect_json_is_valid() {
   run_eta --json
   expect_code 0
-  command -v node >/dev/null 2>&1 || return 0
-  printf '%s' "$OUT" | node -e 'JSON.parse(require("fs").readFileSync(0,"utf8"))' \
-    || errors+=("--json の出力が妥当な JSON ではない")
+  assert_valid_json_if_node
 }
 scenario "ETA14: --json は妥当な JSON を出す（B4）" \
   new_proj_two_samples expect_json_is_valid
@@ -1083,6 +1096,7 @@ expect_no_tasks_with_records_json() {
   expect_out '"phase": "no_tasks"'
   expect_out '"records": \{"known": true, "count": 2, "min_seconds": 360, "max_seconds": 1740, "avg_seconds": 1050\}'
   expect_out '"running_records": \[\]'
+  assert_valid_json_if_node
 }
 scenario "ETA28b: 同じ状況の --json も records に件数・最小/最大/平均秒を出す（B4）" \
   new_proj_no_tasks_with_records expect_no_tasks_with_records_json
@@ -1119,6 +1133,7 @@ expect_no_tasks_running_only_json() {
   # 完了した記録の所要時間（record_min/max/avg）は ago_iso 同士の差なのでずれず厳密一致で見てよいが、
   # ここだけは cmd_eta 実行時の実際の date +%s に依存するため区別する）。
   expect_out '"id": "debt-21", "elapsed_seconds": [0-9]+'
+  assert_valid_json_if_node
 }
 scenario "ETA29b: 同じ状況の --json は running_records に id と経過秒を出す（B4）" \
   new_proj_no_tasks_running_only expect_no_tasks_running_only_json
@@ -1152,6 +1167,7 @@ expect_no_tasks_mixed_json() {
   expect_out '"records": \{"known": true, "count": 1, "min_seconds": 360, "max_seconds": 360, "avg_seconds": 360\}'
   expect_out '"running_records": \['
   expect_out '"id": "debt-22", "elapsed_seconds": [0-9]+'   # 理由は ETA29b のコメント参照
+  assert_valid_json_if_node
 }
 scenario "ETA30b: 同じ状況の --json も records と running_records の両方を出す" \
   new_proj_no_tasks_mixed expect_no_tasks_mixed_json
@@ -1187,9 +1203,153 @@ expect_no_tasks_unparseable_done_at_json() {
   expect_out '"running_records": \[\]'
   expect_out '"timings_parse_warnings": \['
   expect_out '"debt-99: done_at .garbage. を解釈できない"'
+  assert_valid_json_if_node
 }
 scenario "ETA31b: 同じ状況の --json は records/running_records を汚染せず timings_parse_warnings に出す" \
   new_proj_no_tasks_unparseable_done_at expect_no_tasks_unparseable_done_at_json
+
+# ---------------------------------------------------------------- T03（レビュー指摘#1）
+# no_tasks 経路の 3 防御（started_at 欠落／解釈不能／done_before_start）は、tasks 版
+# （ETA21/ETA22/ETA24）と同じ穴を no_tasks 版でも塞ぐ。以前は「警告を出さず continue のみ」
+# に書き換えても tests/eta.sh 52/52 が green のままだった（.harness/state/reports/
+# review-effectiveness.md 指摘#1）。特に done_before_start は、防御を無効化すると負の所要時間が
+# そのまま record_min/max/avg に混入する（ETA25b と同型の被害）。
+
+# ETA32: tasks が空で started_at が記録されていない（null）記録を、no_record 版
+# （ETA21/21b の tasks 版）と同じ理由で警告し、records/running_records を汚染しない。
+new_proj_no_tasks_started_at_missing() {
+  new_proj_with '{
+  "timings": [
+    {"id": "debt-40", "started_at": null, "done_at": null}
+  ],
+  "_doc": "d",
+  "tasks": []
+}'
+}
+expect_no_tasks_started_at_missing_text() {
+  run_eta
+  expect_code 0
+  expect_out 'debt-40: started_at が記録されていない'
+  expect_out '完了した記録: まだ無い'
+  expect_out '実行中の記録: 無い'
+}
+scenario "ETA32: tasks が空で started_at が無い記録を警告し、records/running_records を汚染しない（レビュー指摘#1・no_tasks 版）" \
+  new_proj_no_tasks_started_at_missing expect_no_tasks_started_at_missing_text
+
+expect_no_tasks_started_at_missing_json() {
+  run_eta --json
+  expect_code 0
+  expect_out '"debt-40: started_at が記録されていない'
+  expect_out '"records": \{"known": false, "count": 0, "min_seconds": null, "max_seconds": null, "avg_seconds": null\}'
+  expect_out '"running_records": \[\]'
+  assert_valid_json_if_node
+}
+scenario "ETA32b: 同じ状況の --json も records/running_records を空のまま保ち timings_parse_warnings に出す" \
+  new_proj_no_tasks_started_at_missing expect_no_tasks_started_at_missing_json
+
+# ETA33: tasks が空で started_at が解釈できない値（ETA22/22b の tasks 版と同型）を no_tasks
+# 経路でも区別し、running_records（実行中）にも records（完了）にも混ぜない。
+new_proj_no_tasks_unparseable_started_at() {
+  new_proj_with '{
+  "timings": [
+    {"id": "debt-41", "started_at": "garbage", "done_at": null}
+  ],
+  "_doc": "d",
+  "tasks": []
+}'
+}
+expect_no_tasks_unparseable_started_at_text() {
+  run_eta
+  expect_code 0
+  expect_out "debt-41: started_at .garbage. を解釈できない"
+  expect_out '完了した記録: まだ無い'
+  expect_out '実行中の記録: 無い'
+}
+scenario "ETA33: tasks が空で started_at が解釈できない記録を区別し、records/running_records に混ぜない（レビュー指摘#1・no_tasks 版）" \
+  new_proj_no_tasks_unparseable_started_at expect_no_tasks_unparseable_started_at_text
+
+expect_no_tasks_unparseable_started_at_json() {
+  run_eta --json
+  expect_code 0
+  expect_out '"debt-41: started_at .garbage. を解釈できない"'
+  expect_out '"records": \{"known": false, "count": 0, "min_seconds": null, "max_seconds": null, "avg_seconds": null\}'
+  expect_out '"running_records": \[\]'
+  assert_valid_json_if_node
+}
+scenario "ETA33b: 同じ状況の --json も records/running_records を空のまま保ち timings_parse_warnings に出す" \
+  new_proj_no_tasks_unparseable_started_at expect_no_tasks_unparseable_started_at_json
+
+# ETA34: tasks が空で done_at が started_at より前（負の所要時間）の記録が、有効な完了記録
+# 1 件と混在するケース（ETA24/24b の tasks 版と同型）。防御が無効化されると record_count が
+# 2 に増え、record_min が負の値で汚染される（ETA25b と同型の被害。レビュー指摘#1 の核心）。
+new_proj_no_tasks_done_before_start() {
+  local t1s t1d
+  t1s="$(ago_iso 1800)"; t1d="$(ago_iso 1440)"   # 妥当な実績: 360秒 = 6分
+  new_proj_with "{
+  \"timings\": [
+    {\"id\": \"debt-42\", \"started_at\": \"${t1s}\", \"done_at\": \"${t1d}\"},
+    {\"id\": \"debt-43\", \"started_at\": \"2026-09-27T06:00:00Z\", \"done_at\": \"2026-09-27T05:00:00Z\"}
+  ],
+  \"_doc\": \"d\",
+  \"tasks\": []
+}"
+}
+expect_no_tasks_done_before_start_text() {
+  run_eta
+  expect_code 0
+  expect_out 'debt-43: done_at が started_at より前になっている'
+  expect_out '記録 1 件（6〜6 分、平均 6 分）'
+  expect_out '実行中の記録: 無い'
+}
+scenario "ETA34: tasks が空で done_before_start の記録を除外し、record_min/max/avg を負の所要時間で汚染しない（レビュー指摘#1・ETA25b と同型・no_tasks 版）" \
+  new_proj_no_tasks_done_before_start expect_no_tasks_done_before_start_text
+
+expect_no_tasks_done_before_start_json() {
+  run_eta --json
+  expect_code 0
+  expect_out 'debt-43: done_at が started_at より前になっている'
+  expect_out '"records": \{"known": true, "count": 1, "min_seconds": 360, "max_seconds": 360, "avg_seconds": 360\}'
+  expect_out '"running_records": \[\]'
+  assert_valid_json_if_node
+}
+scenario "ETA34b: 同じ状況の --json も records を汚染せず timings_parse_warnings に出す" \
+  new_proj_no_tasks_done_before_start expect_no_tasks_done_before_start_json
+
+# ---------------------------------------------------------------- T03（レビュー指摘#2）
+# ETA29b/30b はいずれも running_records の要素数が 1 件だけで、複数要素の場合の要素間カンマ
+# （先頭〜中間は "," が要り、末尾だけ要らない）を一度も検証していなかった。running_records を
+# 2 件にしたフィクスチャを追加し、--json の妥当性を node で確認する。
+new_proj_no_tasks_two_running() {
+  local rs1 rs2
+  rs1="$(ago_iso 600)"   # 10分経過
+  rs2="$(ago_iso 120)"   # 2分経過
+  new_proj_with "{
+  \"timings\": [
+    {\"id\": \"debt-50\", \"started_at\": \"${rs1}\", \"done_at\": null},
+    {\"id\": \"debt-51\", \"started_at\": \"${rs2}\", \"done_at\": null}
+  ],
+  \"_doc\": \"d\",
+  \"tasks\": []
+}"
+}
+expect_no_tasks_two_running_text() {
+  run_eta
+  expect_code 0
+  expect_out '実行中: debt-50（.*開始、10 分経過）'
+  expect_out '実行中: debt-51（.*開始、2 分経過）'
+}
+scenario "ETA35: tasks が空で実行中の記録が複数件あれば全件出す（レビュー指摘#2）" \
+  new_proj_no_tasks_two_running expect_no_tasks_two_running_text
+
+expect_no_tasks_two_running_json() {
+  run_eta --json
+  expect_code 0
+  expect_out '\{"id": "debt-50", "elapsed_seconds": [0-9]+\},'
+  expect_out '\{"id": "debt-51", "elapsed_seconds": [0-9]+\}$'
+  assert_valid_json_if_node
+}
+scenario "ETA35b: tasks が空で実行中が複数件のとき running_records の要素間カンマが正しく、--json 全体も妥当な JSON のまま（レビュー指摘#2）" \
+  new_proj_no_tasks_two_running expect_no_tasks_two_running_json
 
 # ================================================================ 集計
 echo

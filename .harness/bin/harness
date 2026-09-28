@@ -928,28 +928,22 @@ cmd_upstream() {
 # 読み書きする。1 エントリ 1 行の JSON にして、manifest.json / write_manifest と同じ「行指向で
 # 読み書きする」流儀に揃える（jq が無い環境でも動く経路を残す）。
 #
-# "timings" は常に stages.json の先頭 "{" の直後（他のどのキーより前）に挿入する。位置を固定
-# することで、閉じ "]" の後ろには常にコンマが要る（後ろに必ず他のキーが続く）と決め打てる。
+# "timings" は常に stages.json の先頭 "{" の直後（他のどのキーより前）に挿入する（新規挿入時。
+# 既に存在する場合は元の位置のまま丸ごと差し替える。timings_write_block 参照）。
+#
+# レビュー指摘（T03 #1）: 「timings の後ろに必ず他のキーが続く（＝閉じ "]" の後ろには常にコンマが
+# 要る）」という前提が、この 3 日で 4 回目の落とし穴になった。この前提が破れる具体例
+# （キーが 1 つも無い "{\n}\n" に挿入すると、唯一のキーになった timings の後ろにトレーリング
+# カンマが残る）が実機で踏まれた。以前はこの「カンマを打つか」の判断が timings_ensure_block
+# （新規挿入時は常にカンマを打つ）と timings_render_block（レンダリング時も常にカンマを打つ）の
+# 2 箇所に分散しており、どちらを直しても対症療法にしかならなかった。**判断はここで 1 箇所に
+# 集約する**: 実際に書き込む直前（timings_write_block）で、timings ブロックの直後に他の内容が
+# 続くかどうかを stages.json の実物から判定し、その結果（"," か ""）を timings_render_block に
+# 引数で渡す。timings_render_block 自身はもうカンマを打つかどうかを判断しない。
 
 utc_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 valid_timing_id() { case "$1" in ""|*[!A-Za-z0-9_.-]*) return 1;; *) return 0;; esac; }
-
-# stages.json に "timings": [] を（無ければ）先頭の "{" の直後に挿入する。既にあれば何もしない
-# （A3: 時刻フィールドが無い既存の stages.json でも壊れない）。
-timings_ensure_block() { # stages_file
-  local f="$1" first tmp
-  if grep -qE '^[[:space:]]*"timings"[[:space:]]*:[[:space:]]*\[' "$f"; then
-    return 0
-  fi
-  first="$(sed -n '1p' "$f")"
-  if [ "$first" != "{" ]; then
-    die "${f} の 1 行目が '{' ではない（想定と違う形式なので timings を追加できない）。手動で \"timings\": [] を足してから再実行する。"
-  fi
-  tmp="$(mktemp)"
-  { sed -n '1p' "$f"; printf '  "timings": [\n  ],\n'; sed -n '2,$p' "$f"; } >"$tmp"
-  mv "$tmp" "$f"
-}
 
 # "timings" 配列 -> 標準出力: TSV（id\tstarted_at\tdone_at。値が無ければ "-"＝null 相当）。
 # 標準エラー: 解釈できなかった箇所の警告（1 行 1 件。何も無ければ何も出さない）。
@@ -1041,9 +1035,15 @@ timings_upsert_tsv() { # tsv_file id new_started new_done
   mv "$tmp" "$tsv"
 }
 
-# TSV -> "timings": [ ... ], ブロック全体（キー行〜閉じ "]," まで）を標準出力へ
-timings_render_block() { # tsv_file
-  local tsv="$1" n i=0 id s d sq dq comma
+# TSV -> "timings": [ ... ] ブロック全体（キー行〜閉じ "]" まで）を標準出力へ。
+#
+# comma（"," または ""）は呼び出し元 timings_write_block が 1 箇所で判断した結果をそのまま
+# 使うだけで、ここでは一切判断しない（レビュー指摘 T03 #1。この関数がかつて「後ろには必ず
+# 他のキーが続く」と決め打って常に "," を返していたのが、キーが 1 つも無い stages.json を
+# 壊す事故の一因だった）。配列そのものの要素間カンマ（1 件目・2 件目…の区切り）は timings 自身の
+# 要素数だけで決まる別の判断なので、従来どおりここで扱う。
+timings_render_block() { # tsv_file comma
+  local tsv="$1" comma="${2-,}" n i=0 id s d sq dq c
   n="$(wc -l <"$tsv" | tr -d '[:space:]')"
   if [ -z "$n" ]; then n=0; fi
   echo '  "timings": ['
@@ -1053,41 +1053,80 @@ timings_render_block() { # tsv_file
     if [ -n "$s" ] && [ "$s" != "-" ]; then sq="\"$s\""; fi
     dq="null"
     if [ -n "$d" ] && [ "$d" != "-" ]; then dq="\"$d\""; fi
-    comma=","
-    if [ "$i" -eq "$n" ]; then comma=""; fi
-    printf '    {"id": "%s", "started_at": %s, "done_at": %s}%s\n' "$id" "$sq" "$dq" "$comma"
+    c=","
+    if [ "$i" -eq "$n" ]; then c=""; fi
+    printf '    {"id": "%s", "started_at": %s, "done_at": %s}%s\n' "$id" "$sq" "$dq" "$c"
   done <"$tsv"
-  echo '  ],'
+  printf '  ]%s\n' "$comma"
 }
 
-# stages.json の "timings" ブロックを新しい内容に丸ごと差し替える（配列の外側は一切触らない）。
+# stages.json の "timings" ブロックを新しい内容で書く（無ければ先頭 "{" の直後に挿入し、既に
+# あれば元の位置のまま丸ごと差し替える）。1 行目が "{" でなければ die（A4: 壊れている・想定と
+# 違う形式の stages.json は引き続き失敗させる。弱めない）。
 #
-# レビュー指摘（T04 #1）: harness/state-template/stages.json は初期状態の "timings": [] を
-# 1 行で閉じた空配列として配る（開き "[" と閉じ "]" が同じ行）。この行を「開き "[" のある行」
-# としてしか見ていないと、閉じ単独の行が二度と来ないまま inblock が真の EOF まで居座り、
-# timings ブロックより後ろの行（"_timings_doc" ・末尾の閉じ "}" すら）を丸ごと読み飛ばして
-# 出力から消してしまう（実機で再現。配布直後の stages.json に初めて `harness task start` を
-# 呼ぶと必ず踏む）。timings_extract（読み取り側）の同じパターン用ガードと揃え、1 行で
-# 閉じている場合は inblock に入れず、その行だけを新しい内容へ置き換えて次の行へ進む。
-timings_splice() { # stages_file block_file
-  local f="$1" blockfile="$2" tmp
+# レビュー指摘（T03 #1〜#3）: 「timings の後ろに必ず他のキーが続く」という前提が、この 3 日で
+# 4 回目の落とし穴になった（配布テンプレートの 1 行空配列を読み書きどちらでも壊した話、
+# 最小 state のキー順で壊れた話、そして今回のキー 0 個の "{}" で壊れた話）。この関数では
+# 「マーカー行を一旦挿入し、その次の行を見る」方式で、timings ブロックの位置や既存有無に
+# 関わらず同じ 1 つのロジックで「閉じ "]" の直後にカンマが要るか」を判断する:
+#
+#   1. 既存の "timings" ブロック（1 行空配列 or 複数行）があればそれを丸ごとマーカー行に
+#      置き換える。無ければ先頭 "{" の直後にマーカー行を挿入する（この判定の正規表現は
+#      timings_extract と揃えてある。1 行空配列の特別扱いが要る理由は同関数のコメント参照）。
+#   2. マーカー行の次の行を見る。空白を除いて "}" だけ（＝オブジェクトの閉じ括弧そのもの）
+#      なら、timings は挿入・差し替え後にこのオブジェクトの唯一かつ最後のキーになる
+#      ＝カンマ不要。それ以外（他のキーが続く）ならカンマが要る。
+#   3. その結果を timings_render_block に渡してブロック本体を作り、マーカー行をそれに
+#      置き換える。
+#
+# このため、"timings" が今どこにあるか・既存かどうか・オブジェクトが空かどうかに関わらず、
+# カンマを打つかどうかの判断はここ 1 箇所だけで行われる（timings_render_block はもう判断しない。
+# 呼び出し側 cmd_task も判断しない）。
+timings_write_block() { # stages_file tsv_file
+  local f="$1" tsv="$2" first
+  first="$(sed -n '1p' "$f")"
+  if [ "$first" != "{" ]; then
+    die "${f} の 1 行目が '{' ではない（想定と違う形式なので timings を追加できない）。手動で \"timings\": [] を足してから再実行する。"
+  fi
+
+  local marker='##HARNESS_TIMINGS_BLOCK##' skeleton tmp
+  skeleton="$(mktemp)"
+  if grep -qE '^[[:space:]]*"timings"[[:space:]]*:[[:space:]]*\[' "$f"; then
+    # 既存の timings ブロック（1 行空配列 or 複数行）を丸ごとマーカー 1 行に置き換える。
+    # 正規表現は timings_extract と同じ（1 行で閉じた空配列を特別扱いする理由も同じ）。
+    awk -v marker="$marker" '
+      /^[[:space:]]*"timings"[[:space:]]*:[[:space:]]*\[[[:space:]]*\][,]?[[:space:]]*$/ {
+        print marker; next
+      }
+      /^[[:space:]]*"timings"[[:space:]]*:[[:space:]]*\[/ {
+        print marker; inblock = 1; next
+      }
+      inblock && /^[[:space:]]*\][,]?[[:space:]]*$/ { inblock = 0; next }
+      inblock { next }
+      { print }
+    ' "$f" >"$skeleton"
+  else
+    # "timings" が無い: 先頭 "{" の直後にマーカーを挿入する。
+    { sed -n '1p' "$f"; printf '%s\n' "$marker"; sed -n '2,$p' "$f"; } >"$skeleton"
+  fi
+
+  # 判断はここだけ: マーカーの次の行が（前後の空白を除いて）"}" だけかどうか。
+  local after comma
+  after="$(awk -v marker="$marker" '$0==marker{getline nxt; print nxt; exit}' "$skeleton")"
+  after="$(printf '%s' "$after" | tr -d '[:space:]')"
+  if [ "$after" = "}" ]; then comma=""; else comma=","; fi
+
+  local block; block="$(mktemp)"
+  timings_render_block "$tsv" "$comma" >"$block"
+
   tmp="$(mktemp)"
-  awk -v blockfile="$blockfile" '
-    BEGIN { while ((getline line < blockfile) > 0) { n++; block[n] = line }; close(blockfile) }
-    /^[[:space:]]*"timings"[[:space:]]*:[[:space:]]*\[[[:space:]]*\][,]?[[:space:]]*$/ {
-      for (i = 1; i <= n; i++) print block[i]
-      next
-    }
-    /^[[:space:]]*"timings"[[:space:]]*:[[:space:]]*\[/ {
-      for (i = 1; i <= n; i++) print block[i]
-      inblock = 1
-      next
-    }
-    inblock && /^[[:space:]]*\][,]?[[:space:]]*$/ { inblock = 0; next }
-    inblock { next }
+  awk -v marker="$marker" -v blockfile="$block" '
+    BEGIN { while ((getline line < blockfile) > 0) { n++; b[n] = line }; close(blockfile) }
+    $0==marker { for (i = 1; i <= n; i++) print b[i]; next }
     { print }
-  ' "$f" >"$tmp"
+  ' "$skeleton" >"$tmp"
   mv "$tmp" "$f"
+  rm -f "$skeleton" "$block"
 }
 
 # .harness/state/ や stages.json が無いのは、task-orchestrate をまだ始めていない普通の状態で
@@ -1132,7 +1171,7 @@ require_stages_file() { # root -> 標準出力に stages.json のパス（無け
 # 一方で stages.json が**存在するのに**読めない・想定した形式でない場合（例: 1 行目が "{" で
 # 始まらない、JSON として壊れている）は「無い」ではなく「壊れている」であり、A4 のとおり
 # 引き続き失敗させる（弱めない）。ここでは新規作成しかしない＝既存ファイルの中身の妥当性には
-# 一切踏み込まず、その判定は既存の timings_ensure_block の die にそのまま委ねる。
+# 一切踏み込まず、その判定は既存の timings_write_block の die にそのまま委ねる。
 ensure_task_state() { # state_dir stages
   local state_dir="$1" stages="$2" dir_created=0 file_created=0
   if [ ! -d "$state_dir" ]; then
@@ -1140,12 +1179,10 @@ ensure_task_state() { # state_dir stages
     dir_created=1
   fi
   if [ ! -f "$stages" ]; then
-    # 順序に注意: "timings" を最後のキーにしない。timings_render_block / timings_splice は
-    # 「timings の後ろに必ず他のキーが続く」という前提で閉じ "]" の直後に常にコンマを打つ
-    # （コメント参照: timings_render_block の直前）。ここで "timings" を最後に置くと、次に
-    # `harness task start` が timings ブロックを差し替えた瞬間に「トレーリングカンマ + 閉じ
-    # "}"」という壊れた JSON になる（実機で踏んだ）。"tasks" を後ろに置いて回避する。
-    printf '%s\n' '{' '  "timings": [],' '  "tasks": []' '}' >"$stages" \
+    # キーの順序はどちらでもよい（timings_write_block がカンマの要不要を実物から判断するので、
+    # "timings" が唯一のキーでも最後のキーでも壊れない。レビュー指摘 T03 #1）。ここでは単に
+    # 自然な順（tasks が先、timings が後）で書く。
+    printf '%s\n' '{' '  "tasks": [],' '  "timings": []' '}' >"$stages" \
       || die "${stages} を作れなかった（権限を確認する）。"
     file_created=1
   fi
@@ -1173,8 +1210,6 @@ cmd_task() {
   local state_dir="${ROOT}/.harness/state"
   local stages="${state_dir}/stages.json"
   ensure_task_state "$state_dir" "$stages"
-
-  timings_ensure_block "$stages"
 
   local tsv; tsv="$(mktemp)"
   timings_extract "$stages" >"$tsv"
@@ -1216,10 +1251,8 @@ cmd_task() {
   fi
 
   timings_upsert_tsv "$tsv" "$id" "$new_started" "$new_done"
-  local block; block="$(mktemp)"
-  timings_render_block "$tsv" >"$block"
-  timings_splice "$stages" "$block"
-  rm -f "$tsv" "$block"
+  timings_write_block "$stages" "$tsv"
+  rm -f "$tsv"
 
   info "task ${sub} ${id}: ${now}"
   if [ -n "$note" ]; then
