@@ -27,6 +27,7 @@ passed=0; failed=0
 failed_names=()
 WORK=""; PROJ=""; OUT=""; CODE=0
 errors=()
+NOW_EPOCH=0   # ago_iso の基準時刻。scenario() が setup の直前に 1 回だけ date +%s で取り直す（tech-debt #19）。
 
 trap 'rm -rf "$WORK" 2>/dev/null' EXIT INT TERM
 
@@ -52,9 +53,18 @@ epoch_to_iso() { # epoch -> ISO8601 UTC
   date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null && return 0
   return 1
 }
-ago_iso() { # N秒前 -> ISO8601 UTC
-  local now; now="$(date +%s)"
-  epoch_to_iso $((now - $1))
+# ago_iso は "date +%s" を毎回叩かず、$NOW_EPOCH（scenario() が setup の直前に 1 回だけ取る。
+# 下記参照）を基準にする（tech-debt #19）。
+#
+# 直していた理由: 1 つの setup 関数が ago_iso を複数回呼び、その差分（例: ago_iso 1800 と
+# ago_iso 1440 の差が 6 分になる）を期待値と比べるシナリオが 19 呼び出し中に複数ある
+# （ETA6/7/11/24/25/25b 等）。呼ぶたびに date +%s を叩くと、2 回の呼び出しの間で実時刻の
+# 秒が 1 つ進むことがあり、期待した 360 秒が実際には 361 秒になって --json の
+# "min_seconds": 360 のような厳密一致が落ちる（実測: ETA25 が pre-commit 中で 1 回落ちた）。
+# 基準を 1 回だけ取って共有すれば、同じシナリオ内の ago_iso 同士の差は境界をまたいでも
+# 常に厳密に一致し、期待値に許容（±1 秒等）を持たせる必要が無い。
+ago_iso() { # N秒前 -> ISO8601 UTC（$NOW_EPOCH 基準）
+  epoch_to_iso $((NOW_EPOCH - $1))
 }
 
 # ---------------------------------------------------------------- setup 部品
@@ -86,6 +96,7 @@ scenario() { # <名前> <setup関数> <expect関数>
   fi
   errors=(); PROJ=""; OUT=""; CODE=0
   WORK="$(mktemp -d)" || { echo "tests/eta.sh: mktemp -d に失敗した"; exit 2; }
+  NOW_EPOCH="$(date +%s)"   # このシナリオの ago_iso 基準時刻（tech-debt #19）。setup の直前に 1 回だけ取る。
   local setup_rc=0
   "$setup" || setup_rc=$?
   if [ "$setup_rc" -eq 0 ]; then

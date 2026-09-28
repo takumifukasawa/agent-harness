@@ -3,6 +3,11 @@
 各版に「プロジェクト側で必要な作業」を必ず書く。`harness update` はこの節を表示する。
 semver: managed ファイルの移動・マーカー形式変更は major、ルール/スキルの追加は minor、文言修正は patch。
 
+## [Unreleased]
+
+- 修正（テストのみ / tech-debt #19）: **`tests/eta.sh` の一部シナリオ（ETA6/7/11/24/25/25b 等）が時間依存で稀に落ちる（flaky）のを直した。** `ago_iso()`（「N 秒前」の ISO8601 時刻を組み立てるテスト用ヘルパー）が呼ばれるたびに `date +%s` を叩いており、同じ setup 関数内で 2 回以上呼んで差分（例: 30 分前と 24 分前の差が 6 分になる）を期待値と比べるシナリオで、2 回の呼び出しの間に実時刻の秒が 1 つ進むと実際の差が期待値より 1 秒大きくなり、`--json` の `"min_seconds": 360` のような厳密一致が落ちていた（実測: T05 のコミット時に pre-commit 内で ETA25 が 1 回落ちた）。**期待値に許容（±1 秒等）を持たせるのではなく**、基準時刻（`NOW_EPOCH`）をシナリオごとに 1 回だけ取って共有する方式に変えた（`scenario()` が setup 呼び出しの直前に取り、`ago_iso()` はそれを引くだけにした）。同じシナリオ内の `ago_iso` 呼び出し同士の差は秒境界をまたいでも常に厳密に一致するため、判定は一切弱めていない（むしろ以前より決定的になった）。「現在時刻との差」を見るシナリオ（実行中タスクの経過分など）は、実装側が実際の `date +%s` を都度読んで計算する設計なので影響を受けない。**`tests/task-timing.sh` に同種の時間依存は無い**（時刻の妥当性のみを確認し、date 演算による差分の期待値は元々使っていない）。既存 92 シナリオ（`gc.sh` 33 / `task-timing.sh` 16 / `eta.sh` 43）は意味を変えずに全件 pass のまま。利用者の挙動（`bin/harness` 本体）への影響は無い。回帰は `tests/eta.sh` 自身（`bash tests/eta.sh` を 20 回連続で pass することを確認。詳細は `.harness/state/reports/debt-19.md`）。
+- **プロジェクト側で必要な作業**: 無し（テストのみの変更で、配布物 `bin/harness` は変わらない）。
+
 ## [0.9.0] - 2026-09-28
 
 - 追加（T01 / spec `docs/spec/task-timing.md`）: **`harness task start <id>` / `harness task done <id>` を追加した。** 統括が「あとどれくらいで終わるか」を毎回その場の推測で答えていた問題（`task-timing.md` の背景）に対し、まず記録の入口だけを作る。`id` はタスク（`T01` 等）でもレビュー（`review` 等）でもよく、**同じ仕組みで扱う**（`stages.json` の `tasks` 配列を一切見ないので、そこに無い任意の id でも同じように動く。レビューを特別扱いしない）。時刻は ISO 8601 / UTC（`date -u +書式` のみで取り、GNU 専用の `date -d` は使わない。tech-debt #8 の再発防止）。`.harness/state/stages.json` に新しい `"timings"` 配列を持たせ、既存の `"tasks"` 配列には一切触れない（jq を前提にせず、行指向の sed/awk だけで読み書きする。`manifest.json` の書き方に合わせた）。`.harness/state/` や `stages.json` が無い場合、start していない id に done した場合、start/done を 2 回呼んだ場合は、いずれも黙って失敗/黙って上書きせず、何が起きたかを出力する（`docs/spec/no-silent-failures.md` と同じ姿勢）。回帰は `tests/task-timing.sh`（15 シナリオ）に置き、`.harness/checks.sh` の fast 検査に登録した。
