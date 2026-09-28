@@ -1035,6 +1035,162 @@ expect_compressed_tasks_json() {
 scenario "ETA27b: 同じ状況の --json も total_tasks/done_tasks を圧縮形式のまま正しく数える" \
   new_proj_compressed_tasks expect_compressed_tasks_json
 
+# ---------------------------------------------------------------- T02（docs/spec/timing-anywhere.md B1〜B4）
+# tasks が空（phase: no_tasks）でも timings の実績が乗っていれば黙って「不明」だけで終わらず、
+# 「何分かかったか」（B1）・「実行中のものの経過時間」（B3）を出す。進捗（N/M）は分母が無いので
+# 出せないと正直に言う（B2。数字を捏造しない）。
+
+# ETA4d: tasks も timings も空のとき、records / running_records は「実績が無い」ことを
+# 捏造せずに表す（known: false, [] のまま）。ETA4/4b/4c と同じフィクスチャで --json だけ追加確認。
+expect_empty_tasks_json_records_empty() {
+  run_eta --json
+  expect_code 0
+  expect_out '"records": \{"known": false, "count": 0, "min_seconds": null, "max_seconds": null, "avg_seconds": null\}'
+  expect_out '"running_records": \[\]'
+}
+scenario "ETA4d: tasks/timings とも空のとき records は known:false、running_records は空配列（B1/B3 の捏造防止）" \
+  new_proj_empty_tasks expect_empty_tasks_json_records_empty
+
+# ETA28: tasks が空でも、完了した実績が 2 件あれば「件数・最小〜最大・平均」を出す（B1）。
+# 進捗（N/M）は依然として出せない・捏造しないことも合わせて確認する（B2）。
+new_proj_no_tasks_with_records() {
+  local t1s t1d t2s t2d
+  t1s="$(ago_iso 3600)"; t1d="$(ago_iso 3240)"   # 360秒 = 6分
+  t2s="$(ago_iso 2400)"; t2d="$(ago_iso 660)"     # 1740秒 = 29分
+  new_proj_with "{
+  \"timings\": [
+    {\"id\": \"debt-19\", \"started_at\": \"${t1s}\", \"done_at\": \"${t1d}\"},
+    {\"id\": \"debt-20\", \"started_at\": \"${t2s}\", \"done_at\": \"${t2d}\"}
+  ],
+  \"_doc\": \"d\",
+  \"tasks\": []
+}"
+}
+expect_no_tasks_with_records_text() {
+  run_eta
+  expect_code 0
+  expect_out '不明'
+  expect_not_out '[0-9]+/[0-9]+ done'
+  expect_out '記録 2 件（6〜29 分、平均 18 分）'
+  expect_out '実行中の記録: 無い'
+}
+scenario "ETA28: tasks が空でも timings の実績（完了 2 件）から所要時間を出す（B1・B2）" \
+  new_proj_no_tasks_with_records expect_no_tasks_with_records_text
+
+expect_no_tasks_with_records_json() {
+  run_eta --json
+  expect_code 0
+  expect_out '"phase": "no_tasks"'
+  expect_out '"records": \{"known": true, "count": 2, "min_seconds": 360, "max_seconds": 1740, "avg_seconds": 1050\}'
+  expect_out '"running_records": \[\]'
+}
+scenario "ETA28b: 同じ状況の --json も records に件数・最小/最大/平均秒を出す（B4）" \
+  new_proj_no_tasks_with_records expect_no_tasks_with_records_json
+
+# ETA29: tasks が空で、完了した実績は無いが実行中（done_at が null）の記録が 1 件あれば
+# その経過時間を出す（B3）。「完了記録が無い」と「実行中が無い」を混同しない。
+new_proj_no_tasks_running_only() {
+  local rs
+  rs="$(ago_iso 300)"   # 5分経過
+  new_proj_with "{
+  \"timings\": [
+    {\"id\": \"debt-21\", \"started_at\": \"${rs}\", \"done_at\": null}
+  ],
+  \"_doc\": \"d\",
+  \"tasks\": []
+}"
+}
+expect_no_tasks_running_only_text() {
+  run_eta
+  expect_code 0
+  expect_out '完了した記録: まだ無い'
+  expect_out '実行中: debt-21（.*開始、5 分経過）'
+}
+scenario "ETA29: tasks が空でも実行中（done_at が null）の経過時間を出す（B3）" \
+  new_proj_no_tasks_running_only expect_no_tasks_running_only_text
+
+expect_no_tasks_running_only_json() {
+  run_eta --json
+  expect_code 0
+  expect_out '"records": \{"known": false, "count": 0, "min_seconds": null, "max_seconds": null, "avg_seconds": null\}'
+  expect_out '"running_records": \['
+  # elapsed_seconds は「今」との差なので、既存の current.elapsed_seconds（ETA20b）と同じく
+  # 厳密な秒数ではなく [0-9]+ で見る（実行時刻のわずかなずれで 300 ちょうどにならないことがある。
+  # 完了した記録の所要時間（record_min/max/avg）は ago_iso 同士の差なのでずれず厳密一致で見てよいが、
+  # ここだけは cmd_eta 実行時の実際の date +%s に依存するため区別する）。
+  expect_out '"id": "debt-21", "elapsed_seconds": [0-9]+'
+}
+scenario "ETA29b: 同じ状況の --json は running_records に id と経過秒を出す（B4）" \
+  new_proj_no_tasks_running_only expect_no_tasks_running_only_json
+
+# ETA30: 完了 1 件 + 実行中 1 件が同時にある混在ケース。両方とも出す。
+new_proj_no_tasks_mixed() {
+  local t1s t1d rs
+  t1s="$(ago_iso 3600)"; t1d="$(ago_iso 3240)"   # 6分
+  rs="$(ago_iso 120)"                              # 実行中 2分
+  new_proj_with "{
+  \"timings\": [
+    {\"id\": \"debt-19\", \"started_at\": \"${t1s}\", \"done_at\": \"${t1d}\"},
+    {\"id\": \"debt-22\", \"started_at\": \"${rs}\", \"done_at\": null}
+  ],
+  \"_doc\": \"d\",
+  \"tasks\": []
+}"
+}
+expect_no_tasks_mixed_text() {
+  run_eta
+  expect_code 0
+  expect_out '記録 1 件（6〜6 分、平均 6 分）'
+  expect_out '実行中: debt-22（.*開始、2 分経過）'
+}
+scenario "ETA30: tasks が空で完了実績と実行中が同時にあれば両方出す（B1・B3）" \
+  new_proj_no_tasks_mixed expect_no_tasks_mixed_text
+
+expect_no_tasks_mixed_json() {
+  run_eta --json
+  expect_code 0
+  expect_out '"records": \{"known": true, "count": 1, "min_seconds": 360, "max_seconds": 360, "avg_seconds": 360\}'
+  expect_out '"running_records": \['
+  expect_out '"id": "debt-22", "elapsed_seconds": [0-9]+'   # 理由は ETA29b のコメント参照
+}
+scenario "ETA30b: 同じ状況の --json も records と running_records の両方を出す" \
+  new_proj_no_tasks_mixed expect_no_tasks_mixed_json
+
+# ETA31: tasks が空でも、done_at が「null ではなく解釈できない値」なのを「実行中（null）」と
+# 混同しない。記録が欠けている／書式が読めないのとも区別して timings_parse_warnings に出す
+# （B6 と同じ原則を no_tasks 経路でも保つ）。
+new_proj_no_tasks_unparseable_done_at() {
+  local s
+  s="$(ago_iso 600)"
+  new_proj_with "{
+  \"timings\": [
+    {\"id\": \"debt-99\", \"started_at\": \"${s}\", \"done_at\": \"garbage\"}
+  ],
+  \"_doc\": \"d\",
+  \"tasks\": []
+}"
+}
+expect_no_tasks_unparseable_done_at_text() {
+  run_eta
+  expect_code 0
+  expect_out '完了した記録: まだ無い'
+  expect_out 'debt-99.*解釈できない'
+  expect_not_out '実行中: debt-99'
+}
+scenario "ETA31: tasks が空で done_at が解釈できない値のとき、実行中(null)とも完了実績とも混同せず警告する" \
+  new_proj_no_tasks_unparseable_done_at expect_no_tasks_unparseable_done_at_text
+
+expect_no_tasks_unparseable_done_at_json() {
+  run_eta --json
+  expect_code 0
+  expect_out '"records": \{"known": false, "count": 0, "min_seconds": null, "max_seconds": null, "avg_seconds": null\}'
+  expect_out '"running_records": \[\]'
+  expect_out '"timings_parse_warnings": \['
+  expect_out '"debt-99: done_at .garbage. を解釈できない"'
+}
+scenario "ETA31b: 同じ状況の --json は records/running_records を汚染せず timings_parse_warnings に出す" \
+  new_proj_no_tasks_unparseable_done_at expect_no_tasks_unparseable_done_at_json
+
 # ================================================================ 集計
 echo
 echo "tests/eta.sh: pass=$passed fail=$failed"

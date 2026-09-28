@@ -134,6 +134,6 @@ report_path: .harness/state/reports/T03.md
 
 ## 5. 使わない判断
 
-- 1 セッションで終わる変更。`docs/handoff.md` の NEXT で足りる。
+- 1 セッションで終わる変更。`docs/handoff.md` の NEXT で足りる。**ただし `harness task start/done`（所要時間の記録）はこのワークフロー専用ではない。** 計画を立てない・タスク分解もしない小さな作業（負債返済など）でも、`harness task start <id>` → 作業 → `harness task done <id>` だけを単独で叩ける。`.harness/state/` や `stages.json` が無ければ最小限の state（`tasks: []` / `timings: []`）を自動で作り、作ったことを出力する（`docs/spec/timing-anywhere.md`）。あとで `harness eta` を叩けば、`tasks` が空でも記録から所要時間・実行中の経過時間を返す（進捗 N/M だけは分母が無いので出せない）。**「1 セッションで終わるから」を「記録も取らない」の理由にしない。**
 - spec が無く、ユーザーとの認識合わせができない状況（準備フェーズが成立しない）。
 - 受け入れ条件をテストに落とせない領域（インフラ設計など）。SmartHR 自身が「銀の弾丸ではない」と書いている。

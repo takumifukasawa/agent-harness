@@ -1443,6 +1443,62 @@ cmd_eta() {
     if [ -z "$sample_max" ] || [ "$dur" -gt "$sample_max" ]; then sample_max="$dur"; fi
   done <"$tasks_tsv"
 
+  # ---------------------------------------------------------------- T02（docs/spec/timing-anywhere.md B1〜B4）
+  # tasks が空（total==0、phase は後段で no_tasks になる）だと、上のループは $tasks_tsv 起点
+  # なので一度も回らず、sample_count/sample_min/sample_max は常に 0 のまま——「進捗（N/M）を
+  # 出せない」のは正しいが（B2。分母が無いので捏造しない）、「所要時間や実行中の経過も一切
+  # 出せない」まで一緒くたにしていた。timings 自体には実績が乗っていることがある（計画を
+  # 立てない小さな作業を harness task start/done だけで記録した場合。spec 冒頭の実例）。
+  #
+  # ここでは $timings_tsv（tasks を経由しない、timings 配列そのもの）を直接見て:
+  #   - 完了した記録（started_at/done_at とも有効で done_at >= started_at）の件数・最小/最大/
+  #     平均所要時間（B1）
+  #   - 実行中の記録（done_at が null）それぞれの経過時間（B3）
+  # を拾う。tasks が無い前提なので「id が何のタスクか」「進捗が何 / 何か」は判断できない
+  # （捏造しない）。started_at が無い・日付として解釈できない・done_at が started_at より前、
+  # といった書式の問題は「記録が無い」のではなく「読めない」なので、既存の parse_warnings
+  # （timings_parse_warnings）に回す（B6 と同じ区別を no_tasks 経路でも保つ）。
+  local record_count=0 record_sum=0 record_min="" record_max=""
+  local running_records=()
+  if [ "$total" -eq 0 ]; then
+    local nr_id nr_s nr_d
+    while IFS=$'\t' read -r nr_id nr_s nr_d; do
+      [ -z "$nr_id" ] && continue
+      if [ "$nr_s" = "-" ]; then
+        parse_warnings+=("${nr_id}: started_at が記録されていない（所要・経過時間とも計算できない）")
+        continue
+      fi
+      local nr_se
+      if ! nr_se="$(iso_to_epoch "$nr_s")"; then
+        parse_warnings+=("${nr_id}: started_at '${nr_s}' を解釈できない")
+        continue
+      fi
+      if [ "$nr_d" = "-" ]; then
+        # B3: 実行中（done_at が null）。「id\t開始epoch\t経過秒」を積む
+        running_records+=("${nr_id}"$'\t'"${nr_se}"$'\t'"$((now_epoch - nr_se))")
+        continue
+      fi
+      local nr_de
+      if ! nr_de="$(iso_to_epoch "$nr_d")"; then
+        parse_warnings+=("${nr_id}: done_at '${nr_d}' を解釈できない")
+        continue
+      fi
+      if [ "$nr_de" -lt "$nr_se" ]; then
+        parse_warnings+=("${nr_id}: done_at が started_at より前になっている")
+        continue
+      fi
+      local nr_dur=$((nr_de - nr_se))
+      record_count=$((record_count + 1))
+      record_sum=$((record_sum + nr_dur))
+      if [ -z "$record_min" ] || [ "$nr_dur" -lt "$record_min" ]; then record_min="$nr_dur"; fi
+      if [ -z "$record_max" ] || [ "$nr_dur" -gt "$record_max" ]; then record_max="$nr_dur"; fi
+    done <"$timings_tsv"
+  fi
+  local record_avg=0
+  if [ "$record_count" -gt 0 ]; then
+    record_avg=$(( (record_sum + record_count / 2) / record_count ))
+  fi
+
   local in_progress_id
   in_progress_id="$(awk -F'\t' '$2=="in_progress"{print $1; exit}' "$tasks_tsv")"
 
@@ -1594,6 +1650,36 @@ cmd_eta() {
         ;;
       *) printf '  "current": {"kind": "%s"},\n' "$phase";;
     esac
+    # T02（B1/B3/B4）: tasks が空でも timings の実績が読めるように、no_tasks のときだけ
+    # records（完了した記録の件数・最小/最大/平均秒）と running_records（実行中の記録の一覧）
+    # を足す。他の phase では tasks 側の task_duration が同じ役目を果たしているので出さない。
+    if [ "$phase" = "no_tasks" ]; then
+      if [ "$record_count" -gt 0 ]; then
+        printf '  "records": {"known": true, "count": %s, "min_seconds": %s, "max_seconds": %s, "avg_seconds": %s},\n' \
+          "$record_count" "$record_min" "$record_max" "$record_avg"
+      else
+        printf '  "records": {"known": false, "count": 0, "min_seconds": null, "max_seconds": null, "avg_seconds": null},\n'
+      fi
+      printf '  "running_records": ['
+      if [ "${#running_records[@]}" -eq 0 ]; then
+        printf '],\n'
+      else
+        printf '\n'
+        local rr_i rr_n; rr_n="${#running_records[@]}"
+        rr_i=0
+        while [ "$rr_i" -lt "$rr_n" ]; do
+          local rr_id2 rr_se2 rr_el2
+          IFS=$'\t' read -r rr_id2 rr_se2 rr_el2 <<<"${running_records[$rr_i]}"
+          if [ "$rr_i" -lt $((rr_n - 1)) ]; then
+            printf '    {"id": "%s", "elapsed_seconds": %s},\n' "$(json_esc "$rr_id2")" "$rr_el2"
+          else
+            printf '    {"id": "%s", "elapsed_seconds": %s}\n' "$(json_esc "$rr_id2")" "$rr_el2"
+          fi
+          rr_i=$((rr_i + 1))
+        done
+        printf '  ],\n'
+      fi
+    fi
     if [ "$sample_count" -gt 0 ]; then
       printf '  "task_duration": {"known": true, "sample_count": %s, "min_seconds": %s, "max_seconds": %s},\n' "$sample_count" "$sample_min" "$sample_max"
     else
@@ -1656,7 +1742,23 @@ cmd_eta() {
       done
     fi
     if [ "$phase" = "no_tasks" ]; then
-      echo "harness eta: 不明（${stages} に tasks が無い）"
+      # T02（B1/B2/B3）: 進捗（N/M）は tasks が無いので出せないと正直に言う（捏造しない）。
+      # ただし timings 自体には実績が乗っていることがあるので、そこは黙らず出す。
+      echo "harness eta: 進捗（N/M）は不明（${stages} に tasks が無い。計画を立てない小さな作業では正常）"
+      if [ "$record_count" -gt 0 ]; then
+        echo "  記録 ${record_count} 件（$(human_minutes "$record_min")〜$(human_minutes "$record_max") 分、平均 $(human_minutes "$record_avg") 分）"
+      else
+        echo "  完了した記録: まだ無い（所要時間は不明）"
+      fi
+      if [ "${#running_records[@]}" -gt 0 ]; then
+        local rr_line rr_id3 rr_se3 rr_el3
+        for rr_line in "${running_records[@]}"; do
+          IFS=$'\t' read -r rr_id3 rr_se3 rr_el3 <<<"$rr_line"
+          echo "  実行中: ${rr_id3}（$(epoch_to_local_hm "$rr_se3") 開始、$(human_duration "$rr_el3")経過）"
+        done
+      else
+        echo "  実行中の記録: 無い"
+      fi
     else
       local head="harness eta: ${done_count}/${total} done"
       if [ -n "$elapsed_seconds" ]; then head="${head}（経過 $(human_duration "$elapsed_seconds")）"

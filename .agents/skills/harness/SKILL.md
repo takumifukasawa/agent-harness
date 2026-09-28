@@ -22,8 +22,8 @@ bash .harness/bin/harness <subcommand> [args]
 | `upstream <path>...` | agent-harness リポジトリへ書き戻す（source がローカル clone のとき） | 成功したら「agent-harness 側で commit → CHANGELOG → VERSION」が次の作業だと伝える |
 | `check [--fast]` | `.harness/checks.sh` の検査を回す | 失敗した検査の出力をそのまま報告。修復手順が書かれていればそれに従う |
 | `doctor` | 環境と導入状態を診断する（終了コード: 0=FAIL 0 件、1=FAIL あり、2=未導入） | 1 行 1 項目 `OK\|WARN\|FAIL  項目  →  直し方`、末尾の集計行 `harness doctor: OK=n WARN=n FAIL=n` を報告。WARN/FAIL があれば各行の「→」の直し方に従う。`INFO`（source に新版あり）は集計に含めず、`harness update` を促す |
-| `task start <id>` / `task done <id>` | タスクやレビューの所要時間を記録する（`.harness/state/stages.json` の `timings`）。id はタスク（`T01`）でもレビュー（`review`）でもよい |
-| `eta [--json]` | 進捗と残りの推定を出す。完了数 / 全体数、経過、幅のある推定、推定完了時刻。実績が足りなければ「不明」と言う |
+| `task start <id>` / `task done <id>` | タスクやレビューの所要時間を記録する（`.harness/state/stages.json` の `timings`）。id はタスク（`T01`）でもレビュー（`review`）でもよい | **`task-orchestrate` を使っていない単発の作業でも単独で使える**（計画やタスク分解は不要）。`.harness/state/` や `stages.json` が無ければ最小 state（`tasks: []` / `timings: []`）を自動で作り、作ったことを出力する（`docs/spec/timing-anywhere.md`） |
+| `eta [--json]` | 進捗と残りの推定を出す。完了数 / 全体数、経過、幅のある推定、推定完了時刻。実績が足りなければ「不明」と言う | **`tasks` が空でも `timings` の実績があれば所要時間・実行中の経過時間を出す**（進捗 N/M だけは分母が無いので「不明」のまま。数字は捏造しない） |
 | `version` | 版を表示 | |
 
 ## 別のプロジェクトへ入れる
