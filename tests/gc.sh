@@ -773,6 +773,125 @@ expect_plan_committed_handoff_never_committed() {
 scenario "G33: handoff が一度もコミットされていなければ書き戻しチェックをスキップする（クラッシュしない）" \
   setup_plan_committed_handoff_never_committed expect_plan_committed_handoff_never_committed
 
+# ---------------------------------------------------------------- E: docs/spec/*.md が spec の索引に無い
+# 決定 0010（docs/decisions/0010-stop-building-plumbing.md）: 2026-09-28、「新しく作った
+# spec の案内を索引に書き戻し忘れる」を 2 回踏んだ（task-timing / timing-anywhere の最終
+# レビュー）ので、gc の項目をこの 1 件だけ再開した。作法は既存の項目 3（docs/ 直下の .md が
+# 索引に無い）に揃える: 索引ファイル自身は対象外、`grep -qF "($rel"` で行の有無を見る。
+# 項目 3 と違うのは、docs/spec/README.md が「索引の体をなしていない」（表が無い）場合や
+# そもそも無い場合に**何も言わない**こと（配布先のプロジェクトが spec を表形式の索引で
+# 持つとは限らない。項目 3 の docs/README.md は必須の索引として ERR にしているのと対照的）。
+
+# G34. docs/spec/*.md が索引の表に無ければ WARN で報告する。
+setup_spec_index_missing_entry() {
+  new_proj || return 1
+  mkdir -p "$PROJ/docs/spec" || return 1
+  {
+    printf '# spec\n\n'
+    printf '| ファイル | 状態 |\n'
+    printf '|---|---|\n'
+    printf '| [foo.md](foo.md) | 完了 |\n'
+  } >"$PROJ/docs/spec/README.md"
+  printf '# foo\n' >"$PROJ/docs/spec/foo.md"
+  printf '# bar\n' >"$PROJ/docs/spec/bar.md"
+}
+expect_spec_index_missing_entry() {
+  run_gc
+  expect_out 'docs/spec/bar\.md が spec の索引（docs/spec/README\.md）に無い'
+  expect_not_out '問題なし'
+  expect_code 0
+}
+scenario "G34: docs/spec/*.md が索引の表に無ければ報告する" \
+  setup_spec_index_missing_entry expect_spec_index_missing_entry
+
+# G35. 索引の表に全部載っていれば報告しない（G34 が「常に報告する」実装で通ってしまわないように）。
+setup_spec_index_all_listed() {
+  new_proj || return 1
+  mkdir -p "$PROJ/docs/spec" || return 1
+  {
+    printf '# spec\n\n'
+    printf '| ファイル | 状態 |\n'
+    printf '|---|---|\n'
+    printf '| [foo.md](foo.md) | 完了 |\n'
+    printf '| [bar.md](bar.md) | 完了 |\n'
+  } >"$PROJ/docs/spec/README.md"
+  printf '# foo\n' >"$PROJ/docs/spec/foo.md"
+  printf '# bar\n' >"$PROJ/docs/spec/bar.md"
+}
+expect_spec_index_all_listed() {
+  run_gc
+  expect_not_out 'spec の索引'
+  expect_out '問題なし'
+  expect_code 0
+}
+scenario "G35: docs/spec/*.md が全部索引の表にあれば報告しない" \
+  setup_spec_index_all_listed expect_spec_index_all_listed
+
+# G36. docs/spec/README.md 自身は索引漏れの対象にしない（索引ファイルそのもの）。
+setup_spec_index_readme_self_excluded() {
+  new_proj || return 1
+  mkdir -p "$PROJ/docs/spec" || return 1
+  {
+    printf '# spec\n\n'
+    printf '| ファイル | 状態 |\n'
+    printf '|---|---|\n'
+    printf '| [foo.md](foo.md) | 完了 |\n'
+  } >"$PROJ/docs/spec/README.md"
+  printf '# foo\n' >"$PROJ/docs/spec/foo.md"
+}
+expect_spec_index_readme_self_excluded() {
+  run_gc
+  expect_not_out 'spec の索引'
+  expect_out '問題なし'
+  expect_code 0
+}
+scenario "G36: docs/spec/README.md 自身は索引漏れの対象にしない" \
+  setup_spec_index_readme_self_excluded expect_spec_index_readme_self_excluded
+
+# G37. docs/spec/README.md が表を持たない（索引の体をなしていない）プロジェクトでは何も言わない。
+# 配布先のプロジェクトが spec を表形式の索引で持つとは限らない（項目 3 と揃えた作法）。
+setup_spec_index_no_table() {
+  new_proj || return 1
+  mkdir -p "$PROJ/docs/spec" || return 1
+  printf '# spec\n\n何を作るかはここに書く。表はまだ無い。\n' >"$PROJ/docs/spec/README.md"
+  printf '# foo\n' >"$PROJ/docs/spec/foo.md"
+}
+expect_spec_index_no_table() {
+  run_gc
+  expect_not_out 'spec の索引'
+  expect_out '問題なし'
+  expect_code 0
+}
+scenario "G37: docs/spec/README.md が表を持たなければ何も言わない（索引の体をなしていない）" \
+  setup_spec_index_no_table expect_spec_index_no_table
+
+# G38. docs/spec/README.md 自体が無いプロジェクトでも何も言わない（無ければ警告、ではなく沈黙を選ぶ。
+# docs/README.md の必須索引（項目 3, ERR）とは対照的な扱い）。
+setup_spec_index_readme_absent() {
+  new_proj || return 1
+  mkdir -p "$PROJ/docs/spec" || return 1
+  printf '# foo\n' >"$PROJ/docs/spec/foo.md"
+}
+expect_spec_index_readme_absent() {
+  run_gc
+  expect_not_out 'spec の索引'
+  expect_out '問題なし'
+  expect_code 0
+}
+scenario "G38: docs/spec/README.md 自体が無ければ何も言わない" \
+  setup_spec_index_readme_absent expect_spec_index_readme_absent
+
+# G39. docs/spec/ ディレクトリ自体が無いプロジェクトでもクラッシュせず何も言わない。
+setup_spec_dir_absent() { new_proj; }
+expect_spec_dir_absent() {
+  run_gc
+  expect_not_out 'spec の索引'
+  expect_out '問題なし'
+  expect_code 0
+}
+scenario "G39: docs/spec/ が無ければクラッシュせず何も言わない" \
+  setup_spec_dir_absent expect_spec_dir_absent
+
 # ================================================================ 集計
 echo
 echo "tests/gc.sh: pass=$passed fail=$failed"
