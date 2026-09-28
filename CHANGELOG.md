@@ -3,7 +3,7 @@
 各版に「プロジェクト側で必要な作業」を必ず書く。`harness update` はこの節を表示する。
 semver: managed ファイルの移動・マーカー形式変更は major、ルール/スキルの追加は minor、文言修正は patch。
 
-## [Unreleased]
+## [0.10.0] - 2026-09-28
 
 - 追加（T04 / [決定 0010](docs/decisions/0010-stop-building-plumbing.md) 再開の 1 項目）: `harness gc` が新しい項目 13 として、**`docs/spec/*.md` があるのに `docs/spec/README.md`（spec の索引）の表に行が無い**ことを検出するようになった。[決定 0010](docs/decisions/0010-stop-building-plumbing.md) は「`gc` の項目追加は打ち止め、再開は同じ腐りを 2 回踏んだとき」としていたが、2026-09-28 に `task-timing` と `timing-anywhere` の最終レビューで「新しく作った spec の案内を索引に書き戻し忘れる」を 2 回踏んだため、**この 1 項目だけ**再開する（打ち止め自体は継続）。作法は既存の項目 3（`docs/` 直下の `.md` が索引に無い）に揃えた: 索引ファイル自身（`docs/spec/README.md`）は対象外、`grep -qF "($rel"` で行の有無を見る。項目 3 と違うのは、**`docs/spec/README.md` が無い、または表の体をなしていない（区切り行 `|---|` が無い）プロジェクトでは何も言わない**こと（`docs/README.md` は項目 3 で必須の索引として無ければ ERR にしているが、`docs/spec/README.md` は配布先が表形式の索引を持つとは限らない任意の運用なので沈黙を選んだ）。回帰は `tests/gc.sh` の G34〜G39（検出・全件掲載時の非検出・索引自身の除外・表が無い場合の非検出・索引ファイル自体が無い場合の非検出・`docs/spec/` 自体が無い場合の非検出。33→39）。判定を無効化すると G34 が実際に FAIL することを確認した。実機で確認: このリポジトリ自身は 2026-09-28 に索引を手で揃えたばかりで、`update` 後の `gc` に新しい WARN は出ない。
 - **プロジェクト側で必要な作業**: `bash .harness/bin/harness update` で `.harness/scripts/gc.sh` が更新される。**`docs/spec/` 配下に `.md` があり、`docs/spec/README.md` が表形式の索引を持つプロジェクトでは、`update` 後の `gc` が「索引に行が無い」spec を新たに WARN として報告するようになる（意図した動作）**。直し方は `docs/spec/README.md` の表に行を足すこと（`gc` 自体は検出のみで自動修正はしない）。`docs/spec/README.md` が無い、または表を持たないプロジェクトでは挙動は変わらない（引き続き何も言わない）。

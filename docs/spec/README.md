@@ -19,7 +19,7 @@
 | [writeback-sensors.md](writeback-sensors.md) | 統括の書き戻し漏れを文章ではなく検査（sensor）に落とす | 完了 |
 | [handoff-writeback.md](handoff-writeback.md) | 計画を進めたのに handoff を放置していないか（tech-debt #18） | 完了 |
 | [task-timing.md](task-timing.md) | 「あとどれくらいで終わるか」を推測ではなく記録から答える（`harness task` / `harness eta`） | 完了 |
-| [timing-anywhere.md](timing-anywhere.md) | 計画を立てない小さな作業でも所要時間を記録できるようにする | レビュー完了・承認待ち |
+| [timing-anywhere.md](timing-anywhere.md) | 計画を立てない小さな作業でも所要時間を記録できるようにする | 完了 |
 
 ## 1 つの spec の書き方
 
