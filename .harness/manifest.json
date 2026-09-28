@@ -1,8 +1,8 @@
 {
-  "harness_version": "0.8.1",
+  "harness_version": "0.9.0",
   "source": "https://github.com/takumifukasawa/agent-harness.git",
   "source_ref": "",
-  "installed_at": "2026-09-27",
+  "installed_at": "2026-09-28",
   "agents": "claude,codex",
   "files": [
     {"path":".harness/bin/harness","src":"@self","ownership":"managed","sha256":"6f58fb9d11ee9fbc6226ec35f6b8c3cc4c271e5b","source_sha256":""},
@@ -39,7 +39,7 @@
     {"path":"docs/rules/README.md","src":"docs-template/rules/README.md","ownership":"seed","sha256":"-","source_sha256":"-"},
     {"path":"docs/spec/README.md","src":"docs-template/spec/README.md","ownership":"seed","sha256":"-","source_sha256":"-"},
     {"path":"docs/tech-debt.md","src":"docs-template/tech-debt.md","ownership":"seed","sha256":"-","source_sha256":"-"},
-    {"path":"AGENTS.md","src":"AGENTS.core.md","ownership":"merge","sha256":"8581f2431042a0730473d1f3991fe77e67c848ac","source_sha256":"-"},
+    {"path":"AGENTS.md","src":"AGENTS.core.md","ownership":"merge","sha256":"82df41268eb49f4c699bf99efd7483e2d77100c8","source_sha256":"-"},
     {"path":"CLAUDE.md","src":"adapters/claude/CLAUDE.md.template","ownership":"managed","sha256":"fcaf5d8406e36b729c4fb77c017027bc2d5eab1e","source_sha256":""},
     {"path":".harness/adapters/claude.settings.fragment.json","src":"adapters/claude/settings.fragment.json","ownership":"managed","sha256":"d7fc64fe34e903c597c345ba2add34206badab37","source_sha256":""},
     {"path":".claude/agents/implementer.md","src":"docs-template/roles/implementer.md","ownership":"generated","sha256":"7e710e883809147adad3ef45efdbb4590e090c4d","source_sha256":"311cf3c1bc117fa7a58d7d3d66b8705d78ca0fd6"},

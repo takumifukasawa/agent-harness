@@ -1,10 +1,10 @@
 # handoff — 現在地
 
-最終更新: 2026-09-27（**題材 `task-timing` 完了・ユーザー承認待ち**。`harness task start/done` と `harness eta` で、「あとどれくらい？」に推測ではなく記録から答えられるようにした）
+最終更新: 2026-09-28（**題材 `task-timing` 完了・承認済み。版 0.9.0**。`harness task start/done` と `harness eta` で、「あとどれくらい？」に推測ではなく記録から答えられるようにした）
 
 ## いま何をしているか（1〜3 行）
 
-**進行中の題材は無い**（`task-timing` が承認待ち）。`harness task start <id>` / `done <id>` でタスクとレビューの所要時間を記録し、**`harness eta`** が進捗・経過・幅のある推定・**推定完了時刻**を出す（`--json` も）。実績が足りなければ「不明」と言い、**記録漏れのタスクは出力自身が指摘する**。
+**進行中の題材は無い。** 2026-09-28 に `task-timing` を完了として畳み、**版 0.9.0** を切った。`harness task start <id>` / `done <id>` でタスクとレビューの所要時間を記録し、**`harness eta`** が進捗・経過・幅のある推定・**推定完了時刻**を出す（`--json` も）。実績が足りなければ「不明」と言い、**記録漏れのタスクは出力自身が指摘する**。
 
 **この題材で「検査が想定したケースの外は見えない」を 3 回踏んだ。** 学びは [learnings](learnings.md) の 2026-09-27 に「再発したらまず何を見るか」の形で残してある。うち 1 件（配布テンプレートに最初の `task start` を叩くと `stages.json` が壊れる）は**新規プロジェクトが必ず踏む**状態で、最終レビューが拾った。
 
@@ -13,7 +13,7 @@
 | 項目 | 状態 | 出典 |
 |---|---|---|
 | ブランチ | **`main`**。**未 push のコミットが溜まっている**（`origin/main` は `c1de264` のまま） | `git status -sb` |
-| VERSION | **0.8.0**（2026-09-23 に 0.7.1 から。4 題材ぶんの変更を切った）。実プロジェクト `aesthetic-comparison` にも `harness update` 済み | `VERSION`, `CHANGELOG.md` |
+| VERSION | **0.9.0**（2026-09-28。`harness task` / `harness eta` の追加で minor）。**実プロジェクトへの配布はこれから** | `VERSION`, `CHANGELOG.md` |
 | 検査 | **全件 pass が期待値**（件数・所要時間は都度コマンドで確認。手で数値を書かない） | `/bin/bash .harness/bin/harness check` |
 | `harness doctor` | **FAIL 0 が期待値**。**既知の WARN が残ることがある: Codex の標準 deny hook が未信頼**（この PC で `/hooks` による信頼をしていない。意図した挙動） | `/bin/bash .harness/bin/harness doctor` |
 | `harness gc` | **`docs/tech-debt.md` の未着手負債の INFO だけが期待値**。WARN が出たら書き戻し漏れなので直す | `/bin/bash .harness/bin/harness gc` |
@@ -26,7 +26,7 @@
 
 ## NEXT（依存順。順序制約があれば明記）
 
-1. **`task-timing` の承認 → クローズ。** 承認が取れたら `docs/spec/task-timing.md` の状態欄を「完了（承認済み）」にし、`.harness/state/` を畳む。**版を上げる**なら新機能 2 つ（`task` / `eta`）が入ったので **minor（0.9.0）**が妥当。上げたら `bash bin/harness update` でこのリポジトリを追従させ、実プロジェクト（`aesthetic-comparison`）にも `harness update` で配る。
+1. **実プロジェクトへ 0.9.0 を配る。** `aesthetic-comparison` で `bash .harness/bin/harness update`。`harness task` / `harness eta` が入り、`task-orchestrate` の手順にも呼び出しが書かれている。**向こうは「コミットは都度許可」の規律**なので、更新をコミットするには明示的な依頼が要る。
 2. **未 push が溜まっている。** `origin/main` から 20 件超。
 3. **未着手の負債**（どれも低優先）:
    - **#19**（`tests/eta.sh` の一部が時間依存で稀に落ちる）— **検査が稀に落ちると「まあ落ちることもある」という習慣がつき、本物の失敗を見逃す**ので放置は危険。直すなら時刻を固定値で与えるか、期待値に 1 秒の許容を持たせる
