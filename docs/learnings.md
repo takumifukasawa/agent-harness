@@ -193,3 +193,16 @@
 - コミット前に `git status --porcelain` を見て、**自分が触っていないファイルが出ていないか**確認する
 - 同じ日に `aesthetic-comparison` でも**別セッションの未コミット変更と混ざりかけた**（manifest の ownership で切り分けて回避）。**並行作業では「誰がどのファイルを触っているか」を常に意識する**
 - そもそも**実装役が走っている間はコミットしない**のが最も安全。待てるなら待つ
+
+## 2026-09-29: サブエージェント定義の `model: inherit` がユーザーのサブエージェント既定を素通りする [harness候補]
+
+**症状**: 統括を Fable 5.1、`~/.claude/settings.json` の `env.CLAUDE_CODE_SUBAGENT_MODEL` を opus にしているのに、`implementer` / `reviewer` が Fable 5.1 で走る。汎用のサブエージェント（`general-purpose`）は opus で走るので、設定が効いていないようには見えない。
+
+**原因**: Claude Code のモデル解決順は「起動時の `model` 指定 > 定義ファイル（`.claude/agents/*.md`）の frontmatter `model` > `CLAUDE_CODE_SUBAGENT_MODEL` > メイン会話のモデル」。ハーネスが生成する定義ファイルが `model: inherit` を書いていたため、frontmatter が env より優先され、`inherit`（= メインと同じ）になっていた。[決定 0011](decisions/0011-generated-agents-do-not-pin-model.md) で `model` 行を書かなくした（0.10.1）。
+
+**再発したらまず**:
+
+- **どのモデルで走っているかは 10 秒で確定できる。** 空のエージェントを起動し「ファイルも読まずコマンドも打たず、自分の system prompt にあるモデル名を 1 行で報告」させる。推測で議論しない
+- **起動時の `model` 指定は必ず勝つ**（実機確認）。統括が `stages.json` の `model` を起動時に渡していれば、定義ファイルの既定が何であれ効く。効いていないなら渡し忘れ
+- **`.claude/agents/` を変えたら、同じセッションでは確認できない前提で動く。** 公式 docs は「数秒で再読み込みされる」と言うが、2026-09-29 の実機では再生成後に起動した implementer が旧定義のモデルのまま、新規に置いた定義ファイルは `Agent type not found` だった。**新しいセッションで確認する**
+- `harness update` は生成物を正本に戻すので、`.claude/agents/<role>.md` を手で直しても次の `update` で消える。直すなら生成器（`bin/harness` の `render_agent`）か生成元（`docs/roles/`）
