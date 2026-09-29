@@ -406,7 +406,8 @@ render_agent() { # role_src_file dest_tmp role_name kind
     else
       echo "name: $name"
       echo "description: ${desc:-agent-harness role $name}"
-      echo "model: inherit"
+      # model は書かない。frontmatter の model はユーザーのサブエージェント既定（CLAUDE_CODE_SUBAGENT_MODEL）より
+      # 優先され、inherit でも親（統括）のモデルで走る（決定 0011、2026-09-29 実機確認）。モデルは統括が起動時に渡す。
     fi
     echo "---"
     echo

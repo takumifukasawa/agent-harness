@@ -11,7 +11,7 @@
       "files_scope": [],
       "depends_on": [],
       "model": "inherit",
-      "_model_doc": "そのエージェントで有効なモデル名を書く（Claude: opus / sonnet / inherit。Codex: codex exec --model に渡す名前、または inherit）。設計余地あり → 上位、定型 → 下位。Claude / Codex とも同じ粒度で指定できる。",
+      "_model_doc": "そのエージェントで有効なモデル名を書く（Claude: opus / sonnet / inherit。Codex: codex exec --model に渡す名前、または inherit）。inherit は「起動時に指定しない」の意味で、Claude Code ではサブエージェント既定（CLAUDE_CODE_SUBAGENT_MODEL）になる。設計余地あり → 上位、定型 → 下位。Claude / Codex とも同じ粒度で指定できる。",
       "result": {
         "commit": null,
         "questions": [],

@@ -10,7 +10,7 @@
 | `<subdir>/AGENTS.md` | `<subdir>/CLAUDE.md` | 同じ template を隣に置く（`harness update` が走査して生成） |
 | `.harness/scripts/*.sh` | `.claude/settings.json` の hooks | `settings.fragment.json` を参考に手で反映（v0）。SessionStart で handoff の要約を出す等は**補助**。無くても運用は成立する |
 | 標準 deny | `.claude/settings.json` の `permissions.deny` | `settings.fragment.json` 参照。v0 は差分表示のみ、手で反映 |
-| `docs/roles/<role>.md` | `.claude/agents/<role>.md` | 役割文を本文にし、frontmatter に `name` / `description` / `model` を付けて生成。model は設計余地で使い分ける（設計判断あり → 上位モデル、定型実装 → 下位モデル） |
+| `docs/roles/<role>.md` | `.claude/agents/<role>.md` | 役割文を本文にし、frontmatter に `name` / `description` を付けて生成。**`model` は書かない**（[決定 0011](../../../docs/decisions/0011-generated-agents-do-not-pin-model.md)）: frontmatter の `model` はユーザーのサブエージェント既定（`CLAUDE_CODE_SUBAGENT_MODEL`）より優先され、`inherit` でも親（統括）のモデルで走る（2026-09-29 実機確認: `model: inherit` の implementer は親と同じ Fable 5.1、無指定の汎用エージェントは既定の Opus 5.5 で起動）。モデルは統括が `stages.json` の `model` を起動時に渡す（設計判断あり → 上位モデル、定型実装 → 下位モデル） |
 | `.agents/skills/<name>` | `.claude/skills/<name>` | **コピー**（symlink は Windows で開発者モードが要るため不採用。`update` で再コピー） |
 
 Claude Code の auto-memory（`~/.claude/projects/<slug>/memory/`）はリポジトリ外にあるため、正本にしない。`AGENTS.core.md` のルール通り「docs への参照」だけを書く。
