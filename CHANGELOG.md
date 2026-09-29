@@ -3,6 +3,11 @@
 各版に「プロジェクト側で必要な作業」を必ず書く。`harness update` はこの節を表示する。
 semver: managed ファイルの移動・マーカー形式変更は major、ルール/スキルの追加は minor、文言修正は patch。
 
+## [0.10.2] - 2026-09-29
+
+- 修正: `AGENTS.md` の管理ブロックの「地図」が、表の場所（`docs/spec/` など）を絶対の置き場のように読めていた。既に別の場所に仕様がある既存プロジェクト（例: `docs/GAME.md`）では、エージェントが毎セッション「ハーネスの流儀は `docs/spec/` だが、この repo では…」と両方に義理立てする言い方になり、置き場を変える提案を繰り返していた（2026-09-29 に実プロジェクトで観測）。ハーネスの一番上のルールは「まず `docs/README.md` の索引を読む」なので、表の直後に **「表の場所は雛形の既定。プロジェクトが別の場所を使うなら索引にそう書く。索引が正で、索引にある限り流儀違いとは扱わず、置き場を変える提案もしない」** の 1 行を足した（`AGENTS.core.md` は 58 → 59 行。60 行の検査内）。docs 索引の雛形（`docs-template/README.md`）と spec 索引の雛形（`docs-template/spec/README.md`）にも同じ趣旨を 1 行ずつ足した。
+- **プロジェクト側で必要な作業**: `bash .harness/bin/harness update` で `AGENTS.md` の管理ブロックが新しい文言に戻る。**`docs/README.md` と `docs/spec/README.md` は seed（プロジェクトの資産）なので `update` は触らない**。文言が欲しければ雛形から手で写す。既に別の場所に仕様があるプロジェクトは、一回だけ `docs/README.md` にその doc の行を足し、`docs/spec/README.md` の表からもリンクする（例: `../GAME.md`）。移動は不要。
+
 ## [0.10.1] - 2026-09-29
 
 - 修正（[決定 0011](docs/decisions/0011-generated-agents-do-not-pin-model.md)）: `.claude/agents/<role>.md` の生成時に frontmatter へ書いていた `model: inherit` を**書かなくした**。Claude Code では frontmatter の `model` がユーザーのサブエージェント既定（`CLAUDE_CODE_SUBAGENT_MODEL`）より優先され、`inherit` は「親（統括）と同じモデル」の意味なので、統括を上位モデルで動かしていると implementer / reviewer も上位で走っていた（2026-09-29 に実機確認: 統括 Fable 5.1・既定 opus の環境で、`model: inherit` の implementer は Fable 5.1、無指定の汎用エージェントは Opus 5.5 で起動）。`docs/roles/reviewer.md` の「モデルは既定で下位で足りる」と `docs/learnings.md`（2026-09-18: 上位モデルのレビュアーを並列起動するとレート上限に当たる）に反する既定だった。`model` を書かなければ Claude Code はサブエージェント既定を使い、統括が `stages.json` の `model` を起動時に渡せばそれが勝つ（公式 docs の Model resolution order: 起動時の指定 > frontmatter > `CLAUDE_CODE_SUBAGENT_MODEL` > メインのモデル。起動時の `model` 指定が勝つことは実機確認済み。**省略時の挙動は同じセッション内で定義の再読み込みが効かず未確認**。新しいセッションで確認する）。あわせて `task-orchestrate` の `model` 欄と `stages.json` 雛形の説明を「`inherit` = 起動時に指定しない（Claude Code ではサブエージェント既定）」に正し、`harness/adapters/claude/README.md` の生成物の行を更新した。

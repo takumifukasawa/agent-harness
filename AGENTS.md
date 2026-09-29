@@ -1,4 +1,4 @@
-<!-- harness:begin v=0.10.1 -->
+<!-- harness:begin v=0.10.2 -->
 # エージェント運用の共通ルール（agent-harness 管理領域）
 
 このブロックは agent-harness が管理する。直したい場合は直してよいが、`harness diff` で差分を確認し上流へ戻すこと（詳細: `.agents/skills/harness-maintain/SKILL.md`）。
@@ -21,6 +21,7 @@
 | 長期タスクの機械可読な進行状態 | `.harness/state/progress.json`, `stages.json`（gitignore） |
 | 特定ディレクトリだけに効く規律 | そのディレクトリの `AGENTS.md`（一覧: `docs/rules/README.md`） |
 
+表の場所は雛形の**既定**。プロジェクトが別の場所を使うなら `docs/README.md` の索引にそう書く。**索引が正**で、索引にある限り「流儀と違う」とは扱わず、置き場を変える提案もしない。
 `docs/` がこのプロジェクトの永続事実の正本。エージェント固有のメモリ機能には「docs のどこを見るか」だけを残し、事実そのものは docs に書く。
 **リポジトリに無い知識は存在しない**: チャット・会議・口頭で決まったことは、docs に書き戻すまで「決まっていない」とみなす。
 

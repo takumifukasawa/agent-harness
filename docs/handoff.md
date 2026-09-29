@@ -1,6 +1,6 @@
 # handoff — 現在地
 
-最終更新: 2026-09-29（**0.10.1: 生成する `.claude/agents/<role>.md` から `model: inherit` を外した。効果の実機確認は次のセッション**。統括の既定モデルを Opus 5.5 に寄せる方針はチャット上の合意で、docs への書き戻し先は未決）
+最終更新: 2026-09-29（**0.10.1 で生成物から `model: inherit` を外し（効果の実機確認は次のセッション）、0.10.2 で地図の場所を「雛形の既定・索引が正」に改めた**。統括の既定モデルを Opus 5.5 に寄せる方針はチャット上の合意で、docs への書き戻し先は未決）
 
 ## いま何をしているか（1〜3 行）
 
@@ -15,7 +15,7 @@
 | 項目 | 状態 | 出典 |
 |---|---|---|
 | ブランチ | **`main`**。**push 済みが期待値**（`ahead` が出たら push 忘れ） | `git status -sb` |
-| VERSION | **0.10.1**（2026-09-29。生成物の変更なので patch）。**実プロジェクト（`aesthetic-comparison`）への 0.10.x の配布は未確認**（向こうで `harness doctor` を叩けば source に新版があるかが INFO で出る） | `VERSION`, `CHANGELOG.md` |
+| VERSION | **0.10.2**（2026-09-29。0.10.1 は生成物の変更、0.10.2 は地図の文言。どちらも patch）。**実プロジェクト（`aesthetic-comparison`）への 0.10.x の配布は未確認**（向こうで `harness doctor` を叩けば source に新版があるかが INFO で出る） | `VERSION`, `CHANGELOG.md` |
 | 検査 | **全件 pass が期待値**（件数・所要時間は都度コマンドで確認。手で数値を書かない） | `/bin/bash .harness/bin/harness check` |
 | `harness doctor` | **FAIL 0 が期待値**。**既知の WARN: Codex の標準 deny hook が未信頼**（この PC で `/hooks` による信頼をしていない。意図した挙動） | `/bin/bash .harness/bin/harness doctor` |
 | `harness gc` | **`docs/tech-debt.md` の未着手負債の INFO だけが期待値**。WARN が出たら書き戻し漏れなので直す | `/bin/bash .harness/bin/harness gc` |
@@ -31,7 +31,7 @@
 
 1. **0.10.1 の実機確認（新しいセッションで。同じセッションでは定義が再読み込みされない）。** `implementer` を `model` 無指定で起動し、「自分の system prompt のモデル名を 1 行で報告」させる。`CLAUDE_CODE_SUBAGENT_MODEL`（opus）のモデルと答えれば完了。**確認できたら**、[決定 0011](decisions/0011-generated-agents-do-not-pin-model.md) の「実機では未確認」と `CHANGELOG.md` 0.10.1 の「未確認」を消す。**親と同じモデルと答えたら**、公式 docs の解決順がこの環境では成り立っていないということなので、決定 0011 の落選案（`model: opus` を書く）を再検討する。
 2. **統括の既定モデル方針の書き戻し**（`未確定事項` 参照）。1 とは独立。
-3. **`aesthetic-comparison` への配布（0.10.0 と 0.10.1）。** 向こうのプロジェクト固有の作業には触らず、managed のファイルだけコミットする。1 の確認が済んでからの方が「実装役が既定モデルで走る」ことを説明できる。
+3. **他プロジェクトへの配布（0.10.0〜0.10.2）。** `aesthetic-comparison` と、`docs/GAME.md` を仕様にしているプロジェクト。向こうのプロジェクト固有の作業には触らず、managed のファイルだけコミットする。1 の確認が済んでからの方が「実装役が既定モデルで走る」ことを説明できる。**GAME.md のプロジェクトでは配布後に一回だけ**: `docs/README.md` に GAME.md / AGENTS_NOTES.md の行、`docs/spec/README.md` の表に `../GAME.md` の行を足す（seed なので `update` では届かない。移動はしない）。
 4. **未着手の負債**（どれも低優先）: #17（`gc` の docs 全体スキャン。3 秒を超えたら着手）/ #16（`settings.json` の case 衝突。被害事例が出るまで着手しない）/ #1 / #2 / #9 / #10
 5. **dogfood で見つかった 2 つの想定外**（`DESIGN.md` §11 の小節に記録済み。**直すかは未判断**）: 別リポジトリを操作すると向こうの `AGENTS.md` が統括に載らない / `task-orchestrate` の「各段階でコミット」とプロジェクト側の「コミットは都度許可」が衝突する
 6. **（任意・人間の作業）Codex の hook を信頼する。** `doctor` の WARN 1 件はこれ。
