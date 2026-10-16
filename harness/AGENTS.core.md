@@ -27,7 +27,7 @@
 
 ## セッションの入口と出口
 
-- 開始時: `.agents/skills/session-catchup/SKILL.md` の手順で現在地を掴む。全 doc を頭から読まない。
+- 開始時: `.agents/skills/session-catchup/SKILL.md` の手順で現在地を掴む。全 doc を頭から読まない。スキルや `.harness/scripts/` が無ければ配布物が未インストール（clone 直後など。コミットしない）なので、`harness install` を回す。
 - 終了時・`/clear` 前・長い区切り: `.agents/skills/session-handoff/SKILL.md` の手順で `docs/handoff.md` を更新し、`harness status` の結果を報告する。
 
 ## 検証と報告

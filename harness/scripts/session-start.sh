@@ -14,6 +14,14 @@ else
   echo "[harness] docs/handoff.md が無い。session-catchup の前に docs/README.md を確認。"
 fi
 
+# lockfile 方式（決定 0013）: 他の人が版を上げた manifest を pull すると、manifest の source_commit と
+# この作業ツリーに入っている版（.harness/installed）がずれる。配布物はコミットしないので、install で揃える。
+pin="$(sed -n 's/^  "source_commit": *"\(.*\)",\{0,1\}$/\1/p' "$ROOT/.harness/manifest.json" 2>/dev/null | head -1)"
+here="$(tr -d '\r\n' <"$ROOT/.harness/installed" 2>/dev/null || true)"
+if [ -n "$pin" ] && [ "$here" != "$pin" ]; then
+  echo "[harness] 入っている版（${here:-不明}）が manifest の固定（${pin}）と違う。harness install で揃える。"
+fi
+
 if [ -d "$ROOT/.harness/state" ] && ls "$ROOT/.harness/state"/*.json >/dev/null 2>&1; then
   echo "[harness] .harness/state/ に進行中の状態あり。progress.json を読む。"
 fi

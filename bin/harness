@@ -2,7 +2,8 @@
 # harness — agent-harness をプロジェクトに導入・更新・吸い上げする CLI
 #
 #   harness init   [--source <path|git-url>] [--ref <branch|tag>] [--agents claude,codex]
-#   harness update [--ref <branch|tag>]
+#   harness update [--ref <branch|tag>]   # 版を上げる。manifest の source_commit を書き換える
+#   harness install                       # manifest に固定された版（source_commit）をそのまま入れる（clone 直後など）
 #   harness status
 #   harness diff
 #   harness upstream <path>...
@@ -19,14 +20,24 @@
 #   source は .harness/source.local（gitignore 対象）か HARNESS_SOURCE で与える。
 #
 # 設計: DESIGN.md §6（所有権）, §8（コマンド）。依存は git と bash だけ。
-# この CLI 自身も .harness/bin/harness（+ harness.cmd）としてプロジェクトに同梱されるので、
-# clone した PC では `.harness/bin/harness update` がそのまま動く。
-# PATH に置いた harness は、プロジェクト内では同梱コピーへ委譲する（版がプロジェクトに固定される）。
+# lockfile 方式（1.0.0。決定 0013）: 導入先がコミットするのは manifest（版と source_commit）・seed・
+# AGENTS.md・CLAUDE.md・.claude/settings.json だけ。それ以外の配布物（この CLI 自身の同梱コピー
+# .harness/bin/harness を含む）は .gitignore の管理ブロックに載せ、clone ごとに harness install で入れる
+# （npm の package-lock.json と node_modules の関係）。clone 直後は同梱コピーが無いので、PATH に置いた
+# harness（self-install）か、公開 URL の bin/harness を curl で取って install を実行する。
+# PATH に置いた harness は、プロジェクト内では同梱コピーへ委譲する（install を除く。install は常に
+# 固定された版の CLI で配る）。
 set -euo pipefail
 
 DEFAULT_SOURCE="https://github.com/takumifukasawa/agent-harness.git"
 MANIFEST_REL=".harness/manifest.json"
 SOURCE_LOCAL_REL=".harness/source.local"
+# この PC の作業ツリーに入っている版（source のコミット）。gitignore 対象。manifest の source_commit と比べて
+# 版ずれ（他の人が update した manifest を pull した後など）を知らせる。
+INSTALLED_REL=".harness/installed"
+# .gitignore の管理ブロック。行の文字列で前後を探すので、この 2 行は変えない（変えると古いブロックを消せない）。
+GI_BEGIN="# >>> agent-harness managed (do not commit; restore with: harness install)"
+GI_END="# <<< agent-harness managed"
 BEGIN_RE='<!-- harness:begin'
 END_RE='<!-- harness:end -->'
 
@@ -56,12 +67,15 @@ INSTALL_TRAP_MODE=""
 on_script_exit() {
   local status=$?
   [ -n "${HARNESS_REEXEC_TMP:-}" ] && rm -f "$HARNESS_REEXEC_TMP"
+  [ -n "${HARNESS_PINNED_CLEANUP:-}" ] && rm -rf "$HARNESS_PINNED_CLEANUP"
   if [ -n "$INSTALL_TRAP_MODE" ] && [ "$status" -ne 0 ]; then
     {
       echo
       echo "harness: ${INSTALL_TRAP_MODE} は失敗した（終了コード ${status}）。上に出ているエラーを直す。"
       if [ "$INSTALL_TRAP_MODE" = init ]; then
         echo "         manifest.json はまだ書いていない。この導入はまだ完了していない。"
+      elif [ "$INSTALL_TRAP_MODE" = install ]; then
+        echo "         manifest.json は変えていない（install は固定された版を入れるだけ）。"
       else
         echo "         manifest.json はまだ今回の内容に更新していない（途中まで配った分と manifest の記録が食い違っている可能性がある）。"
       fi
@@ -271,6 +285,18 @@ is_shared_source() { # value
   esac
 }
 
+# 配った source のコミット。manifest の source_commit に記録し、install はこのコミットを入れる。
+# source が git の作業ツリーでなければ空（その場合 install はできず、update を案内する）。
+# ローカルの clone を source にしているときは HEAD を記録する（未コミットの変更は記録されない）。
+source_commit_of() { # srcdir
+  git -C "$1" rev-parse --verify -q HEAD 2>/dev/null || true
+}
+
+write_installed() { # commit
+  mkdir -p "$ROOT/.harness"
+  printf '%s\n' "$1" >"$ROOT/$INSTALLED_REL"
+}
+
 # ---------------------------------------------------------------- manifest
 # 1 エントリ 1 行の JSON。bash だけで読めるよう、書式を固定する。
 #   {"path":"...","src":"...","ownership":"managed|seed|merge|generated","sha256":"...","source_sha256":"..."}
@@ -298,7 +324,7 @@ old_manifest_field() { # path field(4=sha256|5=source_sha256)
 
 # 収集したエントリ（配列 ENTRIES、TSV 行）から manifest を書く
 write_manifest() {
-  local version="$1" source="$2" ref="$3" agents="$4"
+  local version="$1" source="$2" ref="$3" agents="$4" commit="${5:-}"
   local out; out="$(manifest_path)"
   mkdir -p "$(dirname "$out")"
   {
@@ -306,6 +332,7 @@ write_manifest() {
     echo "  \"harness_version\": \"$version\","
     echo "  \"source\": \"$source\","
     echo "  \"source_ref\": \"$ref\","
+    echo "  \"source_commit\": \"$commit\","
     echo "  \"installed_at\": \"$(now)\","
     echo "  \"agents\": \"$agents\","
     echo "  \"files\": ["
@@ -458,11 +485,42 @@ block_hash() { # file
   awk -v b="$BEGIN_RE" -v e="$END_RE" 'index($0,b)==1{p=1} p{print} p&&index($0,e)==1{p=0}' "$1" | git hash-object --stdin
 }
 
+# apply_plan が集める「コミットしない配布物」の一覧（lockfile 方式。決定 0013）。managed / generated の
+# うち、プロジェクトと共有するもの（CLAUDE.md。プロジェクトが書いた内容を残す特別扱い）を除いた全部。
+IGNORE_LIST=()
 ensure_gitignore() {
-  local gi="$ROOT/.gitignore" line
-  for line in ".harness/state/" ".harness/backup/" ".harness/conflicts/" "$SOURCE_LOCAL_REL"; do
+  local gi="$ROOT/.gitignore" line tmp p
+  for line in ".harness/state/" ".harness/backup/" ".harness/conflicts/" "$SOURCE_LOCAL_REL" "$INSTALLED_REL"; do
     grep -qxF "$line" "$gi" 2>/dev/null || echo "$line" >>"$gi"
   done
+  [ "${#IGNORE_LIST[@]}" -gt 0 ] || return 0
+  # 管理ブロックを丸ごと作り直す（版が変わって配らなくなったファイルの行も消える）。ブロックの外は触らない。
+  # mv で置き換えると mktemp の 0600 が .gitignore に移るので、中身だけを書き戻す（tech-debt #9 と同じ罠）。
+  tmp="$(mktemp)"
+  {
+    # 行末の CR は外して比べる（Windows の core.autocrlf で .gitignore が CRLF になると、比べ損ねてブロックがダブる）
+    [ -f "$gi" ] && awk -v b="$GI_BEGIN" -v e="$GI_END" '{l=$0; sub(/\r$/,"",l)} l==b{skip=1;next} l==e{skip=0;next} !skip' "$gi"
+    echo "$GI_BEGIN"
+    for p in "${IGNORE_LIST[@]}"; do echo "/$p"; done
+    echo "$GI_END"
+  } >"$tmp"
+  cat "$tmp" >"$gi"; rm -f "$tmp"
+}
+
+# 既にコミットされている配布物を知らせる（lockfile 方式への移行。1.0.0 より前に導入したプロジェクト）。
+# .gitignore は追跡中のファイルには効かないので、index から外す手順を出す。勝手には外さない。
+report_tracked_managed() {
+  [ "${#IGNORE_LIST[@]}" -gt 0 ] || return 0
+  git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+  local tracked n
+  tracked="$(git -C "$ROOT" ls-files -- "${IGNORE_LIST[@]}" 2>/dev/null || true)"
+  [ -n "$tracked" ] || return 0
+  n="$(printf '%s\n' "$tracked" | wc -l | tr -d ' ')"
+  echo
+  info "lockfile 方式（1.0.0）: ハーネスが配った物のうち ${n} 件がまだ git に追跡されている（.gitignore は追跡中のファイルには効かない）。"
+  info "  直し方（作業ツリーのファイルは消えない。index から外すだけ）:"
+  info "    git rm -q --cached -- $(printf '%s\n' "$tracked" | tr '\n' ' ')"
+  info "    git commit -m 'chore: harness の配布物を追跡から外す（lockfile 方式）'"
 }
 
 # Windows の core.autocrlf で bash スクリプトが CRLF になると動かず、ハッシュ比較も狂う。LF を強制する。
@@ -512,6 +570,7 @@ apply_plan() { # agents mode(init|update)
   fi
 
   ENTRIES=()
+  IGNORE_LIST=()
   local n_new=0 n_up=0 n_res=0 n_keep=0 n_conf=0 n_seed=0 n_caseconf=0
   local src dest own tmp abs newhash curhash srchash
   # 一時ファイルは 1 つを使い回す（render_src / render_agent はいずれも > で上書きするので、
@@ -521,6 +580,7 @@ apply_plan() { # agents mode(init|update)
   while IFS=$'\t' read -r src dest own; do
     abs="$ROOT/$dest"
     srchash=""
+    case "$own" in managed|generated) [ "$dest" = "CLAUDE.md" ] || IGNORE_LIST+=("$dest");; esac
     case "$own" in
       generated)
         # 生成元は プロジェクト側の seed（docs/roles/x.md）。無ければペイロードの雛形から。
@@ -640,6 +700,7 @@ apply_plan() { # agents mode(init|update)
   ensure_gitattributes
   case ",$agents," in *,claude,*) ensure_nested_claude_md;; esac
   git -C "$ROOT" config core.hooksPath .githooks 2>/dev/null || true
+  report_tracked_managed
 
   echo
   info "$mode done: new=$n_new updated=$n_up restored=$n_res unchanged=$n_keep seeded=$n_seed conflicts=$n_conf case_conflicts=$n_caseconf"
@@ -735,10 +796,12 @@ cmd_init() {
   if ! is_shared_source "$source"; then shared_source="$DEFAULT_SOURCE"; local_source="$source"; fi
   info "init  project=$ROOT"
   info "      source=$source ref=${ref:-default} version=$version agents=$agents"
+  local commit; commit="$(source_commit_of "$srcdir")"
   INSTALL_TRAP_MODE=init
   apply_plan "$agents" init
-  write_manifest "$version" "$shared_source" "$ref" "$agents"
+  write_manifest "$version" "$shared_source" "$ref" "$agents" "$commit"
   INSTALL_TRAP_MODE=""
+  [ -n "$commit" ] && write_installed "$commit"
   if [ -n "$local_source" ]; then
     write_source_local "$local_source"
     info "  + $SOURCE_LOCAL_REL (${local_source}。この PC 用。gitignore 対象＝コミットしない)"
@@ -746,6 +809,8 @@ cmd_init() {
   fi
   merge_claude_settings "$agents"
   echo
+  info "コミットするのは manifest・seed（docs/、.harness/checks.sh）・AGENTS.md・CLAUDE.md・.claude/settings.json・.gitignore。"
+  info "     それ以外の配布物は .gitignore 済み。clone した先では harness install で入れる（lockfile 方式）。"
   info "次: docs/spec/ に何を作るかを書き、.harness/checks.sh に検査を登録する。セッション開始は session-catchup。"
   info "     導入直後の環境確認は harness doctor。"
 }
@@ -809,11 +874,63 @@ cmd_update() {
     awk -v old="## [$oldver]" 'index($0,old)==1{exit} /^## \[/{p=1} p' "$srcdir/CHANGELOG.md" | sed 's/^/   /'
     echo
   fi
+  local commit; commit="$(source_commit_of "$srcdir")"
   INSTALL_TRAP_MODE=update
   apply_plan "$agents" update
-  write_manifest "$version" "$shared_source" "$ref" "$agents"
+  write_manifest "$version" "$shared_source" "$ref" "$agents" "$commit"
   INSTALL_TRAP_MODE=""
+  [ -n "$commit" ] && write_installed "$commit"
   merge_claude_settings "$agents"
+  [ -n "$commit" ] && info "版を固定した: source_commit=${commit}。.harness/manifest.json の変更をコミットすると、他の clone は harness install でこの版になる"
+  return 0
+}
+
+# manifest に固定された版（source_commit）をそのまま入れる。manifest は変えない（npm ci に当たる）。
+# 2 段で動く: (1) 今動いている CLI が source から固定コミットを一時ディレクトリへ取り出し、
+# (2) その版の CLI に exec して配る。配る判断（plan）を固定された版にさせるためと、同梱コピーを
+# 実行しながら上書きしないため（reexec_if_vendored と同じ理由）。
+cmd_install() {
+  ROOT="$(project_root)"
+  trap on_script_exit EXIT
+  [ $# -eq 0 ] || die "unknown option: ${1}（install は manifest に固定された版を入れるだけ。版を上げるなら harness update）"
+  [ -f "$(manifest_path)" ] || die "未導入（$MANIFEST_REL が無い）。harness init を使う"
+  local commit agents
+  commit="$(manifest_get source_commit)"
+  [ -n "$commit" ] || die "manifest に source_commit が無い（1.0.0 より前の形式）。直し方: harness update を一度回して版を固定し、manifest の変更をコミットする"
+  agents="$(manifest_get agents)"
+  if [ -z "${HARNESS_PINNED_DIR:-}" ]; then
+    local source source_from ref srcdir pinned
+    IFS=$'\t' read -r source source_from <<<"$(effective_source)"
+    ref="$(manifest_get source_ref)"
+    srcdir="$(resolve_source "$source" "$ref")"
+    git -C "$srcdir" cat-file -e "${commit}^{commit}" 2>/dev/null ||
+      die "固定した版（source_commit=${commit}）が source（${source}）に無い。source の履歴が作り直された可能性がある。直し方: harness update で版を上げ直し、.harness/manifest.json の変更をコミットする"
+    pinned="$(mktemp -d)"
+    if ! git -C "$srcdir" archive "$commit" | tar -x -C "$pinned"; then
+      rm -rf "$pinned"; die "固定した版（${commit}）を source から取り出せない: ${srcdir}"
+    fi
+    [ -f "$pinned/bin/harness" ] && [ -d "$pinned/harness" ] ||
+      { rm -rf "$pinned"; die "固定した版（${commit}）に bin/harness / harness/ が無い（agent-harness のコミットではない？）"; }
+    # 固定した版の CLI に配らせるので、その版が install を知っている必要がある。ローカルの clone を source に
+    # して未コミットの変更で update すると、1 つ前のコミットが固定されることがある（source_commit_of）。
+    if ! grep -q '^cmd_install()' "$pinned/bin/harness"; then
+      local pv; pv="$(tr -d '\r\n' <"$pinned/VERSION" 2>/dev/null || echo '?')"; rm -rf "$pinned"
+      die "固定した版（${pv}、source_commit=${commit}）は install に対応していない（1.0.0 より前）。直し方: harness update で版を上げ、.harness/manifest.json の変更をコミットする"
+    fi
+    [ -n "${HARNESS_REEXEC_TMP:-}" ] && rm -f "$HARNESS_REEXEC_TMP"
+    info "install  source=$source [$source_from] commit=$commit"
+    HARNESS_PINNED_DIR="$pinned" exec bash "$pinned/bin/harness" install
+  fi
+  # ここからは固定された版の CLI（一時ディレクトリ）で動いている
+  HARNESS_PINNED_CLEANUP="$HARNESS_PINNED_DIR"
+  PAYLOAD="$HARNESS_PINNED_DIR/harness"; SELF_PATH="$HARNESS_PINNED_DIR/bin/harness"
+  HVER="$(tr -d '\r\n' <"$HARNESS_PINNED_DIR/VERSION")"
+  INSTALL_TRAP_MODE=install
+  apply_plan "$agents" install
+  INSTALL_TRAP_MODE=""
+  write_installed "$commit"
+  merge_claude_settings "$agents"
+  info "入れた版: ${HVER}（source_commit=${commit}）。manifest は変えていない"
 }
 
 cmd_status() {
@@ -822,6 +939,11 @@ cmd_status() {
   local ver src src_from ref; ver="$(manifest_get harness_version)"; ref="$(manifest_get source_ref)"
   IFS=$'\t' read -r src src_from <<<"$(effective_source)"
   echo "harness $ver  source=$src [$src_from] ref=${ref:-default}  installed=$(manifest_get installed_at)"
+  local pin here=""; pin="$(manifest_get source_commit)"
+  [ -f "$ROOT/$INSTALLED_REL" ] && here="$(tr -d '\r\n' <"$ROOT/$INSTALLED_REL")"
+  if [ -n "$pin" ] && [ "$here" != "$pin" ]; then
+    echo "  この作業ツリーの版（${here:-未インストール}）が manifest の source_commit（${pin}）と違う。harness install で揃える"
+  fi
   # source がローカルディレクトリのときだけ版を比べる。URL のときはネットワークに触らない
   # （status は読み取りだけの表示。clone は update の仕事）。
   if [ -d "$src" ] && [ -f "$src/VERSION" ]; then
@@ -1863,15 +1985,24 @@ cmd_eta() {
   rm -f "$tasks_tsv" "$timings_tsv"
 }
 
+# 配布物が無いときの案内。manifest があるなら「clone 直後で install していない」が一番ありがち。
+missing_tool_msg() { # rel
+  if [ -f "$(manifest_path)" ]; then
+    echo "${1} が無い。clone 直後なら配布物は入っていない（lockfile 方式。コミットしない）。直し方: harness install（harness が PATH に無ければ: curl -fsSL https://raw.githubusercontent.com/takumifukasawa/agent-harness/main/bin/harness | bash -s -- install）"
+  else
+    echo "未導入（${1} が無い）。harness init を使う"
+  fi
+}
+
 cmd_check() {
   ROOT="$(project_root)"
-  [ -f "$ROOT/.harness/scripts/check.sh" ] || die "未導入（.harness/scripts/check.sh が無い）"
+  [ -f "$ROOT/.harness/scripts/check.sh" ] || die "$(missing_tool_msg .harness/scripts/check.sh)"
   exec bash "$ROOT/.harness/scripts/check.sh" "$@"
 }
 
 cmd_gc() {
   ROOT="$(project_root)"
-  [ -f "$ROOT/.harness/scripts/gc.sh" ] || die "gc.sh が無い（harness update で入る）"
+  [ -f "$ROOT/.harness/scripts/gc.sh" ] || die "$(missing_tool_msg .harness/scripts/gc.sh)"
   exec bash "$ROOT/.harness/scripts/gc.sh" "$@"
 }
 
@@ -1879,9 +2010,13 @@ cmd_doctor() {
   ROOT="$(project_root)"
   if [ ! -f "$ROOT/.harness/scripts/doctor.sh" ]; then
     # 未導入は「診断自体ができない環境不備」= exit 2（doctor.sh 側の判定と合わせる）
-    echo "harness doctor: 導入コピーが無い（$ROOT/.harness/scripts/doctor.sh が見つからない）" >&2
-    echo "  直し方: このディレクトリで harness init を実行する" >&2
-    echo "          例: bash <agent-harness を clone した場所>/bin/harness init --source <同じ場所>" >&2
+    if [ -f "$(manifest_path)" ]; then
+      echo "harness doctor: $(missing_tool_msg .harness/scripts/doctor.sh)" >&2
+    else
+      echo "harness doctor: 導入コピーが無い（$ROOT/.harness/scripts/doctor.sh が見つからない）" >&2
+      echo "  直し方: このディレクトリで harness init を実行する" >&2
+      echo "          例: bash <agent-harness を clone した場所>/bin/harness init --source <同じ場所>" >&2
+    fi
     exit 2
   fi
   exec bash "$ROOT/.harness/scripts/doctor.sh" "$@"
@@ -1927,7 +2062,7 @@ usage() { # 冒頭のコメントをそのまま usage にする。標準入力�
   if [ -n "$src" ] && [ -f "$src" ]; then
     sed -n '2,19p' "$src" | sed 's/^# \{0,1\}//'
   else
-    echo "harness <init|update|status|diff|upstream|check|gc|doctor|task|eta|self-install|version>"
+    echo "harness <init|update|install|status|diff|upstream|check|gc|doctor|task|eta|self-install|version>"
     echo "  標準入力から実行中のため詳しい usage を読み出せない。clone した bin/harness か、導入済みプロジェクトの .harness/bin/harness から実行する。"
   fi
 }
@@ -1935,7 +2070,8 @@ usage() { # 冒頭のコメントをそのまま usage にする。標準入力�
 # PATH 上の harness から呼ばれ、プロジェクトに同梱コピーがあれば、そちらへ委譲する（版をプロジェクトに固定）
 maybe_delegate() {
   local cmd="${1:-}"
-  case "$cmd" in init|self-install|version|--version|-v|""|help|-h|--help) return 0;; esac
+  # install は同梱コピーへ委譲しない（固定された版の CLI を source から取り出して使う。cmd_install）
+  case "$cmd" in init|install|self-install|version|--version|-v|""|help|-h|--help) return 0;; esac
   # update の再実行（reexec_if_vendored）で来たときは、同梱コピーと同じ内容であることを
   # 再実行の前に確かめてある。同じ判定をもう一度やらない（same_script は git を 2 回起動する。
   # update 1 回で 3 回呼ばれていた分が、この行と VENDORED_SAME で 1 回になる。実測 2026-09-21）。
@@ -1969,6 +2105,7 @@ if [ "$HARNESS_SOURCED" = 0 ]; then
     init)     shift; cmd_init "$@";;
     self-install) shift; cmd_self_install "$@";;
     update)   shift; cmd_update "$@";;
+    install)  shift; cmd_install "$@";;
     status)   shift; cmd_status "$@";;
     diff)     shift; cmd_diff "$@";;
     upstream) shift; cmd_upstream "$@";;

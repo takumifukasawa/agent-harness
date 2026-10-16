@@ -1,6 +1,6 @@
 ---
 name: harness
-description: agent-harness の CLI をセッション内から実行し、結果を読んで次の行動を案内する。"/harness status", "/harness update", "/harness diff", "/harness check", "/harness upstream <path>", "/harness doctor" のように引数でサブコマンドを受ける。発火例 - "ハーネスの状態を見て", "ハーネスを更新して", "harness status", "検査を回して", "ハーネスの差分を見て", "このスキルの変更を上流に戻して", "ハーネスの環境を診断して"。引数が無ければ status を実行する。
+description: agent-harness の CLI をセッション内から実行し、結果を読んで次の行動を案内する。"/harness status", "/harness update", "/harness install", "/harness diff", "/harness check", "/harness upstream <path>", "/harness doctor" のように引数でサブコマンドを受ける。発火例 - "ハーネスの状態を見て", "ハーネスを更新して", "harness status", "検査を回して", "ハーネスの差分を見て", "このスキルの変更を上流に戻して", "ハーネスの環境を診断して"。引数が無ければ status を実行する。
 ---
 
 # harness — CLI をセッション内から使う
@@ -17,7 +17,8 @@ bash .harness/bin/harness <subcommand> [args]
 | 引数 | やること | 結果の読み方 |
 |---|---|---|
 | `status`（既定） | 導入版、各ファイルの unchanged / MODIFIED / missing | MODIFIED な managed があれば「diff で見て、汎用なら upstream、プロジェクト固有なら AGENTS.md のプロジェクト領域へ移す」と案内。`source-changed` は `update` で再生成される |
-| `update [--ref <tag>]` | 新版を取り込む。CHANGELOG を表示 | 表示された「プロジェクト側で必要な作業」を必ずユーザーに伝える。`CONFLICT` が出たら `.harness/conflicts/<path>.new` と現ファイルの差分を取って提示し、採否を聞く |
+| `update [--ref <tag>]` | 新版を取り込み、manifest の `source_commit`（版の固定）を書き換える。CHANGELOG を表示 | 表示された「プロジェクト側で必要な作業」を必ずユーザーに伝える。コミットするのは `.harness/manifest.json`（と `.gitignore` の変化）だけと伝える。`CONFLICT` が出たら `.harness/conflicts/<path>.new` と現ファイルの差分を取って提示し、採否を聞く。「git に追跡されている」案内が出たら、その `git rm --cached` を実行してよいか聞く |
+| `install` | manifest に固定された版（`source_commit`）をそのまま入れる。manifest は変えない | clone 直後・他の人が版を上げた manifest を pull した後に使う（配布物はコミットしない lockfile 方式）。「固定した版が source に無い」で止まったら、`update` で版を上げ直して manifest をコミットするよう案内する |
 | `diff` | 手で直した managed ファイルの差分 | 上流に戻す候補。秘密情報・プロジェクト名が混ざっていないか見る |
 | `upstream <path>...` | agent-harness リポジトリへ書き戻す（source がローカル clone のとき） | 成功したら「agent-harness 側で commit → CHANGELOG → VERSION」が次の作業だと伝える |
 | `check [--fast]` | `.harness/checks.sh` の検査を回す | 失敗した検査の出力をそのまま報告。修復手順が書かれていればそれに従う |

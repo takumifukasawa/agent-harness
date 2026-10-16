@@ -3,6 +3,26 @@
 各版に「プロジェクト側で必要な作業」を必ず書く。`harness update` はこの節を表示する。
 semver: managed ファイルの移動・マーカー形式変更は major、ルール/スキルの追加は minor、文言修正は patch。
 
+## [1.0.0] - 2026-10-16
+
+- **変更（major）: lockfile 方式。導入先には配った物をコミットさせない**（[決定 0013](docs/decisions/0013-contain-payload-leaks.md)、計画 `docs/plans/active/payload-containment.md`）。配った物に固有情報が混入すると、導入先でコミットされて配った数だけ他人の履歴に残り、こちらからは消せない（2026-10-16 に実際に起きた）。npm の `package-lock.json` と `node_modules` と同じ関係にする。
+  - コミットするのは `.harness/manifest.json`・seed（`docs/`、`.harness/checks.sh`）・`AGENTS.md`・`CLAUDE.md`・`.claude/settings.json`・`.gitignore` だけ。それ以外の配布物（CLI の同梱コピー、スクリプト、スキル、役割ファイル、`.githooks/pre-commit`、`.codex/hooks.json`）は `init` / `update` / `install` が `.gitignore` の管理ブロック（`# >>> agent-harness managed ...` 〜 `# <<< agent-harness managed`）に 1 ファイルずつ載せる。ブロックは毎回作り直すので、配らなくなったファイルの行も消える。ブロックの外は触らない。
+  - manifest に `source_commit`（配った source のコミット）を記録する。`update` が書き換える（版を上げる）。
+  - 新しいサブコマンド **`harness install`**: manifest の `source_commit` の版を source から取り出し（`git archive`）、その版の CLI で配る。manifest は変えない（`npm ci` に当たる）。source が先に進んでいても固定した版が入る。固定したコミットが source に無い（履歴を作り直したなど）ときは、何も書かずに止まって `update` を案内する。黙って最新を入れない。
+  - この作業ツリーに入っている版を `.harness/installed`（gitignore）に記録し、manifest の `source_commit` とずれていれば `status`・SessionStart・`doctor` が `harness install` を案内する（他の人が版を上げた manifest を pull した後など）。
+  - clone 直後（配布物が無い）は、`check` / `gc` / `doctor` が「`harness install` を回す」と案内する。コミットされる `.claude/settings.json` の SessionStart フックも、スクリプトが無ければ黙らずに同じ案内を出す（`harness` が PATH に無いときの curl での取り方も出す）。
+  - `doctor` に B13 を足した: manifest に `source_commit` が無い（1.0.0 より前の形式）/ `.gitignore` の管理ブロックが無い / この作業ツリーの版が固定とずれている / 配布物がまだ git に追跡されている、をそれぞれ WARN で報告する。managed ファイルの欠落（B4）の直し方は `harness install` にした。
+  - `AGENTS.md` の管理ブロックの「開始時」に、スキルや `.harness/scripts/` が無ければ `harness install` を回す、を足した（Codex には SessionStart の案内が無いため）。
+  - `.gitignore` の管理ブロックは、行末の CR を外して探す（Windows の `core.autocrlf` で CRLF になってもブロックがダブらない）。
+  - 回帰は `tests/lockfile.sh`（10 シナリオ: コミットされる物、clone 直後の install、source が進んでも固定の版、update で版を上げる、pull 後の版ずれ、固定コミットが無い、古い manifest、配布物をコミット済みの導入先の移行、clone 直後の案内、CRLF の `.gitignore`）。`tests/githooks.sh` は、`.githooks/pre-commit` が無視されている形（lockfile 方式）も受け付けるようにした。
+- **プロジェクト側で必要な作業**（1 回だけ。source が URL の PC では、0.11.2 の作業＝ `rm -rf ~/.cache/agent-harness` を先に済ませておく）:
+  1. `bash .harness/bin/harness update` を回す。manifest に `source_commit` が入り、`.gitignore` に管理ブロックが足される。
+  2. 出力に「ハーネスが配った物のうち N 件がまだ git に追跡されている」と出るので、そこに表示される `git rm -q --cached -- ...` を実行する（作業ツリーのファイルは消えない。index から外すだけ）。
+  3. `.harness/manifest.json`・`.gitignore`・`AGENTS.md`（管理ブロックの版の行）と、2 で外した分をまとめてコミットする。`bash .harness/bin/harness doctor` で B13 が OK になることを確かめる。
+  4. 他の PC・他の人は、pull した後に一度 `harness install` を回す（pull で配布物が作業ツリーから消えるため。`harness` が PATH に無ければ `bash <(curl -fsSL https://raw.githubusercontent.com/takumifukasawa/agent-harness/main/bin/harness) install`）。`self-install` で PATH に置いた `harness` が 1.0.0 より前だと `install` を知らない（`unknown command`）ので、その PC では curl の方を使うか、install 後に `bash .harness/bin/harness self-install` で置き直す。
+  - 以後、版を上げるときにコミットに出るのは `.harness/manifest.json` だけになる。Codex を使う PC では、`.codex/hooks.json` の中身は変えていないので hook の信頼はそのまま効く想定（効かなくなっていれば `doctor` が WARN を出すので、`codex` の `/hooks` で信頼し直す）。
+  - 過去にコミットされた配布物は、そのリポジトリの履歴には残る（この版で消えるのは今後の分）。
+
 ## [0.11.2] - 2026-10-16
 
 - 修正: **source が URL のとき、source のリポジトリの履歴が作り直されると、`init` / `update` が古い版を黙って配っていた。** URL の source は手元のキャッシュ（`~/.cache/agent-harness/`）に clone して使うが、更新を `git pull --ff-only` で取り込み、失敗を `|| true` で握りつぶしていた。履歴を作り直した source とはつながらないので pull が必ず失敗し、キャッシュに残った古いコミットの中身がそのまま配られた（2026-10-16、このリポジトリを 1 コミットに作り直した後に、作り直す前の版が入ることを確認した）。キャッシュはハーネスの持ち物なので、fetch した `origin/<ブランチ>` にローカルのブランチを強制的に合わせる形にした（タグやコミットを `--ref` に指定したときはその版）。合わせられないときは黙らずに止まり、キャッシュを消す直し方を出す。回帰は `tests/source-cache.sh`（fast-forward できる更新・作り直された履歴・`--ref` のブランチとタグ・存在しない ref の 5 シナリオ。旧実装では作り直しの 2 件が落ちることを確認してから直した）。

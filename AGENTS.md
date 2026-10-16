@@ -1,4 +1,4 @@
-<!-- harness:begin v=0.11.2 -->
+<!-- harness:begin v=1.0.0 -->
 # エージェント運用の共通ルール（agent-harness 管理領域）
 
 このブロックは agent-harness が管理する。直したい場合は直してよいが、`harness diff` で差分を確認し上流へ戻すこと（詳細: `.agents/skills/harness-maintain/SKILL.md`）。
@@ -27,7 +27,7 @@
 
 ## セッションの入口と出口
 
-- 開始時: `.agents/skills/session-catchup/SKILL.md` の手順で現在地を掴む。全 doc を頭から読まない。
+- 開始時: `.agents/skills/session-catchup/SKILL.md` の手順で現在地を掴む。全 doc を頭から読まない。スキルや `.harness/scripts/` が無ければ配布物が未インストール（clone 直後など。コミットしない）なので、`harness install` を回す。
 - 終了時・`/clear` 前・長い区切り: `.agents/skills/session-handoff/SKILL.md` の手順で `docs/handoff.md` を更新し、`harness status` の結果を報告する。
 
 ## 検証と報告
@@ -71,6 +71,7 @@ AI エージェントにプロジェクトを進めさせるワークフロー�
 - `.agents/` `.claude/` `.harness/` `.githooks/` `AGENTS.md` の管理ブロック `CLAUDE.md` `docs/` は、このリポジトリ自身に `harness init` で入れた**導入コピー**（dogfood）。
 - **スキルや役割文を直すときは `harness/` 側を直し、`bash bin/harness update` で同期する。** 導入コピーを直接編集しない（検査 "installed copies in sync" が落ちる）。
 - `docs/` は seed なのでこのリポジトリの資産。自由に書く。
+- **1.0.0（lockfile 方式）から、導入コピーはコミットしない**（`.gitignore` の管理ブロック。決定 0013）。このリポジトリを clone した直後は導入コピーが無いので、`bash bin/harness update` で入れる。このリポジトリでは `install` ではなく `update` を使う（source が自分自身の作業ツリーなので、manifest の `source_commit` は 1 つ前のコミットを指しがち）。
 
 ## コマンド
 

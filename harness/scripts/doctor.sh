@@ -279,7 +279,7 @@ if [ "$manifest_ok" = 1 ]; then
         "bash .harness/bin/harness update で雛形から復元する（seed は導入後にプロジェクトが編集する前提なので、復元後の内容は必要に応じて書き直す）"
     else
       report FAIL "$f_own ファイルが無い: $f_path" \
-        "bash .harness/bin/harness update で復元する（直接編集していた場合は上書きされる点に注意）。復元できなければ bash .harness/bin/harness init をやり直す"
+        "harness install で入れる（clone 直後なら配布物はコミットしないので無いのが正常。lockfile 方式。harness が無ければ: curl -fsSL https://raw.githubusercontent.com/takumifukasawa/agent-harness/main/bin/harness | bash -s -- install）。manifest に source_commit が無い古い形式なら bash .harness/bin/harness update で復元する（直接編集していた場合は上書きされる点に注意）"
     fi
   done <<<"$mf_entries"
   [ "$mf_missing" -eq 0 ] && report OK "manifest 記載ファイル（${mf_entry_lines} 件）はすべて存在する"
@@ -583,6 +583,47 @@ if [ -z "$gi_missing" ]; then
 else
   report WARN ".gitignore に無いエントリ: $gi_missing" \
     ".gitignore に「${gi_missing}」を追記する"
+fi
+
+# ---------------------------------------------------------------- B13. lockfile 方式（決定 0013）
+# 配布物（managed / generated。CLAUDE.md を除く）はコミットせず .gitignore の管理ブロックに載せる。
+# (1) 管理ブロックがあるか (2) 配布物がまだ git に追跡されていないか（1.0.0 より前に導入したプロジェクト）
+# (3) この作業ツリーの版（.harness/installed）が manifest の source_commit と一致するか、を見る。
+GI_BEGIN_LINE="# >>> agent-harness managed (do not commit; restore with: harness install)"
+mf_commit="$(manifest_get source_commit)"
+if [ -z "$mf_commit" ]; then
+  report WARN "manifest に source_commit が無い（1.0.0 より前の形式。版がコミットで固定されていない）" \
+    "bash .harness/bin/harness update で版を固定し（lockfile 方式に移る）、出てくる案内に従って .harness/manifest.json と .gitignore をコミットする"
+else
+  if [ -f "$GITIGNORE" ] && tr -d '\r' <"$GITIGNORE" | grep -qxF "$GI_BEGIN_LINE"; then
+    report OK ".gitignore に配布物の管理ブロックがある（lockfile 方式）"
+  else
+    report WARN ".gitignore に配布物の管理ブロックが無い（配布物がコミットされうる）" \
+      "bash .harness/bin/harness install（または update）で足す"
+  fi
+  inst_here="$(tr -d '\r\n' <"$ROOT/.harness/installed" 2>/dev/null || true)"
+  if [ "$inst_here" = "$mf_commit" ]; then
+    report OK "この作業ツリーの版は manifest の固定（source_commit=${mf_commit}）と一致する"
+  else
+    report WARN "この作業ツリーの版（${inst_here:-未インストール}）が manifest の固定（source_commit=${mf_commit}）と違う（他の人が版を上げた manifest を pull した後など）" \
+      "harness install で揃える"
+  fi
+  if [ "$manifest_ok" = 1 ] && git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    # 配布物の一覧を作り、git ls-files 1 回で追跡中のものを拾う（1 件ずつ git を起動しない）
+    managed_paths="$(printf '%s\n' "$mf_entries" | awk -F'\t' '($3=="managed"||$3=="generated") && $1!="CLAUDE.md"{print $1}')"
+    tracked_managed=""
+    if [ -n "$managed_paths" ]; then
+      tracked_managed="$(printf '%s\n' "$managed_paths" | tr '\n' '\0' | (cd "$ROOT" && xargs -0 git ls-files --) | tr '\n' ' ')" ||
+        report WARN "配布物が git に追跡されているかを確認できなかった（git ls-files が失敗した。上の出力を見る）"
+    fi
+    tracked_managed="${tracked_managed% }"
+    if [ -z "$tracked_managed" ]; then
+      report OK "配布物は git に追跡されていない（lockfile 方式）"
+    else
+      report WARN "配布物がまだ git に追跡されている（$(printf '%s\n' $tracked_managed | wc -l | tr -d ' ') 件。.gitignore は追跡中のファイルには効かない）" \
+        "git rm -q --cached -- ${tracked_managed} && git commit -m 'chore: harness の配布物を追跡から外す（lockfile 方式）'（作業ツリーのファイルは消えない）"
+    fi
+  fi
 fi
 
 # ---------------------------------------------------------------- B12. 配布先の case 衝突（tech-debt #13 / #14）

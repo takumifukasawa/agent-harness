@@ -695,7 +695,9 @@ scenario "B6: pre-commit に実行ビットが無ければ FAIL（決定 0007。
 # 重大度は FAIL（決定 0007。受け入れ条件 3(a)）。
 setup_hook_index_mode_644() {
   setup_init || return 1
-  ( cd "$PROJ" && git add .githooks/pre-commit && git update-index --chmod=-x .githooks/pre-commit ) >/dev/null 2>&1 ||
+  # 1.0.0（lockfile 方式）から .githooks/pre-commit は .gitignore に入るので、追跡している形（1.0.0 より前の
+  # 導入先、または利用者が -f で足した）を -f で作る。index の mode を見る診断はその形のためにある。
+  ( cd "$PROJ" && git add -f .githooks/pre-commit && git update-index --chmod=-x .githooks/pre-commit ) >/dev/null 2>&1 ||
     { errors+=("setup: index の mode を 100644 にできなかった"); return 1; }
 }
 expect_hook_index_mode_644() {
@@ -709,7 +711,10 @@ expect_hook_index_mode_644() {
   expect_code 0
   expect_out '^OK .*git hooks'
   expect_not_out '^FAIL .*pre-commit'
-  expect_not_out '^WARN .*pre-commit'
+  # B6（git hooks）の WARN が無いこと。追跡しているフックには B13 が「配布物がまだ git に追跡されている」
+  # WARN を出すが、それは lockfile 方式への移行の案内で、この B6 の検査対象ではない。
+  expect_not_out '^WARN .*git hooks'
+  expect_out '^WARN .*配布物がまだ git に追跡されている'
 }
 scenario "B6: pre-commit の index mode が 100644 なら FAIL（決定 0007。clone 先で実行ビットが付かない）" \
   setup_hook_index_mode_644 expect_hook_index_mode_644
@@ -762,7 +767,8 @@ setup_managed_case_collision() {
 echo "unrelated script, not the harness hook"
 HOOK
   chmod +x "$PROJ/.githooks/Pre-commit"
-  ( cd "$PROJ" && git add .githooks/Pre-commit ) >/dev/null 2>&1 ||
+  # case を区別しない FS では .gitignore の /.githooks/pre-commit が Pre-commit にも当たるので -f で足す
+  ( cd "$PROJ" && git add -f .githooks/Pre-commit ) >/dev/null 2>&1 ||
     { errors+=("setup: .githooks/Pre-commit の git add に失敗した"); return 1; }
 }
 expect_managed_case_collision() {
@@ -799,7 +805,8 @@ setup_generated_case_collision() {
   rm -f "$PROJ/.claude/agents/implementer.md"
   mkdir -p "$PROJ/.claude/agents"
   echo "unrelated content, not the harness role file" >"$PROJ/.claude/agents/Implementer.md"
-  ( cd "$PROJ" && git add .claude/agents/Implementer.md ) >/dev/null 2>&1 ||
+  # case を区別しない FS では .gitignore の /.claude/agents/implementer.md が Implementer.md にも当たるので -f で足す
+  ( cd "$PROJ" && git add -f .claude/agents/Implementer.md ) >/dev/null 2>&1 ||
     { errors+=("setup: .claude/agents/Implementer.md の git add に失敗した"); return 1; }
 }
 expect_generated_case_collision() {

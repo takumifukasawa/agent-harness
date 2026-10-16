@@ -28,11 +28,18 @@ if [ ! -f "$HOOK" ]; then
   exit 1
 fi
 
+# lockfile 方式（1.0.0。決定 0013）では配布物の .githooks/pre-commit はコミットせず .gitignore に入る。
+# そのときは index の mode は無いので、「無視されていること」と作業ツリーの実行ビットを見る。
+# 追跡されているなら（1.0.0 より前の形）、従来どおり index の mode を見る。
 mode="$(git ls-files -s -- "$HOOK" 2>/dev/null | awk '{print $1; exit}')"
 if [ -z "$mode" ]; then
-  echo "tests/githooks.sh: ${HOOK} が git に追跡されていない。"
-  echo "  直し方: git add --chmod=+x ${HOOK}"
-  fail=1
+  if git check-ignore -q "$HOOK"; then
+    mode="untracked (gitignored, lockfile)"
+  else
+    echo "tests/githooks.sh: ${HOOK} が git に追跡も無視もされていない（lockfile 方式なら .gitignore の管理ブロックに載るはず）。"
+    echo "  直し方: bash bin/harness update で .gitignore の管理ブロックを作り直す"
+    fail=1
+  fi
 elif [ "$mode" != "100755" ]; then
   echo "tests/githooks.sh: git index 上の ${HOOK} の mode が ${mode}（実行ビット無し）。"
   echo "  この状態で clone すると実行ビットの無いフックが配られ、git がフックを黙って無視する。"

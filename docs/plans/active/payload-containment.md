@@ -1,7 +1,7 @@
 # payload-containment — ペイロードの混入を検査で止め、導入先にはコミットさせない
 
 - 開始: 2026-10-16
-- 状態: 計画中
+- 状態: 進行中（lockfile 方式は 1.0.0 で実装済み。形で分かるものの検査 T01〜T04 と既存の導入先の移行 T08 が残り）
 - 関連: [決定 0013](../../decisions/0013-contain-payload-leaks.md)
 
 ## 目的（何ができれば完了か）
@@ -39,10 +39,10 @@ lockfile 方式:
 | T02 | このリポジトリの `checks.sh` に fast の検査として登録する（pre-commit で回る） | todo | T01 に依存。**ペイロードだけでなく全ファイル**を見る。コミットメッセージと `user.email` は未確定事項 4 |
 | T03 | `init` / `update` の書き込み前に同じ検査をかける | todo | T01 に依存。`install` は T07 で足すときに同じ検査を通す |
 | T04 | `upstream` に同じ検査をかける | todo | T01 に依存 |
-| T05 | 調査: Codex が `AGENTS.md` 以外のファイルを読み込めるか。Codex の PreToolUse hook のスクリプトが無いとき、操作を止めるのか素通りさせるのか（確認日と確認元を残す） | todo | 未確定事項 2 と、`.codex/hooks.json` の扱いの材料。T01〜T04 と並列可 |
-| T06 | lockfile 方式の設計: gitignore する範囲、manifest の `source_commit`、手元に入れた版の記録、`install` の動き、既存の導入先の移行、clone 直後と版ずれの案内（`doctor` / SessionStart） | todo | T05 の結果で `AGENTS.md` と `.codex/hooks.json` の扱いを決める。`CLAUDE.md` と `.claude/settings.json` はコミットのまま |
-| T07 | lockfile 方式の実装（`install` の新設、`source_commit` の記録、gitignore、案内）と 1.0.0（`VERSION` / `CHANGELOG.md` に「プロジェクト側で必要な作業」） | todo | T06 に依存 |
-| T08 | このリポジトリ（dogfood）と既存の導入先を移行する | todo | T07 に依存。導入先ではユーザーの許可を取る |
+| T05 | 調査: Codex が `AGENTS.md` 以外のファイルを読み込めるか。Codex の PreToolUse hook のスクリプトが無いとき、操作を止めるのか素通りさせるのか（確認日と確認元を残す） | **skip** | 未確定事項 2 と、`.codex/hooks.json` の扱いの材料。T01〜T04 と並列可 |
+| T06 | lockfile 方式の設計: gitignore する範囲、manifest の `source_commit`、手元に入れた版の記録、`install` の動き、既存の導入先の移行、clone 直後と版ずれの案内（`doctor` / SessionStart） | **done** | T05 の結果で `AGENTS.md` と `.codex/hooks.json` の扱いを決める。`CLAUDE.md` と `.claude/settings.json` はコミットのまま |
+| T07 | lockfile 方式の実装（`install` の新設、`source_commit` の記録、gitignore、案内）と 1.0.0（`VERSION` / `CHANGELOG.md` に「プロジェクト側で必要な作業」） | **done** | T06 に依存 |
+| T08 | このリポジトリ（dogfood）と既存の導入先を移行する | 進行中（このリポジトリは移行済み。既存の導入先は未） | T07 に依存。導入先ではユーザーの許可を取る |
 
 ## 決定ログ（日付・決めたこと・理由・落選案）
 
@@ -51,8 +51,14 @@ lockfile 方式:
 - **2026-10-16 / 禁止語リストは作らない。** リスト自体が漏らしたくない名前の一覧になる（ユーザーの判断）。機械で止めるのは形で分かるものだけにし、固有名は lockfile 方式と版を上げる前の通読で受ける。
 - **2026-10-16 / clone 直後は `update` ではなく新設の `install` を回す。** 2 回目の検算で、`update` は `source_ref` が空だと既定ブランチの最新を入れる（`bin/harness` の `resolve_source`）ので版を固定できないと分かった。manifest に `source_commit` を記録し、`install` がそれを入れる。版を上げるのは今までどおり `update`。
 
+- **2026-10-16 / T05 は調べずに設計で避けた。** `AGENTS.md` の管理ブロックはコミットのまま（`harness/AGENTS.core.md` の 60 行。混入し得る面積が小さく、通読で守れる）。`.codex/hooks.json` は gitignore する（コミットしたままスクリプトだけ無いと、Codex がフックの失敗をどう扱うか分からない。clone 直後は Codex の deny が効かないが、Claude の deny は `.claude/settings.json` に書いてありコミットされるので残る。`doctor` が報告する）。Codex の挙動を確かめる必要が出たら T05 を戻す。
+- **2026-10-16 / `install` は固定コミットを `git archive` で一時ディレクトリへ取り出し、その版の CLI に exec して配る。** 配る判断（plan）を固定された版にさせるためと、同梱コピーを実行しながら上書きしないため。`install` は同梱コピーへ委譲しない（`maybe_delegate`）。固定された版が `install` を知らない（1.0.0 より前）なら止まって `update` を案内する。
+- **2026-10-16 / `.gitignore` は 1 ファイルずつ管理ブロックに載せる。** ディレクトリ単位（`.agents/skills/` など）にすると、プロジェクトが自分で置いたスキルまで無視される。ブロックは毎回作り直す。
+- **2026-10-16 / 既にコミットされた配布物は外し方を案内するだけ。** `update` の出力と `doctor` の B13 に `git rm --cached` のコマンドを出す。勝手に外さない（pull した他の clone では作業ツリーから消えるので、その人は `install` が要る。CHANGELOG に書いた）。
+
 ## 進捗ログ（セッションごとに 1〜3 行）
 
+- **2026-10-16（1.0.0）**: lockfile 方式を実装した（`harness install`、manifest の `source_commit`、`.gitignore` の管理ブロック、`.harness/installed` と版ずれの案内、clone 直後の案内、doctor B13）。`tests/lockfile.sh` 9 シナリオ、`harness check` 26 件 pass。このリポジトリも移行した（配布物 27 件を index から外した）。実装中に `git ls-files --pathspec-from-file`（存在しないオプション）の失敗を `2>/dev/null || true` で握りつぶしていたのをテストが拾った。
 - **2026-10-16**: 公開前の精査でペイロードへの混入が見つかったことを受けて計画を作成。リポジトリは履歴を 1 コミットに作り直して公開し直した。同日、検算 2 回とユーザーの判断で、禁止語リストの廃止と `install` / `source_commit` の追加を反映した。
 
 ## 未確定事項（人間の判断待ち）

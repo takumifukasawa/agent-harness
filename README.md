@@ -23,6 +23,17 @@ curl -fsSL https://raw.githubusercontent.com/takumifukasawa/agent-harness/main/b
 
 入るもの: `AGENTS.md` の管理ブロック、`CLAUDE.md`（`@AGENTS.md`）、`.agents/skills/`（Codex）と `.claude/skills/`（Claude）、`docs/` の雛形、`.harness/`（manifest、検査ランナー、CLI 自身のコピー）、`.githooks/pre-commit`。既存の `AGENTS.md` / `CLAUDE.md` は壊さず先頭に足すだけ。
 
+**コミットするもの / しないもの（lockfile 方式。1.0.0。[決定 0013](docs/decisions/0013-contain-payload-leaks.md)）**: npm の `package-lock.json` と `node_modules` と同じ関係にしている。
+
+| | 扱い |
+|---|---|
+| `.harness/manifest.json`（版と、入れた source のコミット `source_commit`） | コミットする（lockfile） |
+| `docs/` の雛形、`.harness/checks.sh`（seed。プロジェクトの持ち物） | コミットする |
+| `AGENTS.md`、`CLAUDE.md`、`.claude/settings.json`、`.gitignore` | コミットする |
+| それ以外の配布物（CLI、スクリプト、スキル、役割ファイル、`.githooks/`、`.codex/hooks.json`） | **コミットしない**。`init` が `.gitignore` の管理ブロックに載せる。clone した先では `harness install` で入れる |
+
+配った物に何か混入していても、導入先の履歴に残るのは manifest のコミットハッシュだけで、次の `install` / `update` で消える。
+
 ### 入れた後にやること（init は足場を置くだけ）
 
 `init` 直後の `check` は seed の 2 件しか回らない。仕組みが働き始めるのはここから。
@@ -36,7 +47,16 @@ curl -fsSL https://raw.githubusercontent.com/takumifukasawa/agent-harness/main/b
 
 ### 以後（どの PC でも）
 
-CLI はプロジェクトに同梱されるので、clone した PC で追加インストールは不要。呼び方は 3 つ。
+**clone した直後は配布物が無い**（コミットしないため）ので、一度だけ `harness install` を回す（`npm ci` に当たる）。manifest に固定された版がそのまま入り、manifest は変わらない。他の人が版を上げた manifest を pull した後も同じ（SessionStart と `doctor` がずれを知らせる）。
+
+```bash
+harness install       # PATH に置いた harness があれば
+curl -fsSL https://raw.githubusercontent.com/takumifukasawa/agent-harness/main/bin/harness | bash -s -- install   # 無ければ
+```
+
+版を上げるのは `harness update`（`npm update` に当たる）。manifest の `source_commit` が書き換わるので、それをコミットする。
+
+install した後は CLI がプロジェクトに入っているので、呼び方は 3 つ。
 
 **エージェントのセッション内から（推奨）** — Claude Code は `/harness ...`、Codex は `$harness ...`。CLI を実行し、結果を読んで次の行動まで案内する。
 
@@ -59,7 +79,8 @@ harness status
 | サブコマンド | やること |
 |---|---|
 | `status` | 導入版、手で直したファイル（MODIFIED）の一覧 |
-| `update [--ref <tag>]` | 新版を取り込む。CHANGELOG を表示し、手変更は保持して `.harness/conflicts/` に新版を置く |
+| `update [--ref <tag>]` | 新版を取り込み、manifest の `source_commit` を書き換える（版を上げる）。CHANGELOG を表示し、手変更は保持して `.harness/conflicts/` に新版を置く |
+| `install` | manifest に固定された版をそのまま入れる。manifest は変えない（clone 直後、他の人が上げた版を pull した後） |
 | `diff` | 手で直した管理ファイルの差分（上流に戻す候補） |
 | `upstream <path>...` | このリポジトリへ書き戻す（source がローカル clone のとき） |
 | `check [--fast]` | `.harness/checks.sh` に登録した検査を回す（`--fast` は pre-commit 用） |
