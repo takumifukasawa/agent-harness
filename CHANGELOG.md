@@ -3,6 +3,11 @@
 各版に「プロジェクト側で必要な作業」を必ず書く。`harness update` はこの節を表示する。
 semver: managed ファイルの移動・マーカー形式変更は major、ルール/スキルの追加は minor、文言修正は patch。
 
+## [1.1.0] - 2026-10-16
+
+- 追加: **`git push` の前に必ず人の確認を挟む。** Claude アダプタの settings 断片に `permissions.ask: ["Bash(git push *)"]` を足し、`init` / `update` / `install` が `.claude/settings.json` にマージする（これまで deny だけを扱っていたマージ処理を ask にも広げた。プロジェクトが書いた ask の項目は残す）。commit 時のセキュリティレビューの結果を見る前に push してしまうのを防ぐ（2026-10-16、commit と push を 1 つのコマンドで続けて実行し、レビューの結果が push の後に届いた）。Claude Code は `&&` などでつないだコマンドも 1 つずつ照合するので、`git commit ... && git push` でも push の手前で止まる。auto モードでも確認が出る（確認日と限界は `harness/adapters/claude/README.md`）。`tests/lockfile.sh` の L1 で、init 後の `.claude/settings.json` に入ることを確かめる。
+- **プロジェクト側で必要な作業**: `bash .harness/bin/harness update` で `.claude/settings.json` に ask が足されるので、その変更と `.harness/manifest.json` をコミットする。以後、Claude Code が push するときは毎回確認が出る。`node` が無い環境では自動マージされないので、`.harness/adapters/claude.settings.fragment.json` の `permissions.ask` を手で反映する。Codex には同じ仕組みが無い（Codex の deny hook は push --force などの破壊的な操作だけを止める）。
+
 ## [1.0.0] - 2026-10-16
 
 - **変更（major）: lockfile 方式。導入先には配った物をコミットさせない**（[決定 0013](docs/decisions/0013-contain-payload-leaks.md)、計画 `docs/plans/active/payload-containment.md`）。配った物に固有情報が混入すると、導入先でコミットされて配った数だけ他人の履歴に残り、こちらからは消せない（2026-10-16 に実際に起きた）。npm の `package-lock.json` と `node_modules` と同じ関係にする。

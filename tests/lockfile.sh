@@ -73,6 +73,11 @@ L1() {
   grep -q "\"source_commit\": \"$V1\"" "$BASE/.harness/manifest.json" || errors+=("manifest に source_commit=$V1 が無い")
   [ "$(cat "$BASE/.harness/installed" 2>/dev/null)" = "$V1" ] || errors+=(".harness/installed が $V1 ではない")
   git -C "$BASE" check-ignore -q .harness/installed || errors+=(".harness/installed が ignore されていない")
+  # push の前に人が確認する関門（commit 時のセキュリティレビューを見てから push する。1.1.0）
+  if command -v node >/dev/null 2>&1; then
+    node -e 'const s=require(process.argv[1]);process.exit((s.permissions&&s.permissions.ask||[]).includes("Bash(git push *)")?0:1)' "$BASE/.claude/settings.json" ||
+      errors+=(".claude/settings.json の permissions.ask に Bash(git push *) が無い")
+  fi
 }
 L1; ok_or_fail "L1: 配布物は .gitignore され、コミットされるのは manifest・seed・AGENTS.md・CLAUDE.md・settings だけ"
 

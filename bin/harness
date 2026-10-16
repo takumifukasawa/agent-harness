@@ -712,7 +712,8 @@ apply_plan() { # agents mode(init|update)
 }
 
 # .claude/settings.json に断片をマージする。node があれば自動、無ければ手順を案内。
-# 管理するのは「permissions.deny の断片にある項目」と「hooks のうち command に .harness/ を含む項目」だけ。
+# 管理するのは「permissions.deny / permissions.ask の断片にある項目」と「hooks のうち command に .harness/ を含む項目」だけ。
+# ask の git push は、push の前に人が確認する関門（commit 時のセキュリティレビューの結果を見てから push する）。
 # それ以外の項目（プロジェクトが書いたもの）は触らない。上書き前にバックアップ。
 merge_claude_settings() {
   local agents="$1"
@@ -737,12 +738,14 @@ if (fs.existsSync(dest)) {
   catch (e) { console.error('settings.json が JSON として読めない: ' + e.message); process.exit(3); }
 }
 const before = JSON.stringify(s);
-// permissions.deny: 断片の項目を足す（重複なし）。プロジェクトの項目は残す
-if (f.permissions && Array.isArray(f.permissions.deny)) {
-  s.permissions = s.permissions || {};
-  const cur = Array.isArray(s.permissions.deny) ? s.permissions.deny : [];
-  for (const d of f.permissions.deny) if (!cur.includes(d)) cur.push(d);
-  s.permissions.deny = cur;
+// permissions.deny / ask: 断片の項目を足す（重複なし）。プロジェクトの項目は残す
+for (const key of ['deny', 'ask']) {
+  if (f.permissions && Array.isArray(f.permissions[key])) {
+    s.permissions = s.permissions || {};
+    const cur = Array.isArray(s.permissions[key]) ? s.permissions[key] : [];
+    for (const d of f.permissions[key]) if (!cur.includes(d)) cur.push(d);
+    s.permissions[key] = cur;
+  }
 }
 // hooks: 各イベントで、command に ".harness/" を含む既存項目を外し、断片の項目を足す
 const isHarness = (entry) => Array.isArray(entry.hooks) && entry.hooks.some(h => typeof h.command === 'string' && h.command.includes('.harness/'));
@@ -764,7 +767,7 @@ EOF
       local b="$ROOT/.harness/backup/$(ts)"; mkdir -p "$b/.claude"; cp "$dest" "$b/.claude/settings.json"
     fi
     mv "$dest.harness-new" "$dest"
-    info "  merge .claude/settings.json (deny + .harness/ hooks。プロジェクトの項目は保持)"
+    info "  merge .claude/settings.json (deny + ask + .harness/ hooks。プロジェクトの項目は保持)"
   fi
 }
 

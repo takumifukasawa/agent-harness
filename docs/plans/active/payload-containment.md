@@ -39,9 +39,11 @@ lockfile 方式:
 | T02 | このリポジトリの `checks.sh` に fast の検査として登録する（pre-commit で回る） | todo | T01 に依存。**ペイロードだけでなく全ファイル**を見る。コミットメッセージと `user.email` は未確定事項 4 |
 | T03 | `init` / `update` の書き込み前に同じ検査をかける | todo | T01 に依存。`install` は T07 で足すときに同じ検査を通す |
 | T04 | `upstream` に同じ検査をかける | todo | T01 に依存 |
-| T05 | 調査: Codex が `AGENTS.md` 以外のファイルを読み込めるか。Codex の PreToolUse hook のスクリプトが無いとき、操作を止めるのか素通りさせるのか（確認日と確認元を残す） | **skip** | 未確定事項 2 と、`.codex/hooks.json` の扱いの材料。T01〜T04 と並列可 |
+| T05 | 調査: Codex が `AGENTS.md` 以外のファイルを読み込めるか。Codex の PreToolUse hook のスクリプトが無いとき、操作を止めるのか素通りさせるのか（確認日と確認元を残す） | todo（1.0.0 では設計で避けたが、T10 のために後半だけ要る） | 未確定事項 2 と、`.codex/hooks.json` の扱いの材料。T01〜T04 と並列可 |
 | T06 | lockfile 方式の設計: gitignore する範囲、manifest の `source_commit`、手元に入れた版の記録、`install` の動き、既存の導入先の移行、clone 直後と版ずれの案内（`doctor` / SessionStart） | **done** | T05 の結果で `AGENTS.md` と `.codex/hooks.json` の扱いを決める。`CLAUDE.md` と `.claude/settings.json` はコミットのまま |
 | T07 | lockfile 方式の実装（`install` の新設、`source_commit` の記録、gitignore、案内）と 1.0.0（`VERSION` / `CHANGELOG.md` に「プロジェクト側で必要な作業」） | **done** | T06 に依存 |
+| T09 | source の信用リストを PC 側に置く: `install` / `update` は、リポジトリの外（例: `~/.config/agent-harness/trusted-sources`。公式 URL は最初から信用）にある source からしか取らない。無ければ止まり、信用する手順（例: `harness trust <URL>`）を出す。あわせて `source_commit` が 40 / 64 桁の 16 進数であることを確かめる。README の curl を版のタグに向けるかも決める | todo | 2026-10-16 のコミット時のセキュリティレビューの指摘。manifest の `source` を 1 行書き換えたコミットを pull して `install` すると、そのリポジトリの CLI が動く（1.0.0 より前は同梱 CLI の差分で見えたが、1 行の差分は見落とされやすく、`install` は pull のたびに回す）。リストに入るのは取得元の URL だけで、漏れて困る名前は入らない |
+| T10 | `.codex/hooks.json` をコミットに戻し、`codex-deny.sh` が無いときは操作を止める（fail-closed）形にする | todo | 同じレビューの指摘。1.0.0 では pull から `install` までの間、Codex の deny が効かない（Claude は `.claude/settings.json` で効く）。T05（Codex がフックの失敗をどう扱うか）を先に確かめる |
 | T08 | このリポジトリ（dogfood）と既存の導入先を移行する | 進行中（このリポジトリは移行済み。既存の導入先は未） | T07 に依存。導入先ではユーザーの許可を取る |
 
 ## 決定ログ（日付・決めたこと・理由・落選案）
