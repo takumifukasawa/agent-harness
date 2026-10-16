@@ -31,6 +31,8 @@ check fast "eta scenarios"                "bash tests/eta.sh"
 # seed の case 衝突判定（tech-debt #13）。実 FS の case 区別はテストから切り替えられないので、
 # 判定関数 seed_case_collision() を単体で呼ぶ（衝突あり/衝突なし/case を区別する環境の 3 系統）。
 check fast "seed case collision (unit)"   "bash tests/seed-case.sh"
+# source のキャッシュが、履歴を作り直した source にも追従すること（0.11.2。古い版を黙って配らない）。
+check fast "source cache follows origin"  "bash tests/source-cache.sh"
 # curl <公開 URL>/bin/harness | bash -s -- init の経路（標準入力から実行すると BASH_SOURCE が無い）
 check      "stdin (curl | bash) install"  "bash tests/stdin.sh"
 check      "codex adapter (deny hook)"    "bash tests/codex.sh"

@@ -206,3 +206,11 @@
 - **起動時の `model` 指定は必ず勝つ**（実機確認）。統括が `stages.json` の `model` を起動時に渡していれば、定義ファイルの既定が何であれ効く。効いていないなら渡し忘れ
 - **`.claude/agents/` を変えたら、同じセッションでは確認できない前提で動く。** 公式 docs は「数秒で再読み込みされる」と言うが、2026-09-29 の実機では再生成後に起動した implementer が旧定義のモデルのまま、新規に置いた定義ファイルは `Agent type not found` だった。**新しいセッションで確認する**
 - `harness update` は生成物を正本に戻すので、`.claude/agents/<role>.md` を手で直しても次の `update` で消える。直すなら生成器（`bin/harness` の `render_agent`）か生成元（`docs/roles/`）
+
+## 2026-10-16: source の履歴を作り直すと、URL の source のキャッシュが古い版を黙って配る
+
+**症状**: source のリポジトリを 1 コミットに作り直して push した後、URL を source にしたプロジェクトで `harness update` すると、作り直す前の版が入る。エラーは出ない。
+
+**原因**: URL の source は `~/.cache/agent-harness/<ハッシュ>/` に clone して使い回す。更新の取り込みが `git pull --ff-only` で、失敗を `|| true` で握りつぶしていた。作り直した履歴とはつながらないので pull は必ず失敗し、キャッシュの古いコミットが残る。0.11.2 で origin に強制的に合わせる形に直した（`tests/source-cache.sh`）。
+
+**再発したらまず見る**: `git -C ~/.cache/agent-harness/<ハッシュ> log --oneline -1` が source の最新と一致しているか。違えばキャッシュを消す（`rm -rf ~/.cache/agent-harness`）。**source の履歴を書き換えたら、各 PC のキャッシュも消す**（0.11.2 より前の CLI はキャッシュを直さない）。

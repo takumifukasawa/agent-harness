@@ -3,6 +3,11 @@
 各版に「プロジェクト側で必要な作業」を必ず書く。`harness update` はこの節を表示する。
 semver: managed ファイルの移動・マーカー形式変更は major、ルール/スキルの追加は minor、文言修正は patch。
 
+## [0.11.2] - 2026-10-16
+
+- 修正: **source が URL のとき、source のリポジトリの履歴が作り直されると、`init` / `update` が古い版を黙って配っていた。** URL の source は手元のキャッシュ（`~/.cache/agent-harness/`）に clone して使うが、更新を `git pull --ff-only` で取り込み、失敗を `|| true` で握りつぶしていた。履歴を作り直した source とはつながらないので pull が必ず失敗し、キャッシュに残った古いコミットの中身がそのまま配られた（2026-10-16、このリポジトリを 1 コミットに作り直した後に、作り直す前の版が入ることを確認した）。キャッシュはハーネスの持ち物なので、fetch した `origin/<ブランチ>` にローカルのブランチを強制的に合わせる形にした（タグやコミットを `--ref` に指定したときはその版）。合わせられないときは黙らずに止まり、キャッシュを消す直し方を出す。回帰は `tests/source-cache.sh`（fast-forward できる更新・作り直された履歴・`--ref` のブランチとタグ・存在しない ref の 5 シナリオ。旧実装では作り直しの 2 件が落ちることを確認してから直した）。
+- **プロジェクト側で必要な作業**: **source が URL のプロジェクトは、`update` の前に各 PC で一度だけ `rm -rf ~/.cache/agent-harness` を実行する。** `update` は最初に手元の古い CLI で source を取りにいくので、古い CLI のままだとこの修正が効く前に古いキャッシュを使ってしまう。そのうえで `bash .harness/bin/harness update` を回し、managed のファイルが新しくなったことを確かめてコミットする。source がローカルのパス（`.harness/source.local`）のプロジェクトは、その clone を `git pull` してから `update` すればよい（キャッシュは使わない）。
+
 ## [0.11.1] - 2026-10-15
 
 - 修正（[issue #1](https://github.com/takumifukasawa/agent-harness/issues/1)）: **Codex の標準 deny hook（`.harness/scripts/codex-deny.sh`）が、書き方を変えただけの同じ操作を素通りさせていた。** 判定が `" $cmd "` への文字列の部分一致だったため、空白 2 つ・タブ（`git  push --force`）、区切りの直後（`cd x&&git push --force`、`;git reset --hard`）、`git` の直後のグローバルオプション（`git -c k=v push -f`、`git -C path reset --hard`）、force の別表記（`git push origin +main`、`git push -uf`）、`git branch -d -f` / `--force --delete` が止まらなかった。導入先プロジェクト（harness 0.11.0）の commit / push 時の自動セキュリティレビューで指摘された。
