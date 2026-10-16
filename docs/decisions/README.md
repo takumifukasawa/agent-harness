@@ -16,7 +16,7 @@
 | [0010](0010-stop-building-plumbing.md) | ②配管（`gc`）の作り込みを打ち止めにして、①ワークフローに戻る | 2026-09-23 |
 | [0011](0011-generated-agents-do-not-pin-model.md) | 生成する `.claude/agents/<role>.md` にモデルを書かない（`model: inherit` はサブエージェント既定を素通りする） | 採用 | 2026-09-29 |
 | [0012](0012-tests-for-every-change-without-asking.md) | 規模に関わらずテストを書かせ（確認は求めない）、プロダクトの検査が 0 件の `check` には NOTE を出す | 採用 | 2026-10-07 |
-| [0013](0013-contain-payload-leaks.md) | ペイロードの混入を「検査で止める」と「導入先にコミットさせない（lockfile 方式）」の二重で封じる | 採用 | 2026-10-16 |
+| [0013](0013-contain-payload-leaks.md) | ペイロードの混入を「形で分かるものの検査」と「導入先にコミットさせない（lockfile 方式、`install` で版を再現）」の二重で封じる | 採用 | 2026-10-16 |
 
 配管・ワークフローの個別の決定（配布方式、Windows 対応、再試行の方式 など 11 件）は `../../DESIGN.md` §10 の決定ログにある。新しい決定はここに 1 ファイルずつ足す。
 
