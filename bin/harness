@@ -384,6 +384,8 @@ plan() {
   case ",$agents," in *,claude,*)
     echo -e "adapters/claude/CLAUDE.md.template\tCLAUDE.md\tmanaged"
     echo -e "adapters/claude/settings.fragment.json\t.harness/adapters/claude.settings.fragment.json\tmanaged"
+    # push の前にセキュリティレビューの結果を確かめる PreToolUse hook（決定 0014）
+    echo -e "adapters/claude/push-gate.sh\t.harness/scripts/push-gate.sh\tmanaged"
     for r in implementer reviewer; do
       echo -e "docs-template/roles/$r.md\t.claude/agents/$r.md\tgenerated"
     done

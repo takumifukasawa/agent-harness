@@ -345,9 +345,9 @@ scenario "U13: update はフックと CLI の実行ビットを立て直す" bre
 break_source_cli_newer() {
   local src="$WORK/src-newer"
   mkdir -p "$src" || return 1
-  (cd "$REPO" && git archive HEAD) | tar -x -C "$src" || return 1
-  # 作業ツリーの CLI を使う（コミット前の変更でもこのシナリオが成り立つように）
-  cp "$REPO/bin/harness" "$src/bin/harness" || return 1
+  # 作業ツリーの CLI とペイロードを使う（コミット前の変更でもこのシナリオが成り立つように。CLI だけ
+  # 作業ツリーにすると、コミット前に足した配布物を CLI が配ろうとしてペイロードに無く、init が落ちる）
+  cp -R "$REPO/bin" "$REPO/harness" "$REPO/VERSION" "$REPO/CHANGELOG.md" "$src/" || return 1
   PROJ="$WORK/p-srcnewer"; mkdir -p "$PROJ" || return 1
   (cd "$PROJ" && git init -q . && bash "$src/bin/harness" init --source "$src") >/dev/null 2>&1 || return 1
   # source 側の plan() にだけ配布エントリを 1 行足す（= 新しい版で配布物が増えた状況）

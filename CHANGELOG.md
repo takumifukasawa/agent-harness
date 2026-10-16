@@ -3,8 +3,20 @@
 各版に「プロジェクト側で必要な作業」を必ず書く。`harness update` はこの節を表示する。
 semver: managed ファイルの移動・マーカー形式変更は major、ルール/スキルの追加は minor、文言修正は patch。
 
+## [1.2.0] - 2026-10-16
+
+- 変更: **push の前に 1 回だけレビューし、レビュー済みの印が無い push を PreToolUse hook（`.harness/scripts/push-gate.sh`）で止める**（[決定 0014](docs/decisions/0014-push-gate-checks-security-review.md)）。1.1.0 の `permissions.ask: Bash(git push *)` は、2026-10-16 の実機（auto モード）で確認が出なかった（規則は `/permissions` に表示されており、コマンドは `git push --dry-run` だった）ので外した。
+  - 流れ: push を頼まれたら、push していない範囲（`git log --branches --not --remotes`）をまとめてセキュリティの観点でレビューする → 問題なしなら `bash .harness/scripts/push-gate.sh --stamp` で印を付けて push する → 問題があれば直し、push していないコミットを書き換えてからレビューし直す。印は `.git/harness-push-reviewed`（コミットされない）に、push していないコミットを持つブランチ・タグの先端を記録する。先端が変われば（コミットを足した、書き換えた）印は効かなくなる。
+  - hook が止めるもの: 印の無い先端がある push / コミットを作る・取り込む操作（commit / merge / rebase / pull など）と push が同じコマンド（hook は実行前に走るので、そのコミットを照らせない）/ 展開・`eval`・`xargs`・`sh -c`・`--git-dir`・`GIT_DIR=` を通した push、シェルを通す git の alias。push 先は `cd` / `pushd` / `git -C` を追って決め、HEAD だけでなくローカルのすべてのブランチとタグを見る。すべてが `--dry-run` の push は通す。ヒアドキュメントの中の文字はコマンドとして見ない。止めても人は `! git push` で通せる。
+  - `AGENTS.md` の管理ブロックの「やらないこと」を「push 済みの履歴の書き換え」に改め、**push していないコミットは書き換えてよい**とした（push 前のレビューで直すため）。
+  - push 前のレビュー（2026-10-16）の指摘を受けて、detached HEAD のコミット、ヒアストリング、閉じの無い `<<EOF`、コメントの `-n`、`git -C` の後ろが空（無限ループで timeout になり素通りする）、`git subtree push`、`git -c alias.*`、`export GIT_DIR`、hook に渡される作業ディレクトリ（`cwd`）も扱うようにした。未 push の判定は `rev-list` 1 回で行う（タグの多いリポジトリで timeout を超えないように）。
+  - 回帰は `tests/push-gate.sh`（31 シナリオ。jq が無い経路を含む）。`tests/lockfile.sh` の L1 で、init が hook を配り `.claude/settings.json` の PreToolUse に入ることを確かめる。
+  - 断片から `permissions.ask` を外した。
+- **プロジェクト側で必要な作業**: `bash .harness/bin/harness update` で `.harness/scripts/push-gate.sh` が入り（gitignore 済み）、`.claude/settings.json` の PreToolUse に hook が足される。その変更と `.harness/manifest.json`・`AGENTS.md` をコミットする。**1.1.0 を入れたプロジェクトは、`.claude/settings.json` の `permissions.ask` に残った `Bash(git push *)` を手で消す**（マージは断片の項目を足すだけで、消さない）。security-guidance プラグインの commit ごとのレビューと二重になるので、止めたい PC では `~/.claude/settings.json` の `env` に `"ENABLE_COMMIT_REVIEW": "0"` を足す（PC ごとの設定。コミットしない）。
+
 ## [1.1.0] - 2026-10-16
 
+- **（1.2.0 で置き換えた。この `ask` は 2026-10-16 の実機の auto モードで確認が出なかった。決定 0014）**
 - 追加: **`git push` の前に必ず人の確認を挟む。** Claude アダプタの settings 断片に `permissions.ask: ["Bash(git push *)"]` を足し、`init` / `update` / `install` が `.claude/settings.json` にマージする（これまで deny だけを扱っていたマージ処理を ask にも広げた。プロジェクトが書いた ask の項目は残す）。commit 時のセキュリティレビューの結果を見る前に push してしまうのを防ぐ（2026-10-16、commit と push を 1 つのコマンドで続けて実行し、レビューの結果が push の後に届いた）。Claude Code は `&&` などでつないだコマンドも 1 つずつ照合するので、`git commit ... && git push` でも push の手前で止まる。auto モードでも確認が出る（確認日と限界は `harness/adapters/claude/README.md`）。`tests/lockfile.sh` の L1 で、init 後の `.claude/settings.json` に入ることを確かめる。
 - **プロジェクト側で必要な作業**: `bash .harness/bin/harness update` で `.claude/settings.json` に ask が足されるので、その変更と `.harness/manifest.json` をコミットする。以後、Claude Code が push するときは毎回確認が出る。`node` が無い環境では自動マージされないので、`.harness/adapters/claude.settings.fragment.json` の `permissions.ask` を手で反映する。Codex には同じ仕組みが無い（Codex の deny hook は push --force などの破壊的な操作だけを止める）。
 

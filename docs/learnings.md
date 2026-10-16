@@ -214,3 +214,23 @@
 **原因**: URL の source は `~/.cache/agent-harness/<ハッシュ>/` に clone して使い回す。更新の取り込みが `git pull --ff-only` で、失敗を `|| true` で握りつぶしていた。作り直した履歴とはつながらないので pull は必ず失敗し、キャッシュの古いコミットが残る。0.11.2 で origin に強制的に合わせる形に直した（`tests/source-cache.sh`）。
 
 **再発したらまず見る**: `git -C ~/.cache/agent-harness/<ハッシュ> log --oneline -1` が source の最新と一致しているか。違えばキャッシュを消す（`rm -rf ~/.cache/agent-harness`）。**source の履歴を書き換えたら、各 PC のキャッシュも消す**（0.11.2 より前の CLI はキャッシュを直さない）。
+
+## 2026-10-16: `permissions.ask` が auto モードで確認を出さなかった（docs と食い違う）
+
+**症状**: `.claude/settings.json` に `"permissions": {"ask": ["Bash(git push *)"]}` を入れ、`/permissions` にも表示されているのに、auto モードの統括が `git push --dry-run` を実行しても確認が出なかった。同じセッションで `deny`（`gh repo delete`、`git branch -D`）は効いた。
+
+**原因**: 不明。公式 docs（permissions / permission-modes。2026-10-16 確認）は「auto モードでも ask は確認を出す」「設定の変更は実行中のセッションに反映される」と書いている。
+
+**再発したらまず見る**: 関門には `ask` を使わず、`deny` か PreToolUse hook の deny で作る（決定 0014）。`ask` を使うなら、入れた直後に `--dry-run` のような無害な形で、実際に確認が出るかを試してから頼る。**docs の記述だけで「効く」と書かない**。
+
+## 2026-10-16: commit と push を 1 つのコマンドで続けると、commit 時のレビューが間に合わない
+
+**症状**: security-guidance プラグインのコミットのレビュー（1 分前後）の結果が、push の後に届いた。指摘が無いときは何も通知されないので、「待っても来ない通知」を待つことにもなった。
+
+**再発したらまず見る**: プラグインのレビューの結果は `.git/sg-reviewed-shas`（sha・時刻・版・指摘の数）とログ `~/.claude/security/log.txt` の `Commit review:` の行にある。1.2.0 からは commit ごとのレビューをやめ（`ENABLE_COMMIT_REVIEW=0`）、push の前に 1 回だけレビューして印を付ける（push-gate。決定 0014）。
+
+## 2026-10-16: push の語を含む文字列を書いただけのコマンドが、push の関門に止められる
+
+**症状**: python のヒアドキュメントで push-gate.sh を書き換えようとしたら、中に書いた `git push` の文字を関門が push と見て止めた。
+
+**再発したらまず見る**: 1.2.0 の push-gate はヒアドキュメントの中身を外してから見る。それでも止まるなら、文章を Write で一時ファイルに書いてから実行する。止めすぎの側に倒しているのは意図どおり（決定 0014）。

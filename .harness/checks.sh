@@ -35,6 +35,8 @@ check fast "seed case collision (unit)"   "bash tests/seed-case.sh"
 check fast "source cache follows origin"  "bash tests/source-cache.sh"
 # lockfile 方式（1.0.0。決定 0013）: 配布物はコミットせず、install が manifest に固定した版を入れる。
 check      "lockfile scenarios"          "bash tests/lockfile.sh"
+# push の前にセキュリティレビューの結果を確かめる関門（1.2.0。決定 0014）
+check fast "push gate scenarios"         "bash tests/push-gate.sh"
 # curl <公開 URL>/bin/harness | bash -s -- init の経路（標準入力から実行すると BASH_SOURCE が無い）
 check      "stdin (curl | bash) install"  "bash tests/stdin.sh"
 check      "codex adapter (deny hook)"    "bash tests/codex.sh"

@@ -1,4 +1,4 @@
-<!-- harness:begin v=1.1.0 -->
+<!-- harness:begin v=1.2.0 -->
 # エージェント運用の共通ルール（agent-harness 管理領域）
 
 このブロックは agent-harness が管理する。直したい場合は直してよいが、`harness diff` で差分を確認し上流へ戻すこと（詳細: `.agents/skills/harness-maintain/SKILL.md`）。
@@ -54,7 +54,7 @@
 
 ## やらないこと
 
-- 破壊的な git 操作（`push --force`、履歴の書き換え、ブランチ削除）を指示なしに行わない。
+- 破壊的な git 操作（`push --force`、push 済みの履歴の書き換え、ブランチ削除）を指示なしに行わない。push していないコミットは書き換えてよい（push 前のレビューで直すときなど）。
 - 秘密情報・個人情報をコミットしない。
 - ハーネス管理ファイル（`.harness/manifest.json` に `managed` と記録されているもの）を黙って改変したまま放置しない。
 <!-- harness:end -->

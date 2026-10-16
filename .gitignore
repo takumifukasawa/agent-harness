@@ -24,6 +24,7 @@
 /.agents/skills/task-orchestrate/SKILL.md
 /.claude/skills/task-orchestrate/SKILL.md
 /.harness/adapters/claude.settings.fragment.json
+/.harness/scripts/push-gate.sh
 /.claude/agents/implementer.md
 /.claude/agents/reviewer.md
 /.agents/skills/role-implementer/SKILL.md
