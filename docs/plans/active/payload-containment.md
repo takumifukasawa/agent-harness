@@ -44,6 +44,7 @@ lockfile 方式:
 | T07 | lockfile 方式の実装（`install` の新設、`source_commit` の記録、gitignore、案内）と 1.0.0（`VERSION` / `CHANGELOG.md` に「プロジェクト側で必要な作業」） | **done** | T06 に依存 |
 | T09 | source の信用リストを PC 側に置く: `install` / `update` は、リポジトリの外（例: `~/.config/agent-harness/trusted-sources`。公式 URL は最初から信用）にある source からしか取らない。無ければ止まり、信用する手順（例: `harness trust <URL>`）を出す。あわせて `source_commit` が 40 / 64 桁の 16 進数であることを確かめる。README の curl を版のタグに向けるかも決める | todo | 2026-10-16 のコミット時のセキュリティレビューの指摘。manifest の `source` を 1 行書き換えたコミットを pull して `install` すると、そのリポジトリの CLI が動く（1.0.0 より前は同梱 CLI の差分で見えたが、1 行の差分は見落とされやすく、`install` は pull のたびに回す）。リストに入るのは取得元の URL だけで、漏れて困る名前は入らない |
 | T10 | `.codex/hooks.json` をコミットに戻し、`codex-deny.sh` が無いときは操作を止める（fail-closed）形にする | todo | 同じレビューの指摘。1.0.0 では pull から `install` までの間、Codex の deny が効かない（Claude は `.claude/settings.json` で効く）。T05（Codex がフックの失敗をどう扱うか）を先に確かめる |
+| T11 | このリポジトリの `.harness/checks.sh` に「manifest の `source_commit` が source（このリポジトリ自身）に実在する」検査を足す（fast。pre-commit で回る） | todo | 2026-10-16 に、push 前の `--amend` で manifest が消えたコミット（`605add6`）を指したまま push しかけた（偶然の `update` で気づいた）。このリポジトリは source が自分自身の作業ツリーなので起きる。他の導入先は push 済みのコミットを指し、消えても `install` が止まって案内するので対象外（配らない検査にする） |
 | T08 | このリポジトリ（dogfood）と既存の導入先を移行する | 進行中（このリポジトリは移行済み。既存の導入先は未） | T07 に依存。導入先ではユーザーの許可を取る |
 
 ## 決定ログ（日付・決めたこと・理由・落選案）
