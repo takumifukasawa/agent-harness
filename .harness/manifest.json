@@ -2,7 +2,7 @@
   "harness_version": "1.2.0",
   "source": "https://github.com/takumifukasawa/agent-harness.git",
   "source_ref": "",
-  "source_commit": "605add669bdf16b3008b4026b3e420a3232bb204",
+  "source_commit": "103aed0d2e8f29efc4083ea777116a480bf47791",
   "installed_at": "2026-10-16",
   "agents": "claude,codex",
   "files": [
