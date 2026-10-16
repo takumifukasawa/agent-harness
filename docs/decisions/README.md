@@ -1,0 +1,34 @@
+# decisions — 決定記録
+
+1 決定 = 1 ファイル。`NNNN-kebab-title.md`。書き換えず、覆す時は新しい決定を足して旧決定に「superseded by NNNN」を書く。
+
+| # | タイトル | 状態 | 日付 |
+|---|---|---|---|
+| [0001](0001-workflow-is-the-main-subject.md) | このリポジトリの主役はワークフロー、配管は最小限 | 採用 | 2026-09-17 |
+| [0002](0002-update-repairs-managed-files.md) | update は変更済みの managed / merge を「退避」ではなく「復元」する | 採用 | 2026-09-17 |
+| [0003](0003-doctor-guidance-matches-update-behavior.md) | doctor の「直し方」を実測に合わせる（manifest 復旧経路 / CRLF・版ずれ・マーカー重複の一本化 / 非 git ディレクトリの根本原因） | 採用 | 2026-09-18 |
+| [0004](0004-source-lives-in-machine-local-override.md) | manifest の source は共有値に固定し、機械ローカルのパスは gitignore 対象の上書きへ逃がす | 採用 | 2026-09-18 |
+| [0005](0005-seed-checks-include-doctor.md) | seed の `checks.sh` に `doctor: FAIL 0` を最初から入れる | 採用 | 2026-09-18 |
+| [0006](0006-support-bash-3-2.md) | bash 3.2 を切らない（macOS 既定の bash で動く形に落とす） | 採用 | 2026-09-20 |
+| [0007](0007-hook-not-executable-is-fail.md) | フックが実行不可なら doctor は FAIL にする（WARN ではない） | 採用 | 2026-09-20 |
+| [0008](0008-stop-optimizing-check-at-50s.md) | `harness check` の最適化は 50 秒で打ち切る（B の 3 件目はやらない） | 採用 | 2026-09-21 |
+| [0009](0009-codex-deny-via-pretooluse-hook.md) | Codex の標準 deny は `PreToolUse` hook で効かせる（git hooks との二重で） | 採用 | 2026-09-21 |
+| [0010](0010-stop-building-plumbing.md) | ②配管（`gc`）の作り込みを打ち止めにして、①ワークフローに戻る | 2026-09-23 |
+| [0011](0011-generated-agents-do-not-pin-model.md) | 生成する `.claude/agents/<role>.md` にモデルを書かない（`model: inherit` はサブエージェント既定を素通りする） | 採用 | 2026-09-29 |
+| [0012](0012-tests-for-every-change-without-asking.md) | 規模に関わらずテストを書かせ（確認は求めない）、プロダクトの検査が 0 件の `check` には NOTE を出す | 採用 | 2026-10-07 |
+
+配管・ワークフローの個別の決定（配布方式、Windows 対応、再試行の方式 など 11 件）は `../../DESIGN.md` §10 の決定ログにある。新しい決定はここに 1 ファイルずつ足す。
+
+## テンプレート
+
+```markdown
+# NNNN: タイトル
+
+- 日付: YYYY-MM-DD
+- 状態: 採用 / 廃止（superseded by NNNN）
+
+## 背景
+## 採用案
+## 落選案と落選理由
+## 影響・やり直す条件
+```
