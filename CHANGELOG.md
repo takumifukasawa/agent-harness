@@ -3,6 +3,11 @@
 各版に「プロジェクト側で必要な作業」を必ず書く。`harness update` はこの節を表示する。
 semver: managed ファイルの移動・マーカー形式変更は major、ルール/スキルの追加は minor、文言修正は patch。
 
+## [1.3.1] - 2026-10-17
+
+- 修正: **「ハーネスを更新して」と頼まれても、source がこの PC の agent-harness の clone（`.harness/source.local`）だと、その clone が古いまま `update` して版が上がらなかった**（2026-10-17、別の PC で 1.2 のまま変わらなかった）。`harness` スキルの `update` の手順に、「先に source を確かめ、ローカルの clone ならその clone を `git pull --ff-only` してから `update` する」を足した。CLI の `update` 自体は、利用者の別のリポジトリを勝手に pull しない（遅れていれば 1.3.0 から警告を出す）。更新を頼まれたときのスキルなら、最新を取るのが頼んだ人の意図なので pull する。
+- **プロジェクト側で必要な作業**: `bash .harness/bin/harness update`（スキルが新しくなる。gitignore 済みなので、コミットに出るのは `.harness/manifest.json` と `AGENTS.md` の版の行）。**source がローカルの clone の PC では、今回だけ先に手でその clone を `git pull` する**（古いスキルは pull しないため）。
+
 ## [1.3.0] - 2026-10-17
 
 - 変更: **古い版からでも `harness update` だけで上がるようにした。** これまでは版ごとに追加の作業（配布物を追跡から外す、`settings.json` の古い項目を消す）があり、それをまとめた長い 1 行を使っていた。
