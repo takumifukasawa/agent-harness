@@ -127,13 +127,8 @@ cmd="$(printf '%s\n' "$cmd" | awk '
   END { if (skip) printf "%s", buf }')"
 has_push_word "$cmd" || exit 0
 
-# 展開や eval / xargs を通すと、何が実行されるかを実行前に決められない。push と同じコマンドにあれば止める
-case "$cmd" in
-  *git*push*)
-    case "$cmd" in
-      *'$('*|*'`'*|*'${'*) deny "agent-harness: push-gate: 展開を含むコマンドの push は、実行前に何が push されるか判定できない。展開を使わない git push に書き直す。" ;;
-    esac ;;
-esac
+# 展開（$( ) ` ` ${ }）は、push が実際に見つかったコマンドでだけ止める（下の n_push の後）。
+# 「git」と「push」の文字が離れて出てくるだけの、push ではないコマンドまで止めないため。
 
 case "$cmd" in
   *GIT_DIR=*|*GIT_WORK_TREE=*) deny "agent-harness: push-gate: GIT_DIR / GIT_WORK_TREE を設定するコマンドの push は、どのリポジトリに効くかを判定できないので止めた。" ;;
@@ -178,6 +173,7 @@ scan_git() { # $@ = git の後ろの語
     esac
   done
   sub="${1:-}"; [ -n "$sub" ] || return 0; shift
+  case "$sub" in *'$'*) deny "agent-harness: push-gate: git のサブコマンドが展開（${sub}）になっていて、push かどうか判定できない。展開を使わずに書く。" ;; esac
   # git の alias（git p = push など）は展開して見る。シェルを通す alias（!...）が push / commit を含めば止める
   if [ "$sub" != push ] && alias="$(git -C "$gdir" config --get "alias.${sub}" 2>/dev/null)" && [ -n "$alias" ]; then
     case "$alias" in
@@ -221,6 +217,9 @@ done <<EOF
 $norm
 EOF
 [ "$n_push" -gt 0 ] || exit 0
+case "$cmd" in
+  *'$('*|*'`'*|*'${'*) deny "agent-harness: push-gate: 展開を含むコマンドの push は、実行前に何が push されるか判定できない。展開を使わない git push に書き直す。" ;;
+esac
 [ "$n_dry" -eq "$n_push" ] && exit 0                    # すべての push が dry-run のときだけ素通り
 if [ "$has_commit" -eq 0 ]; then
   deny "agent-harness: push-gate: コミットを作る・取り込む操作（commit / merge / rebase / pull など）と push が同じコマンドに入っている。分けて実行する（先にコミットし、レビューして印を付けてから push する）。"

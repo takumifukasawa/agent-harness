@@ -3,6 +3,11 @@
 各版に「プロジェクト側で必要な作業」を必ず書く。`harness update` はこの節を表示する。
 semver: managed ファイルの移動・マーカー形式変更は major、ルール/スキルの追加は minor、文言修正は patch。
 
+## [1.2.1] - 2026-10-17
+
+- 修正: **push の関門（`push-gate.sh`）が、push ではないコマンドを止めていた。** 「`git` と `push` の文字がどこかにあり、展開（`$( )` など）もある」だけで止めていたので、`echo "未 push の件数: $(git rev-list ...)"` や、フックのファイルを書くコマンドまで止まった。展開で止めるのを、実際に push が見つかったコマンドだけにした。代わりに `git $(echo push)` のように git のサブコマンド自体が展開になっている形は、判定できないとして止める。回帰は `tests/push-gate.sh` の P32・P33（33 シナリオ）。
+- **プロジェクト側で必要な作業**: `bash .harness/bin/harness update` で `.harness/scripts/push-gate.sh` が新しくなる（gitignore 済みなので、コミットに出るのは `.harness/manifest.json` と `AGENTS.md` の版の行だけ）。
+
 ## [1.2.0] - 2026-10-16
 
 - 変更: **push の前に 1 回だけレビューし、レビュー済みの印が無い push を PreToolUse hook（`.harness/scripts/push-gate.sh`）で止める**（[決定 0014](docs/decisions/0014-push-gate-checks-security-review.md)）。1.1.0 の `permissions.ask: Bash(git push *)` は、2026-10-16 の実機（auto モード）で確認が出なかった（規則は `/permissions` に表示されており、コマンドは `git push --dry-run` だった）ので外した。

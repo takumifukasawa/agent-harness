@@ -37,6 +37,10 @@ check fast "source cache follows origin"  "bash tests/source-cache.sh"
 check      "lockfile scenarios"          "bash tests/lockfile.sh"
 # push の前にセキュリティレビューの結果を確かめる関門（1.2.0。決定 0014）
 check fast "push gate scenarios"         "bash tests/push-gate.sh"
+# 公開してはいけないもの（パス・メールアドレス・トークン・非公開リンク。固有名は一覧があれば）を stage した差分で止める。
+# 検査の中身は leak-audit（agent-skills）が唯一の正。pre-push / commit-msg は .githooks/ にある。leak-audit が無い PC では
+# 警告して通す（決定 0013 の T01〜T04 をこれで置き換えた。計画 payload-containment）。
+check fast "leak-audit (staged)"         "sh .githooks/leak-audit.sh pre-commit"
 # curl <公開 URL>/bin/harness | bash -s -- init の経路（標準入力から実行すると BASH_SOURCE が無い）
 check      "stdin (curl | bash) install"  "bash tests/stdin.sh"
 check      "codex adapter (deny hook)"    "bash tests/codex.sh"

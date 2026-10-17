@@ -108,6 +108,9 @@ run_gate "bash .harness/scripts/push-gate.sh --stamp"
 expect "P21: 印を付けるコマンド自体は通す（push の語を含むが push ではない）" allow
 
 run_gate "git push" nojq;                  expect "P22: jq が無くても同じに判定する" deny 'まだレビューされていない'
+run_gate 'echo "未 push の件数: $(git -C . rev-list --count HEAD)"'
+expect "P32: push ではないコマンドは、git と push の文字と展開を含んでも止めない" allow
+run_gate 'git $(echo push) origin';        expect "P33: git のサブコマンドが展開なら止める" deny '展開'
 
 # ---- 2026-10-16 のレビューの指摘（素通りする形）----
 run_gate "bc <<<foo

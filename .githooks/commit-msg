@@ -1,0 +1,3 @@
+#!/bin/sh
+# leak-audit の commit-msg（コミットメッセージを検査する）。このリポジトリ専用。
+exec sh "$(git rev-parse --show-toplevel)/.githooks/leak-audit.sh" commit-msg "$1"

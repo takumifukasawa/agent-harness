@@ -1,0 +1,4 @@
+#!/bin/sh
+# leak-audit の pre-push（push するコミットの中身・メッセージ・ファイル名・ブランチ名を検査する）。
+# このリポジトリ専用（ハーネスのペイロードではない）。leak-audit が無い PC では警告して通す。
+exec sh "$(git rev-parse --show-toplevel)/.githooks/leak-audit.sh" pre-push "$@"

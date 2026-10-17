@@ -35,10 +35,10 @@ lockfile 方式:
 
 | # | タスク | 状態 | 備考 |
 |---|---|---|---|
-| T01 | 形で分かるもの（パス・メール・トークン・非公開リンク）を検査する関数を作る。例示用の除外も入れる | todo | 禁止語リストは作らない（決定 0013） |
-| T02 | このリポジトリの `checks.sh` に fast の検査として登録する（pre-commit で回る） | todo | T01 に依存。**ペイロードだけでなく全ファイル**を見る。コミットメッセージと `user.email` は未確定事項 4 |
-| T03 | `init` / `update` の書き込み前に同じ検査をかける | todo | T01 に依存。`install` は T07 で足すときに同じ検査を通す |
-| T04 | `upstream` に同じ検査をかける | todo | T01 に依存 |
+| T01 | 形で分かるもの（パス・メール・トークン・非公開リンク）を検査する関数を作る。例示用の除外も入れる | **置き換え（2026-10-17）** | 禁止語リストは作らない（決定 0013） |
+| T02 | このリポジトリの `checks.sh` に fast の検査として登録する（pre-commit で回る） | **done（leak-audit で）** | T01 に依存。**ペイロードだけでなく全ファイル**を見る。コミットメッセージと `user.email` は未確定事項 4 |
+| T03 | `init` / `update` の書き込み前に同じ検査をかける | **やめた** | T01 に依存。`install` は T07 で足すときに同じ検査を通す |
+| T04 | `upstream` に同じ検査をかける | **やめた** | T01 に依存 |
 | T05 | 調査: Codex が `AGENTS.md` 以外のファイルを読み込めるか。Codex の PreToolUse hook のスクリプトが無いとき、操作を止めるのか素通りさせるのか（確認日と確認元を残す） | todo（1.0.0 では設計で避けたが、T10 のために後半だけ要る） | 未確定事項 2 と、`.codex/hooks.json` の扱いの材料。T01〜T04 と並列可 |
 | T06 | lockfile 方式の設計: gitignore する範囲、manifest の `source_commit`、手元に入れた版の記録、`install` の動き、既存の導入先の移行、clone 直後と版ずれの案内（`doctor` / SessionStart） | **done** | T05 の結果で `AGENTS.md` と `.codex/hooks.json` の扱いを決める。`CLAUDE.md` と `.claude/settings.json` はコミットのまま |
 | T07 | lockfile 方式の実装（`install` の新設、`source_commit` の記録、gitignore、案内）と 1.0.0（`VERSION` / `CHANGELOG.md` に「プロジェクト側で必要な作業」） | **done** | T06 に依存 |
@@ -58,6 +58,9 @@ lockfile 方式:
 - **2026-10-16 / `install` は固定コミットを `git archive` で一時ディレクトリへ取り出し、その版の CLI に exec して配る。** 配る判断（plan）を固定された版にさせるためと、同梱コピーを実行しながら上書きしないため。`install` は同梱コピーへ委譲しない（`maybe_delegate`）。固定された版が `install` を知らない（1.0.0 より前）なら止まって `update` を案内する。
 - **2026-10-16 / `.gitignore` は 1 ファイルずつ管理ブロックに載せる。** ディレクトリ単位（`.agents/skills/` など）にすると、プロジェクトが自分で置いたスキルまで無視される。ブロックは毎回作り直す。
 - **2026-10-16 / 既にコミットされた配布物は外し方を案内するだけ。** `update` の出力と `doctor` の B13 に `git rm --cached` のコマンドを出す。勝手に外さない（pull した他の clone では作業ツリーから消えるので、その人は `install` が要る。CHANGELOG に書いた）。
+
+- **2026-10-17 / T01〜T04 は作らず、agent-skills の leak-audit のフックをこのリポジトリに入れた。** leak-audit には git フックの入口（`scripts/hook.py`）があり、pre-commit（stage した差分）・commit-msg（メッセージ）・pre-push（push するコミットの中身・メッセージ・ファイル名・ブランチ名）で、パス・メールアドレス・トークン・非公開リンク（固有名は一覧があれば）を止める。T01 で作る予定だった検査より広い。T03（配るときの検査）は、配る中身が pre-push を通ってから GitHub に出たものだけになるので二重。T04（upstream）も、戻した変更はこのリポジトリでのコミットと push で同じフックを通るので二重。leak-audit は Python と個人のスキル集に依存するので、ペイロードには入れず、このリポジトリにだけ入れた（`.githooks/leak-audit.sh`・`pre-push`・`commit-msg`、`.harness/checks.sh` の `leak-audit (staged)`）。leak-audit が無い PC では警告して通す。
+- **2026-10-17 / コミットメッセージに `Claude-Session:` の行を付けない。** leak-audit の commit-msg が「非公開ワークスペースへのリンク」として止めるため（ユーザーの判断。`AGENTS.md` の固有欄に書いた）。
 
 ## 進捗ログ（セッションごとに 1〜3 行）
 

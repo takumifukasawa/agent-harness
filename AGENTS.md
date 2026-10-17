@@ -1,4 +1,4 @@
-<!-- harness:begin v=1.2.0 -->
+<!-- harness:begin v=1.2.1 -->
 # エージェント運用の共通ルール（agent-harness 管理領域）
 
 このブロックは agent-harness が管理する。直したい場合は直してよいが、`harness diff` で差分を確認し上流へ戻すこと（詳細: `.agents/skills/harness-maintain/SKILL.md`）。
@@ -89,6 +89,11 @@ AI エージェントにプロジェクトを進めさせるワークフロー�
 - bash スクリプトは LF、`*.cmd` は CRLF（`.gitattributes`）。
 - Windows のパスは `C:/`・`/c/`・`/tmp` が混在する。ファイルの同一性は内容ハッシュで判定する（`docs/learnings.md`）。
 - 各エージェントの仕様に依存する記述には確認日と確認元を書く（`harness/adapters/*/README.md`）。
+
+## コミット
+
+- コミットメッセージに `Claude-Session:` の行（claude.ai のセッションの URL）を付けない。公開リポジトリにセッションの ID が残り、`.githooks/commit-msg`（leak-audit）が止める（2026-10-17 にユーザーが決定）。`Co-Authored-By:` は付けてよい。
+- push の前に、push していない範囲をレビューして `bash .harness/scripts/push-gate.sh --stamp` で印を付ける（決定 0014）。push すると `.githooks/pre-push`（leak-audit）がもう一度検査する。
 
 ## やらないこと
 
