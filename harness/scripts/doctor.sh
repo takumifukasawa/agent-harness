@@ -621,7 +621,7 @@ else
       report OK "配布物は git に追跡されていない（lockfile 方式）"
     else
       report WARN "配布物がまだ git に追跡されている（$(printf '%s\n' $tracked_managed | wc -l | tr -d ' ') 件。.gitignore は追跡中のファイルには効かない）" \
-        "git rm -q --cached -- ${tracked_managed} && git commit -m 'chore: harness の配布物を追跡から外す（lockfile 方式）'（作業ツリーのファイルは消えない）"
+        "bash .harness/bin/harness update で外す（作業ツリーのファイルは消えない。外したことは stage されるのでコミットする）。手で外すなら: git rm -q --cached -- ${tracked_managed}"
     fi
   fi
 fi

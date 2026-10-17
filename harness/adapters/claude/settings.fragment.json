@@ -1,5 +1,12 @@
 {
   "_harness": "0.0.1 — merge these entries into .claude/settings.json. Entries whose command contains '.harness/' are managed by the harness.",
+  "_retired": {
+    "permissions": {
+      "ask": [
+        "Bash(git push *)"
+      ]
+    }
+  },
   "permissions": {
     "deny": [
       "Bash(git push --force*)",

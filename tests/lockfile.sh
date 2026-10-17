@@ -180,28 +180,29 @@ L7; ok_or_fail "L7: source_commit の無い（1.0.0 より前の）manifest で�
 
 # ---------------------------------------------------------------- L8: 配布物をコミット済みの古い導入先の移行
 L8() {
-  local C="$WORK/l8"
+  local C="$WORK/l8" n_before n_after
   cp -a "$BASE" "$C"
   # 1.0.0 より前の導入先を模す: 配布物を強制的にコミットし、.gitignore の管理ブロックを消す
   awk '/^# >>> agent-harness managed/{s=1;next} /^# <<< agent-harness managed/{s=0;next} !s' "$C/.gitignore" >"$C/gi.tmp" &&
     cat "$C/gi.tmp" >"$C/.gitignore" && rm -f "$C/gi.tmp"
   g -C "$C" add -A && g -C "$C" commit -q --no-verify -m "old style"
-  local n_before; n_before="$(git -C "$C" ls-files | wc -l | tr -d ' ')"
+  n_before="$(git -C "$C" ls-files | wc -l | tr -d ' ')"
   OUT="$(cd "$C" && HARNESS_SOURCE="$SRC" bash .harness/bin/harness update 2>&1)"; CODE=$?
   [ "$CODE" = 0 ] || errors+=("update の終了コード $CODE")
-  printf '%s\n' "$OUT" | grep -q 'git rm -q --cached' || errors+=("index から外す手順を案内していない")
-  [ "$(git -C "$C" ls-files | wc -l | tr -d ' ')" = "$n_before" ] || errors+=("update が勝手に追跡を外した")
+  # 1.3.0 から update が自動で index から外す（作業ツリーのファイルは残す）
+  printf '%s\n' "$OUT" | grep -q '追跡から外した' || errors+=("update が追跡から外したことを言わない")
+  n_after="$(git -C "$C" ls-files | wc -l | tr -d ' ')"
+  [ "$n_after" -lt "$n_before" ] || errors+=("update が配布物を追跡から外していない（${n_before} → ${n_after}）")
+  [ -z "$(git -C "$C" ls-files -ci --exclude-standard)" ] || errors+=("ignore 対象なのに追跡されたままのファイルがある")
+  [ -f "$C/.harness/bin/harness" ] && [ -f "$C/.githooks/pre-commit" ] || errors+=("追跡を外したら作業ツリーのファイルが消えた")
+  git -C "$C" ls-files --error-unmatch CLAUDE.md AGENTS.md .harness/manifest.json >/dev/null 2>&1 ||
+    errors+=("共有するファイル（CLAUDE.md / AGENTS.md / manifest）まで外れた")
   grep -qxF '# >>> agent-harness managed (do not commit; restore with: harness install)' "$C/.gitignore" ||
     errors+=("update が .gitignore の管理ブロックを足していない")
   OUT="$(cd "$C" && bash .harness/bin/harness doctor 2>&1)"
-  printf '%s\n' "$OUT" | grep -q '^WARN .*配布物がまだ git に追跡されている' || errors+=("doctor が追跡中の配布物を報告しない")
-  # 案内どおりに外すと、作業ツリーのファイルは残り、doctor の WARN が消える
-  (cd "$C" && git ls-files -ci --exclude-standard -z | xargs -0 git rm -q --cached --) >/dev/null 2>&1
-  [ -f "$C/.harness/bin/harness" ] || errors+=("追跡を外したら作業ツリーのファイルが消えた")
-  OUT="$(cd "$C" && bash .harness/bin/harness doctor 2>&1)"
-  printf '%s\n' "$OUT" | grep -q '^OK .*配布物は git に追跡されていない' || errors+=("追跡を外した後も doctor が OK にならない")
+  printf '%s\n' "$OUT" | grep -q '^OK .*配布物は git に追跡されていない' || errors+=("外した後も doctor が OK にならない")
 }
-L8; ok_or_fail "L8: 配布物をコミット済みの導入先は、update が外し方を案内し（勝手に外さない）、doctor が WARN を出す"
+L8; ok_or_fail "L8: 配布物をコミット済みの導入先は、update が index から外す（作業ツリーと共有ファイルは残す）"
 
 # ---------------------------------------------------------------- L9: clone 直後の案内
 L9() {
@@ -239,6 +240,33 @@ L10() {
   printf '%s\n' "$OUT" | grep -q '^OK .*配布物の管理ブロックがある' || errors+=("CRLF の .gitignore で doctor が管理ブロックを見つけられない")
 }
 L10; ok_or_fail "L10: CRLF の .gitignore でも管理ブロックはダブらず、doctor も見つける"
+
+# ---------------------------------------------------------------- L11: 廃止した settings の項目
+L11() {
+  local C="$WORK/l11"
+  command -v node >/dev/null 2>&1 || return 0
+  cp -a "$BASE" "$C"
+  # 1.1.0 が足した ask と、プロジェクトが自分で書いた ask がある状態
+  node -e 'const fs=require("fs"),f=process.argv[1],s=JSON.parse(fs.readFileSync(f,"utf8"));s.permissions.ask=["Bash(git push *)","Bash(rm -rf *)"];fs.writeFileSync(f,JSON.stringify(s,null,2))' "$C/.claude/settings.json"
+  (cd "$C" && HARNESS_SOURCE="$SRC" bash .harness/bin/harness update) >/dev/null 2>&1
+  node -e 'const s=require(process.argv[1]);const a=(s.permissions||{}).ask||[];process.exit(a.includes("Bash(git push *)")?1:0)' "$C/.claude/settings.json" ||
+    errors+=("廃止した ask の Bash(git push *) が残っている")
+  node -e 'const s=require(process.argv[1]);const a=(s.permissions||{}).ask||[];process.exit(a.includes("Bash(rm -rf *)")?0:1)' "$C/.claude/settings.json" ||
+    errors+=("プロジェクトが書いた ask まで消えた")
+}
+L11; ok_or_fail "L11: update は廃止した settings の項目を消し、プロジェクトが書いた項目は残す"
+
+# ---------------------------------------------------------------- L12: source の clone が遅れている
+L12() {
+  local C="$WORK/l12" S3="$WORK/src-clone"
+  git clone -q "$SRC" "$S3"
+  printf '\n# L12-NEWER\n' >>"$SRC/harness/scripts/session-start.sh" && g -C "$SRC" commit -q -am v-l12
+  cp -a "$BASE" "$C"
+  OUT="$(cd "$C" && HARNESS_SOURCE="$S3" bash .harness/bin/harness update 2>&1)"
+  printf '%s\n' "$OUT" | grep -q '上流より 1 コミット遅れている' || errors+=("source の clone が遅れていることを言わない")
+  [ "$(git -C "$S3" rev-parse HEAD)" != "$(git -C "$SRC" rev-parse HEAD)" ] || errors+=("update が source の clone を勝手に pull した")
+}
+L12; ok_or_fail "L12: source のローカルの clone が上流より遅れていれば、update が警告する（pull はしない）"
 
 echo
 echo "tests/lockfile.sh: pass=$passed fail=$failed"

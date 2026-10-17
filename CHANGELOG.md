@@ -3,6 +3,15 @@
 各版に「プロジェクト側で必要な作業」を必ず書く。`harness update` はこの節を表示する。
 semver: managed ファイルの移動・マーカー形式変更は major、ルール/スキルの追加は minor、文言修正は patch。
 
+## [1.3.0] - 2026-10-17
+
+- 変更: **古い版からでも `harness update` だけで上がるようにした。** これまでは版ごとに追加の作業（配布物を追跡から外す、`settings.json` の古い項目を消す）があり、それをまとめた長い 1 行を使っていた。
+  - **配布物の追跡を自動で外す**: 1.0.0 より前に導入してコミットされている配布物を、`update` / `install` が `git rm --cached` で index から外す（作業ツリーのファイルは残す）。外すのは `.gitignore` の管理ブロックに載せたハーネスの配布物だけで、`CLAUDE.md`・`AGENTS.md`・manifest は外さない。1.0.0〜1.2.1 は手順を案内するだけだった。外したことは stage されるので、update の変更と一緒にコミットする。
+  - **廃止した settings の項目を消す**: 断片に `_retired`（以前の版で足し、今は配らない項目）を持たせ、マージのときにプロジェクトの `.claude/settings.json` から消す。今は 1.1.0 の `ask: Bash(git push *)` だけ。断片が足していない項目しか載せないので、プロジェクトが自分で書いた項目は消えない。
+  - **source の clone が遅れていれば警告する**: source がローカルの clone（`.harness/source.local`）で、上流より遅れていれば `update` が言う（fetch はするが、pull はしない。利用者の別のリポジトリの作業ツリーは動かさない）。
+  - 回帰は `tests/lockfile.sh`（L8 を自動で外す形に変え、L11・L12 を足した。12 シナリオ）。`doctor` の B13 の直し方も `harness update` にした。
+- **プロジェクト側で必要な作業**: `bash .harness/bin/harness update` を回し、変わったもの（`.harness/manifest.json`・`AGENTS.md`・`.gitignore`・`.claude/settings.json`、1.0.0 より前からなら外した配布物）をコミットする。**0.11.1 以前で source が URL の PC だけ**、先に一度 `rm -rf ~/.cache/agent-harness` を実行する（古い CLI は新しい CLI に渡す前に古いキャッシュを読むので、新しいコードからは直せない。0.11.2 の節）。1.0.0 より前から上げたプロジェクトは、そのコミットを pull した他の clone で `harness install` を回す。
+
 ## [1.2.1] - 2026-10-17
 
 - 修正: **push の関門（`push-gate.sh`）が、push ではないコマンドを止めていた。** 「`git` と `push` の文字がどこかにあり、展開（`$( )` など）もある」だけで止めていたので、`echo "未 push の件数: $(git rev-list ...)"` や、フックのファイルを書くコマンドまで止まった。展開で止めるのを、実際に push が見つかったコマンドだけにした。代わりに `git $(echo push)` のように git のサブコマンド自体が展開になっている形は、判定できないとして止める。回帰は `tests/push-gate.sh` の P32・P33（33 シナリオ）。

@@ -17,7 +17,7 @@ bash .harness/bin/harness <subcommand> [args]
 | 引数 | やること | 結果の読み方 |
 |---|---|---|
 | `status`（既定） | 導入版、各ファイルの unchanged / MODIFIED / missing | MODIFIED な managed があれば「diff で見て、汎用なら upstream、プロジェクト固有なら AGENTS.md のプロジェクト領域へ移す」と案内。`source-changed` は `update` で再生成される |
-| `update [--ref <tag>]` | 新版を取り込み、manifest の `source_commit`（版の固定）を書き換える。CHANGELOG を表示 | 表示された「プロジェクト側で必要な作業」を必ずユーザーに伝える。コミットするのは `.harness/manifest.json`（と `.gitignore` の変化）だけと伝える。`CONFLICT` が出たら `.harness/conflicts/<path>.new` と現ファイルの差分を取って提示し、採否を聞く。「git に追跡されている」案内が出たら、その `git rm --cached` を実行してよいか聞く |
+| `update [--ref <tag>]` | 新版を取り込み、manifest の `source_commit`（版の固定）を書き換える。CHANGELOG を表示 | 表示された「プロジェクト側で必要な作業」を必ずユーザーに伝える。コミットするのは `.harness/manifest.json`（と `.gitignore` の変化）だけと伝える。`CONFLICT` が出たら `.harness/conflicts/<path>.new` と現ファイルの差分を取って提示し、採否を聞く。「追跡から外した」と出たら（1.0.0 より前からの移行）、外したことは stage 済みなので update の変更と一緒にコミットすること、そのコミットを pull した他の clone では `harness install` が要ることを伝える。「source の clone が上流より遅れている」と出たら、その clone で `git pull` してから update し直すよう伝える |
 | `install` | manifest に固定された版（`source_commit`）をそのまま入れる。manifest は変えない | clone 直後・他の人が版を上げた manifest を pull した後に使う（配布物はコミットしない lockfile 方式）。「固定した版が source に無い」で止まったら、`update` で版を上げ直して manifest をコミットするよう案内する |
 | `diff` | 手で直した managed ファイルの差分 | 上流に戻す候補。秘密情報・プロジェクト名が混ざっていないか見る |
 | `upstream <path>...` | agent-harness リポジトリへ書き戻す（source がローカル clone のとき） | 成功したら「agent-harness 側で commit → CHANGELOG → VERSION」が次の作業だと伝える |

@@ -509,9 +509,12 @@ ensure_gitignore() {
   cat "$tmp" >"$gi"; rm -f "$tmp"
 }
 
-# 既にコミットされている配布物を知らせる（lockfile 方式への移行。1.0.0 より前に導入したプロジェクト）。
-# .gitignore は追跡中のファイルには効かないので、index から外す手順を出す。勝手には外さない。
-report_tracked_managed() {
+# 既にコミットされている配布物を index から外す（lockfile 方式への移行。1.0.0 より前に導入したプロジェクト）。
+# .gitignore は追跡中のファイルには効かないので外す必要がある。外すのは .gitignore の管理ブロックに載せた
+# ハーネスの配布物だけで、作業ツリーのファイルは消えない（1.3.0 から自動。それまでは案内だけだった）。
+# 外したことは stage されるので、update の変更と一緒にコミットする。そのコミットを pull した他の clone では
+# 配布物が作業ツリーから消えるので、そこでは harness install が要る（移行するならどのみち要る）。
+untrack_managed() {
   [ "${#IGNORE_LIST[@]}" -gt 0 ] || return 0
   git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
   local tracked n
@@ -519,10 +522,13 @@ report_tracked_managed() {
   [ -n "$tracked" ] || return 0
   n="$(printf '%s\n' "$tracked" | wc -l | tr -d ' ')"
   echo
-  info "lockfile 方式（1.0.0）: ハーネスが配った物のうち ${n} 件がまだ git に追跡されている（.gitignore は追跡中のファイルには効かない）。"
-  info "  直し方（作業ツリーのファイルは消えない。index から外すだけ）:"
-  info "    git rm -q --cached -- $(printf '%s\n' "$tracked" | tr '\n' ' ')"
-  info "    git commit -m 'chore: harness の配布物を追跡から外す（lockfile 方式）'"
+  if git -C "$ROOT" ls-files -z -- "${IGNORE_LIST[@]}" | (cd "$ROOT" && xargs -0 git rm -q --cached --); then
+    info "lockfile 方式: ハーネスが配った物のうち ${n} 件を git の追跡から外した（作業ツリーのファイルは残っている。外したことは stage 済み）。"
+    info "  update の変更と一緒にコミットする。そのコミットを pull した他の clone では、配布物が作業ツリーから消えるので harness install を回す。"
+  else
+    info "lockfile 方式: ハーネスが配った物のうち ${n} 件がまだ git に追跡されているが、外せなかった（git rm --cached が失敗した。上の出力を見る）。"
+    info "  手で外す（作業ツリーのファイルは消えない）: git rm -q --cached -- $(printf '%s\n' "$tracked" | tr '\n' ' ')"
+  fi
 }
 
 # Windows の core.autocrlf で bash スクリプトが CRLF になると動かず、ハッシュ比較も狂う。LF を強制する。
@@ -702,7 +708,7 @@ apply_plan() { # agents mode(init|update)
   ensure_gitattributes
   case ",$agents," in *,claude,*) ensure_nested_claude_md;; esac
   git -C "$ROOT" config core.hooksPath .githooks 2>/dev/null || true
-  report_tracked_managed
+  untrack_managed
 
   echo
   info "$mode done: new=$n_new updated=$n_up restored=$n_res unchanged=$n_keep seeded=$n_seed conflicts=$n_conf case_conflicts=$n_caseconf"
@@ -747,6 +753,15 @@ for (const key of ['deny', 'ask']) {
     const cur = Array.isArray(s.permissions[key]) ? s.permissions[key] : [];
     for (const d of f.permissions[key]) if (!cur.includes(d)) cur.push(d);
     s.permissions[key] = cur;
+  }
+}
+// _retired: ハーネスが以前の版で足し、今は配らない項目。プロジェクトに残っていれば消す（1.3.0。例: 1.1.0 の
+// ask の Bash(git push *)）。断片が足していない項目しか載せないので、プロジェクトが自分で書いた項目は消えない。
+const retired = (f._retired && f._retired.permissions) || {};
+for (const key of Object.keys(retired)) {
+  if (s.permissions && Array.isArray(s.permissions[key])) {
+    s.permissions[key] = s.permissions[key].filter(x => !retired[key].includes(x));
+    if (!s.permissions[key].length) delete s.permissions[key];
   }
 }
 // hooks: 各イベントで、command に ".harness/" を含む既存項目を外し、断片の項目を足す
@@ -874,6 +889,7 @@ cmd_update() {
     shared_source="$DEFAULT_SOURCE"
   fi
   info "update $oldver -> $version  (source=$source [$source_from] ref=${ref:-default})"
+  warn_local_source_behind "$source"
   if [ "$oldver" != "$version" ] && [ -f "$srcdir/CHANGELOG.md" ]; then
     echo; echo "── CHANGELOG（$oldver より新しい分）"
     awk -v old="## [$oldver]" 'index($0,old)==1{exit} /^## \[/{p=1} p' "$srcdir/CHANGELOG.md" | sed 's/^/   /'
@@ -888,6 +904,18 @@ cmd_update() {
   merge_claude_settings "$agents"
   [ -n "$commit" ] && info "版を固定した: source_commit=${commit}。.harness/manifest.json の変更をコミットすると、他の clone は harness install でこの版になる"
   return 0
+}
+
+# source がローカルの clone で、その上流より遅れていれば知らせる（pull はしない。利用者の別のリポジトリを
+# 勝手に動かさない）。上流の状態は fetch して確かめる（リモートの追跡ブランチが変わるだけで、作業ツリーは触らない）。
+warn_local_source_behind() { # source
+  [ -d "$1" ] || return 0
+  git -C "$1" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1 || return 0
+  git -C "$1" fetch -q 2>/dev/null || { info "  注意: source の clone（${1}）の上流を確かめられなかった（fetch に失敗した）。古い版を配っていないか確かめる"; return 0; }
+  local behind; behind="$(git -C "$1" rev-list --count 'HEAD..@{u}' 2>/dev/null || echo 0)"
+  if [ "${behind:-0}" -gt 0 ]; then
+    info "  注意: source の clone（${1}）が上流より ${behind} コミット遅れている。最新を配るなら、その clone で git pull してから update し直す"
+  fi
 }
 
 # manifest に固定された版（source_commit）をそのまま入れる。manifest は変えない（npm ci に当たる）。

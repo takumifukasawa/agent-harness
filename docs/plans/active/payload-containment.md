@@ -62,6 +62,8 @@ lockfile 方式:
 - **2026-10-17 / T01〜T04 は作らず、agent-skills の leak-audit のフックをこのリポジトリに入れた。** leak-audit には git フックの入口（`scripts/hook.py`）があり、pre-commit（stage した差分）・commit-msg（メッセージ）・pre-push（push するコミットの中身・メッセージ・ファイル名・ブランチ名）で、パス・メールアドレス・トークン・非公開リンク（固有名は一覧があれば）を止める。T01 で作る予定だった検査より広い。T03（配るときの検査）は、配る中身が pre-push を通ってから GitHub に出たものだけになるので二重。T04（upstream）も、戻した変更はこのリポジトリでのコミットと push で同じフックを通るので二重。leak-audit は Python と個人のスキル集に依存するので、ペイロードには入れず、このリポジトリにだけ入れた（`.githooks/leak-audit.sh`・`pre-push`・`commit-msg`、`.harness/checks.sh` の `leak-audit (staged)`）。leak-audit が無い PC では警告して通す。
 - **2026-10-17 / コミットメッセージに `Claude-Session:` の行を付けない。** leak-audit の commit-msg が「非公開ワークスペースへのリンク」として止めるため（ユーザーの判断。`AGENTS.md` の固有欄に書いた）。
 
+- **2026-10-17 / 配布物の追跡は update が自動で外す（1.3.0）。** 1.0.0 では「勝手に外さない、案内だけ」にしたが、ユーザーの「古い版からでも update だけで上がる方がよい」を受けて変えた。外すのは index からだけで作業ツリーは残り、対象は管理ブロックに載せた配布物だけ。案内だけにした理由（pull した他の clone で配布物が消え install が要る）は、移行するならどのみち起きる。あわせて、廃止した settings の項目を消す（`_retired`）、source の clone の遅れを警告する、も入れた。キャッシュの削除（0.11.1 以前・URL の source）だけは、古い CLI が先に動くので update に取り込めない。
+
 ## 進捗ログ（セッションごとに 1〜3 行）
 
 - **2026-10-16（1.0.0）**: lockfile 方式を実装した（`harness install`、manifest の `source_commit`、`.gitignore` の管理ブロック、`.harness/installed` と版ずれの案内、clone 直後の案内、doctor B13）。`tests/lockfile.sh` 9 シナリオ、`harness check` 26 件 pass。このリポジトリも移行した（配布物 27 件を index から外した）。実装中に `git ls-files --pathspec-from-file`（存在しないオプション）の失敗を `2>/dev/null || true` で握りつぶしていたのをテストが拾った。
