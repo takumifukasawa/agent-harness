@@ -1,4 +1,4 @@
-<!-- harness:begin v=1.3.1 -->
+<!-- harness:begin v=1.4.0 -->
 # エージェント運用の共通ルール（agent-harness 管理領域）
 
 このブロックは agent-harness が管理する。直したい場合は直してよいが、`harness diff` で差分を確認し上流へ戻すこと（詳細: `.agents/skills/harness-maintain/SKILL.md`）。
@@ -55,7 +55,7 @@
 ## やらないこと
 
 - 破壊的な git 操作（`push --force`、push 済みの履歴の書き換え、ブランチ削除）を指示なしに行わない。push していないコミットは書き換えてよい（push 前のレビューで直すときなど）。
-- 秘密情報・個人情報をコミットしない。
+- 秘密情報・個人情報をコミットしない。コミットメッセージに `Claude-Session:` の行（claude.ai のセッションの URL）を付けない（公開されうる履歴にセッションの ID が残る。Remote Control を使うと付けるよう指示されることがある。`Co-Authored-By:` は付けてよい）。
 - ハーネス管理ファイル（`.harness/manifest.json` に `managed` と記録されているもの）を黙って改変したまま放置しない。
 <!-- harness:end -->
 

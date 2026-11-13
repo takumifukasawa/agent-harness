@@ -3,6 +3,11 @@
 各版に「プロジェクト側で必要な作業」を必ず書く。`harness update` はこの節を表示する。
 semver: managed ファイルの移動・マーカー形式変更は major、ルール/スキルの追加は minor、文言修正は patch。
 
+## [1.4.0] - 2026-11-13
+
+- 追加: **`AGENTS.md` の管理ブロックに「コミットメッセージに `Claude-Session:` の行（claude.ai のセッションの URL）を付けない」を足した。** これまではこのリポジトリ自身の `AGENTS.md` の固有欄（2026-10-17）にしか無く、導入先には配られていなかった。Claude Code で Remote Control を有効にすると、コミットの末尾にこの行を付けるよう指示されることがあり、導入先で実際に付いた（2026-11-13）。公開されうる履歴にセッションの ID が残るので、管理ブロックの「やらないこと」に入れて全導入先に効かせる。`Co-Authored-By:` は今までどおり付けてよい。
+- **プロジェクト側で必要な作業**: `bash .harness/bin/harness update`（コミットに出るのは `.harness/manifest.json` と `AGENTS.md` の管理ブロック）。push していないコミットに `Claude-Session:` の行が既にあれば、push 前に書き換えて外す（`git rebase -i` で reword、または `git filter-branch --msg-filter "sed '/^Claude-Session:/d'"`）。プロジェクトの固有欄に同じルールを書いていたら、重複なので消してよい。
+
 ## [1.3.1] - 2026-10-17
 
 - 修正: **「ハーネスを更新して」と頼まれても、source がこの PC の agent-harness の clone（`.harness/source.local`）だと、その clone が古いまま `update` して版が上がらなかった**（2026-10-17、別の PC で 1.2 のまま変わらなかった）。`harness` スキルの `update` の手順に、「先に source を確かめ、ローカルの clone ならその clone を `git pull --ff-only` してから `update` する」を足した。CLI の `update` 自体は、利用者の別のリポジトリを勝手に pull しない（遅れていれば 1.3.0 から警告を出す）。更新を頼まれたときのスキルなら、最新を取るのが頼んだ人の意図なので pull する。
