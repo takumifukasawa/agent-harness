@@ -134,6 +134,37 @@ printf 'g\n' >>"$W/a.sh" && g -C "$W" commit -q -am g
 OUT="$(printf '{"tool_name":"Bash","tool_input":{"command":"git push"},"cwd":"%s"}' "$W" | (cd "$WORK/other" && bash "$GATE") 2>&1)"
 expect "P31: hook の pwd が別の場所でも、payload の cwd のリポジトリを見る" deny 'まだレビューされていない'
 
+# ---- 1.5.0: claude.ai のリンク（セッション・artifact）を push させない ----
+# このファイル自体にリンクの文字列を書かない（このリポジトリの push で止まるので、組み立てる）
+HOST="claude.ai"
+stamp_out() { STAMP_OUT="$( (cd "$W" && bash "$GATE" --stamp) 2>&1)"; STAMP_RC=$?; }
+g -C "$W" checkout -q -B main origin/main 2>/dev/null; g -C "$W" reset -q --hard origin/main
+for b in $(g -C "$W" for-each-ref --format='%(refname:short)' refs/heads | grep -v '^main$'); do g -C "$W" branch -q -D "$b"; done
+printf 'h\n' >>"$W/a.sh" && g -C "$W" commit -q -am "feat: x
+
+Claude-Session: https://$HOST/code/session_01AbCdEfGh"
+stamp_out
+[ "$STAMP_RC" -ne 0 ] && printf '%s' "$STAMP_OUT" | grep -q 'session_01AbCdEfGh' \
+  && { passed=$((passed + 1)); echo "PASS  P34: メッセージにセッションの URL があれば --stamp は印を付けない"; } \
+  || { failed=$((failed + 1)); failed_names+=("P34"); echo "FAIL  P34"; printf '%s\n' "$STAMP_OUT" | sed 's/^/      | /'; }
+run_gate "git push";                       expect "P35: 印が無ければ従来どおり止める" deny 'まだレビューされていない'
+printf '%s\t%s\n' "$(g -C "$W" rev-parse HEAD)" now >>"$W/.git/harness-push-reviewed"   # 古い版の印・手で書いた印
+run_gate "git push";                       expect "P36: 印があってもメッセージのリンクで止め、外し方を言う" deny 'claude.ai のリンク.*amend'
+g -C "$W" commit -q --amend -m "feat: x
+
+Co-Authored-By: someone <noreply@example.com>"
+printf 'See https://%s/code/artifact/0a1b2c3d-4e5f\n' "$HOST" >"$W/note.md" && g -C "$W" add note.md && g -C "$W" commit -q -m note
+stamp_out
+[ "$STAMP_RC" -ne 0 ] && printf '%s' "$STAMP_OUT" | grep -q '追加行: .*artifact/0a1b2c3d' \
+  && { passed=$((passed + 1)); echo "PASS  P37: 差分の追加行に artifact の URL があれば --stamp は印を付けない"; } \
+  || { failed=$((failed + 1)); failed_names+=("P37"); echo "FAIL  P37"; printf '%s\n' "$STAMP_OUT" | sed 's/^/      | /'; }
+printf 'Artifact: https://%s/code/artifact/{uuid}\n' "$HOST" >"$W/note.md" && g -C "$W" commit -q --amend -am note
+stamp_out
+[ "$STAMP_RC" -eq 0 ] && { passed=$((passed + 1)); echo "PASS  P38: {uuid} のような置き場の書き方と Co-Authored-By は通す"; } \
+  || { failed=$((failed + 1)); failed_names+=("P38"); echo "FAIL  P38"; printf '%s\n' "$STAMP_OUT" | sed 's/^/      | /'; }
+run_gate "git push";                       expect "P39: リンクを外して印を付ければ通す" allow
+run_gate "git push" nojq;                  expect "P40: jq が無くても通す" allow
+
 echo
 echo "tests/push-gate.sh: pass=$passed fail=$failed"
 [ "$failed" = 0 ] || { printf '  failed: %s\n' "${failed_names[@]}"; exit 1; }

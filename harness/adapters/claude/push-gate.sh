@@ -13,6 +13,8 @@
 #
 # 止めるもの（判定できない形は止める側に倒す。止めても人は `! git push` で通せる）:
 #   - 印の無い先端がある push
+#   - push していない範囲のコミットメッセージ・追加行に claude.ai のリンク（セッション・artifact など）がある push
+#     （--stamp もこのときは印を付けない。1.5.0）
 #   - コミットを作る・取り込む操作（commit / merge / rebase / pull など）と push が同じコマンド
 #     （hook は実行前に走るので、そのコマンドで作られるコミットは印と照らせない）
 #   - 展開（$( ) ` ` ${ }）・eval・xargs・sh -c・--git-dir・GIT_DIR= を通した push、シェルを通す git の alias
@@ -39,11 +41,39 @@ unpushed_tips() { # <リポジトリ>
   } | awk '$0=="--"{r=1;next} !r{u[$0];next} ($0 in u) && !s[$0]++'
 }
 
+# claude.ai のセッション・artifact・チャット・共有のリンク（1.5.0）。公開されうる履歴に ID が残る。
+# Remote Control のセッションの URL（Claude-Session: の行）や、Artifact の公開先の URL がコミットに乗りうる。
+# {id} のような置き場の書き方は拾わない（ID の文字が続くものだけ）。
+CLAUDE_LINK_RE='claude\.ai/(code/)?(session_[A-Za-z0-9]+|artifact/[A-Za-z0-9_-]+|chat/[A-Za-z0-9_-]+|share/[A-Za-z0-9_-]+)'
+
+# 未 push の範囲のコミットメッセージと、差分の追加行にある claude.ai のリンク（1 行 1 件:「<短い hash> <どこ>: <リンク>」）
+claude_links() { # <リポジトリ>
+  git -C "$1" log --branches --tags HEAD --not --remotes -p --no-color --no-ext-diff --format='%x01%h%n%B' 2>/dev/null |
+    CLAUDE_LINK_RE="$CLAUDE_LINK_RE" awk '
+      BEGIN { re=ENVIRON["CLAUDE_LINK_RE"] }
+      index($0, "\001")==1 { h=substr($0,2); msg=1; next }
+      msg && /^diff --git / { msg=0 }
+      {
+        where=""
+        if (msg) where="メッセージ"
+        else if (substr($0,1,1)=="+" && substr($0,1,4)!="+++ ") where="追加行"
+        if (where!="" && match($0, re)) print h " " where ": " substr($0, RSTART, RLENGTH)
+      }' | sort -u
+}
+links_fix='push していないコミットからリンクを外してから（メッセージは git commit --amend か git rebase -i の reword、ファイルは直して amend。上流に乗ったものは書き換えない）、もう一度レビューして印を付ける。Co-Authored-By: の行は残してよい。'
+
 # ---- 印を付ける（レビューで問題なしと判断した後に、エージェントか人が実行する） ----
 if [ "${1:-}" = "--stamp" ]; then
   gd="$(git rev-parse --absolute-git-dir 2>/dev/null)" || { echo "push-gate --stamp: git のリポジトリの中で実行する" >&2; exit 1; }
   tips="$(unpushed_tips .)"
   if [ -z "$tips" ]; then echo "push-gate --stamp: push していないコミットは無い（印は要らない）"; exit 0; fi
+  links="$(claude_links .)"
+  if [ -n "$links" ]; then
+    { echo "push-gate --stamp: 印を付けなかった。push していないコミットに claude.ai のリンク（セッション・artifact など）がある:"
+      printf '%s\n' "$links" | sed 's/^/  /'
+      echo "$links_fix"; } >&2
+    exit 1
+  fi
   now="$(date +%Y-%m-%dT%H:%M:%S%z)"
   printf '%s\n' "$tips" | while read -r t; do printf '%s\t%s\n' "$t" "$now"; done >>"$gd/$STAMP_NAME"
   echo "push-gate --stamp: レビュー済みの印を付けた（$(printf '%s\n' "$tips" | wc -l | tr -d ' ') 件の先端）:"
@@ -236,7 +266,11 @@ gate_repo() { # <リポジトリのディレクトリ>
   for t in $tips; do
     awk -F'\t' -v t="$t" '$1==t{f=1} END{exit f?0:1}' "$stamp" 2>/dev/null || missing="$missing ${t:0:7}"
   done
-  [ -z "$missing" ] && return 0
+  if [ -z "$missing" ]; then
+    links="$(claude_links "$dir")"
+    [ -z "$links" ] && return 0
+    deny "agent-harness: push-gate: push していないコミットに claude.ai のリンク（セッション・artifact など）がある（$(printf '%s' "$links" | tr '\n' ';' | sed 's/"/ /g')）。${links_fix}"
+  fi
   deny "agent-harness: push-gate: push していない範囲がまだレビューされていない（印の無い先端:${missing}）。git log --branches --not --remotes の範囲をセキュリティの観点でレビューし、問題なければ bash .harness/scripts/push-gate.sh --stamp で印を付けてから push する。問題があれば直し、push していないコミットを書き換えてから（上流に乗ったものは書き換えない）レビューし直す。人が中身を確かめたうえなら ! git push で通せる。"
 }
 seen=""

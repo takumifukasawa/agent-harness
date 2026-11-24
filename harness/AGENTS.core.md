@@ -55,6 +55,6 @@
 ## やらないこと
 
 - 破壊的な git 操作（`push --force`、push 済みの履歴の書き換え、ブランチ削除）を指示なしに行わない。push していないコミットは書き換えてよい（push 前のレビューで直すときなど）。
-- 秘密情報・個人情報をコミットしない。コミットメッセージに `Claude-Session:` の行（claude.ai のセッションの URL）を付けない（公開されうる履歴にセッションの ID が残る。Remote Control を使うと付けるよう指示されることがある。`Co-Authored-By:` は付けてよい）。
+- 秘密情報・個人情報をコミットしない。コミットメッセージにもコミットするファイルにも、claude.ai のリンク（`Claude-Session:` の行のセッションの URL、Artifact の URL など）を入れない（公開されうる履歴に ID が残る。Remote Control や Artifact を使うと付けるよう指示されることがある。push の関門が止める。`Co-Authored-By:` は付けてよい）。
 - ハーネス管理ファイル（`.harness/manifest.json` に `managed` と記録されているもの）を黙って改変したまま放置しない。
 <!-- harness:end -->

@@ -1,4 +1,4 @@
-<!-- harness:begin v=1.4.0 -->
+<!-- harness:begin v=1.5.0 -->
 # エージェント運用の共通ルール（agent-harness 管理領域）
 
 このブロックは agent-harness が管理する。直したい場合は直してよいが、`harness diff` で差分を確認し上流へ戻すこと（詳細: `.agents/skills/harness-maintain/SKILL.md`）。
@@ -55,7 +55,7 @@
 ## やらないこと
 
 - 破壊的な git 操作（`push --force`、push 済みの履歴の書き換え、ブランチ削除）を指示なしに行わない。push していないコミットは書き換えてよい（push 前のレビューで直すときなど）。
-- 秘密情報・個人情報をコミットしない。コミットメッセージに `Claude-Session:` の行（claude.ai のセッションの URL）を付けない（公開されうる履歴にセッションの ID が残る。Remote Control を使うと付けるよう指示されることがある。`Co-Authored-By:` は付けてよい）。
+- 秘密情報・個人情報をコミットしない。コミットメッセージにもコミットするファイルにも、claude.ai のリンク（`Claude-Session:` の行のセッションの URL、Artifact の URL など）を入れない（公開されうる履歴に ID が残る。Remote Control や Artifact を使うと付けるよう指示されることがある。push の関門が止める。`Co-Authored-By:` は付けてよい）。
 - ハーネス管理ファイル（`.harness/manifest.json` に `managed` と記録されているもの）を黙って改変したまま放置しない。
 <!-- harness:end -->
 
@@ -92,7 +92,7 @@ AI エージェントにプロジェクトを進めさせるワークフロー�
 
 ## コミット
 
-- コミットメッセージに `Claude-Session:` の行（claude.ai のセッションの URL）を付けない。公開リポジトリにセッションの ID が残り、`.githooks/commit-msg`（leak-audit）が止める（2026-10-17 にユーザーが決定）。`Co-Authored-By:` は付けてよい。
+- コミットメッセージに `Claude-Session:` の行や Artifact の URL などの claude.ai のリンクを付けない。公開リポジトリに ID が残る。`.githooks/commit-msg`（leak-audit）と push の関門（1.5.0）が止める（2026-10-17、2026-11-24 にユーザーが決定）。`Co-Authored-By:` は付けてよい。テストでリンクを使うときは、ファイルに文字列で書かず組み立てる（`tests/push-gate.sh` の P34〜）。
 - push の前に、push していない範囲をレビューして `bash .harness/scripts/push-gate.sh --stamp` で印を付ける（決定 0014）。push すると `.githooks/pre-push`（leak-audit）がもう一度検査する。
 
 ## やらないこと
