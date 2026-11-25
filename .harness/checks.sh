@@ -3,6 +3,10 @@
 # 書式:  check [fast] "<表示名>" "<コマンド>"
 # 失敗出力には「どう直すか」を含める。
 
+# 並列数（決定 0015）。検査はどれも一時ディレクトリと使い捨ての HOME で動き、リポジトリに書き込まないので並列にできる。
+# 同時に走らせられない検査を足すときは check serial で登録する。直列で見たいときは harness check --jobs 1。
+CHECK_JOBS=auto
+
 check fast "bash syntax: bin/harness"     "bash -n bin/harness || { echo 'bin/harness に構文エラー。上の行番号を見る。'; exit 1; }"
 check fast "bash syntax: payload scripts" "for f in harness/scripts/*.sh harness/checks.seed.sh; do bash -n \"\$f\" || { echo \"\$f に構文エラー\"; exit 1; }; done"
 check fast "json: templates"              "node -e 'for (const f of process.argv.slice(1)) JSON.parse(require(\"fs\").readFileSync(f,\"utf8\"))' harness/state-template/progress.json harness/state-template/stages.json harness/manifest.example.json harness/adapters/claude/settings.fragment.json || { echo 'JSON が壊れている。上のファイルを直す。'; exit 1; }"
@@ -12,7 +16,12 @@ check fast "VERSION in CHANGELOG"         "v=\$(tr -d '\\r\\n' < VERSION); grep 
 check      "installed copies in sync"     "out=\$(bash .harness/bin/harness status); echo \"\$out\" | grep -qE '^  (managed|merge|generated) +MODIFIED' && { echo \"\$out\" | grep MODIFIED; echo 'このリポジトリでは .agents/skills 等は harness/ からの導入コピー。直すのは harness/ 側で、その後 bash bin/harness update で同期する。'; exit 1; } || true"
 check      "init smoke test"              "T=\$(mktemp -d); mkdir -p \"\$T/p\" && cd \"\$T/p\" && git init -q . && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init && bash \"\$OLDPWD/bin/harness\" init --source \"\$OLDPWD\" >/dev/null 2>&1 && bash .harness/bin/harness status | grep -qE '^  (managed|merge|generated) +MODIFIED' && { echo 'init 直後に MODIFIED がある'; rm -rf \"\$T\"; exit 1; }; rm -rf \"\$T\""
 check      "seed checks are green"        "bash tests/seed.sh"
-check      "doctor scenarios"             "bash tests/doctor.sh"
+check      "doctor scenarios (1/6)"       "DOCTOR_SHARD=1/6 bash tests/doctor.sh"
+check      "doctor scenarios (2/6)"       "DOCTOR_SHARD=2/6 bash tests/doctor.sh"
+check      "doctor scenarios (3/6)"       "DOCTOR_SHARD=3/6 bash tests/doctor.sh"
+check      "doctor scenarios (4/6)"       "DOCTOR_SHARD=4/6 bash tests/doctor.sh"
+check      "doctor scenarios (5/6)"       "DOCTOR_SHARD=5/6 bash tests/doctor.sh"
+check      "doctor scenarios (6/6)"       "DOCTOR_SHARD=6/6 bash tests/doctor.sh"
 check      "source scenarios"             "bash tests/source.sh"
 check      "update scenarios"             "bash tests/update.sh"
 check      "doctor: FAIL 0"               "bash .harness/bin/harness doctor || { echo 'doctor が FAIL を報告した。上の FAIL 行の「→」に従って直す。'; exit 1; }"

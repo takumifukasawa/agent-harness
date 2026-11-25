@@ -47,6 +47,17 @@ set -u
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASH_BIN="$(command -v bash)"
 FILTER="${1:-}"
+# 分割（決定 0015）: DOCTOR_SHARD=i/n なら、登録順の番号を n で割った余りが i-1 のシナリオだけ回す。
+# .harness/checks.sh に 1/n〜n/n を並べて並列に回す。各分割はフィクスチャを自分で作るので互いに干渉しない。
+SHARD_I=1; SHARD_N=1; SCENARIO_NO=0
+if [ -n "${DOCTOR_SHARD:-}" ]; then
+  case "$DOCTOR_SHARD" in
+    [1-9]*/[1-9]*) SHARD_I="${DOCTOR_SHARD%/*}"; SHARD_N="${DOCTOR_SHARD#*/}" ;;
+    *) echo "tests/doctor.sh: DOCTOR_SHARD は i/n の形（例: 2/4）。値: $DOCTOR_SHARD"; exit 2 ;;
+  esac
+  case "$SHARD_I$SHARD_N" in *[!0-9]*) echo "tests/doctor.sh: DOCTOR_SHARD は i/n の形（例: 2/4）。値: $DOCTOR_SHARD"; exit 2 ;; esac
+  [ "$SHARD_I" -le "$SHARD_N" ] || { echo "tests/doctor.sh: DOCTOR_SHARD の i が n を超えている（${DOCTOR_SHARD}）"; exit 2; }
+fi
 
 passed=0; failed=0
 failed_names=()
@@ -234,6 +245,8 @@ ensure_fail_bundle() {
 # ---------------------------------------------------------------- 枠
 scenario() { # <名前> <setup関数> <expect関数>
   local name="$1" setup="$2" expect="$3"
+  SCENARIO_NO=$((SCENARIO_NO + 1))
+  [ $(( (SCENARIO_NO - 1) % SHARD_N )) -eq $((SHARD_I - 1)) ] || return 0
   if [ -n "$FILTER" ]; then
     case "$name" in
       *"$FILTER"*) ;;
@@ -1209,7 +1222,11 @@ scenario "認可回帰: manifest 由来のパスは直し方にクオートな�
 # ================================================================ 集計
 rm -rf "$SHARED" 2>/dev/null
 echo
-echo "tests/doctor.sh: pass=$passed fail=$failed"
+echo "tests/doctor.sh: pass=$passed fail=$failed${DOCTOR_SHARD:+（分割 ${DOCTOR_SHARD}。全 ${SCENARIO_NO} 件のうち）}"
+if [ -n "${DOCTOR_SHARD:-}" ] && [ -z "$FILTER" ] && [ $((passed + failed)) -eq 0 ]; then
+  echo "  分割 ${DOCTOR_SHARD} に当たるシナリオが無かった（n がシナリオ数より大きい）。.harness/checks.sh の分割数を減らす。"
+  exit 1
+fi
 if [ -n "$FILTER" ] && [ $((passed + failed)) -eq 0 ]; then
   echo "  フィルタ「${FILTER}」に一致するシナリオが無かった。"
   exit 1
