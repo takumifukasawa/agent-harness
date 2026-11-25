@@ -180,6 +180,39 @@ g -C "$W" config harness.pushRequiresCheck false
 run_gate "git push";                       expect "P44: git config harness.pushRequiresCheck false なら求めない" allow
 g -C "$W" config --unset harness.pushRequiresCheck
 
+# ---- 1.9.1: 関門は push するものだけを見る（worktree を共有する別の作業場のブランチで止めない）----
+rm -rf "$W/.harness"
+stamp
+g -C "$W" worktree add -q -b wt "$WORK/wt" main 2>/dev/null
+printf 'w\n' >>"$WORK/wt/a.sh" && g -C "$WORK/wt" commit -q -am "wt: x"        # 別の作業場の、印の無いコミット
+run_gate "git push -u origin main 2>&1 | tail -3"
+expect "P46: 別の作業場のブランチに印が無くても、印のある今のブランチの push は通す（2>&1 を refspec と見ない）" allow
+run_gate "git push";                       expect "P47: refspec の無い push は今のブランチだけを見る" allow
+run_gate "git push origin wt";             expect "P48: 印の無いブランチを名指しした push は止める" deny 'まだレビューされていない.*wt --not --remotes'
+run_gate "git push --all origin";          expect "P49: --all は手元の全部を見る" deny 'まだレビューされていない'
+g -C "$W" config push.default matching
+run_gate "git push";                       expect "P50: push.default=matching なら手元の全部を見る" deny 'まだレビューされていない'
+g -C "$W" config --unset push.default
+run_gate "git push origin --delete wt";    expect "P51: 削除だけの push はコミットを上げないので通す" allow
+
+printf 'See https://%s/code/artifact/0a1b2c3d-9f\n' "$HOST" >"$WORK/wt/n2.md" && g -C "$WORK/wt" add n2.md && g -C "$WORK/wt" commit -q -m "wt: link"
+printf 'j\n' >>"$W/a.sh" && g -C "$W" commit -q -am j
+stamp_out
+[ "$STAMP_RC" -ne 0 ] && printf '%s' "$STAMP_OUT" | grep -q '印を付けた:' && printf '%s' "$STAMP_OUT" | grep -q '印を付けなかった.*' \
+  && printf '%s' "$STAMP_OUT" | grep -q 'artifact/0a1b2c3d-9f' \
+  && { passed=$((passed + 1)); echo "PASS  P52: 別のブランチにリンクがあっても、--stamp はリンクの無い先端に印を付け、付けなかった先端を言う"; } \
+  || { failed=$((failed + 1)); failed_names+=("P52"); echo "FAIL  P52"; printf '%s\n' "$STAMP_OUT" | sed 's/^/      | /'; }
+run_gate "git push origin main";           expect "P53: 別のブランチのリンクでは、今のブランチの push を止めない（2026-11-25 の実例）" allow
+printf '%s\t%s\n' "$(g -C "$W" rev-parse wt)" now >>"$W/.git/harness-push-reviewed"
+run_gate "git push origin wt:wt";          expect "P54: push するブランチにリンクがあれば、印があっても止める" deny 'push するコミットに claude.ai のリンク'
+
+printf 'k\n' >>"$W/a.sh" && g -C "$W" commit -q -am k
+run_gate "bash .harness/scripts/push-gate.sh --stamp && git push origin main"
+expect "P55: --stamp と push が同じコマンドなら、別のコマンドに分けるよう言う" deny 'stamp と push が同じコマンド.*別のコマンド'
+printf 'l\n' >>"$W/a.sh" && g -C "$W" commit -q -am l && stamp
+run_gate "git push origin HEAD~1:main";    expect "P56: 印の付いた先端の祖先を push するなら通す" allow
+run_gate "git push origin no-such-ref";    expect "P57: 解決できない refspec は手元の全部を見る（止める側に倒す。wt のリンクで止まる）" deny 'claude\.ai のリンク'
+
 echo
 echo "tests/push-gate.sh: pass=$passed fail=$failed"
 [ "$failed" = 0 ] || { printf '  failed: %s\n' "${failed_names[@]}"; exit 1; }

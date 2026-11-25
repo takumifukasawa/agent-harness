@@ -1,8 +1,8 @@
 {
-  "harness_version": "1.9.0",
+  "harness_version": "1.9.1",
   "source": "https://github.com/takumifukasawa/agent-harness.git",
   "source_ref": "",
-  "source_commit": "d3bfb7c62f0ea9cda0ce1e36c726eb24498a3a9c",
+  "source_commit": "1f7aa5340c0a39b1ca406c117d095d6759e9d64b",
   "installed_at": "2026-11-25",
   "agents": "claude,codex",
   "files": [
@@ -40,10 +40,10 @@
     {"path":"docs/rules/README.md","src":"docs-template/rules/README.md","ownership":"seed","sha256":"-","source_sha256":"-"},
     {"path":"docs/spec/README.md","src":"docs-template/spec/README.md","ownership":"seed","sha256":"-","source_sha256":"-"},
     {"path":"docs/tech-debt.md","src":"docs-template/tech-debt.md","ownership":"seed","sha256":"-","source_sha256":"-"},
-    {"path":"AGENTS.md","src":"AGENTS.core.md","ownership":"merge","sha256":"63f1d69c5a262d4fcee1d80c7ba5eb8a7b48d843","source_sha256":"-"},
+    {"path":"AGENTS.md","src":"AGENTS.core.md","ownership":"merge","sha256":"776e6647a0f4f9a46d7bf33c872e0b5b41fc0491","source_sha256":"-"},
     {"path":"CLAUDE.md","src":"adapters/claude/CLAUDE.md.template","ownership":"managed","sha256":"fcaf5d8406e36b729c4fb77c017027bc2d5eab1e","source_sha256":""},
     {"path":".harness/adapters/claude.settings.fragment.json","src":"adapters/claude/settings.fragment.json","ownership":"managed","sha256":"63ab0748598ae48f79dfd6ae33103cd5c9a5cc57","source_sha256":""},
-    {"path":".harness/scripts/push-gate.sh","src":"adapters/claude/push-gate.sh","ownership":"managed","sha256":"16646c8b29717febc6862930ac14e3f22c896344","source_sha256":""},
+    {"path":".harness/scripts/push-gate.sh","src":"adapters/claude/push-gate.sh","ownership":"managed","sha256":"6efaca738cdc9e653a1f955caeba4b0449bd5017","source_sha256":""},
     {"path":".claude/agents/implementer.md","src":"docs-template/roles/implementer.md","ownership":"generated","sha256":"1c7f5e2e52b2cc33e417b7d30a350ace45cb0b0a","source_sha256":"f3072f948cd1f677d4b332cb38f4bc3b6aecdd49"},
     {"path":".claude/agents/reviewer.md","src":"docs-template/roles/reviewer.md","ownership":"generated","sha256":"1e2baec0768b2b3f02b281fbf48e96a38d8cd53d","source_sha256":"8ce7658a4d82d774b1768e8188664bff5a5f2257"},
     {"path":".agents/skills/role-implementer/SKILL.md","src":"docs-template/roles/implementer.md","ownership":"generated","sha256":"b4e64b1b678243e1b13f23e33f52c879935b7581","source_sha256":"f3072f948cd1f677d4b332cb38f4bc3b6aecdd49"},

@@ -8,12 +8,14 @@
 #      （印は .git/harness-push-reviewed。git の中なのでコミットされない。push していないブランチの先端を記録する）
 #   3. 問題があれば直し、push していないコミットを書き換えてから（git commit --amend、
 #      git reset --soft <push 済みの基点> で作り直す など）1 に戻る。上流に乗ったものは書き換えない
-# この hook は、push していないコミットを持つブランチ・タグの先端がすべて印に載っているときだけ通す。
+# この hook は、push する先端（push の引数から決める。refspec が無ければ今のブランチ）が印に載っているときだけ通す。
+# 手元の他のブランチは見ない（1.9.1。worktree を共有すると、別の作業場のブランチも手元に並ぶ）。
+# --all / --mirror / --tags、push.default=matching、remote.*.push、glob や解決できない refspec のときは手元の全部を見る。
 # 先端が 1 つでも変われば（コミットを足した、書き換えた）印は効かなくなり、もう一度レビューが要る。
 #
 # 止めるもの（判定できない形は止める側に倒す。止めても人は `! git push` で通せる）:
-#   - 印の無い先端がある push
-#   - push していない範囲のコミットメッセージ・追加行に claude.ai のリンク（セッション・artifact など）がある push
+#   - 印の無い先端を push する push（--stamp と同じコマンドの push は、印が間に合わないので止まる）
+#   - push する範囲のコミットメッセージ・追加行に claude.ai のリンク（セッション・artifact など）がある push
 #     （--stamp もこのときは印を付けない。1.5.0）
 #   - push する先端でフルの検査（harness check --full）が通った記録が無い push（1.8.0。.harness/checks.sh に
 #     on を書いた検査があるときだけ。1.9.0。git config harness.pushRequiresCheck false で外せる）
@@ -49,8 +51,11 @@ unpushed_tips() { # <リポジトリ>
 CLAUDE_LINK_RE='claude\.ai/(code/)?(session_[A-Za-z0-9]+|artifact/[A-Za-z0-9_-]+|chat/[A-Za-z0-9_-]+|share/[A-Za-z0-9_-]+)'
 
 # 未 push の範囲のコミットメッセージと、差分の追加行にある claude.ai のリンク（1 行 1 件:「<短い hash> <どこ>: <リンク>」）
-claude_links() { # <リポジトリ>
-  git -C "$1" log --branches --tags HEAD --not --remotes -p --no-color --no-ext-diff --format='%x01%h%n%B' 2>/dev/null |
+# 範囲は <先端...> から上流に乗っていない分。先端を省くと、手元の全部のブランチ・タグ・HEAD。
+claude_links() { # <リポジトリ> [<先端>...]
+  local dir="$1"; shift
+  [ $# -gt 0 ] || set -- --branches --tags HEAD
+  git -C "$dir" log "$@" --not --remotes -p --no-color --no-ext-diff --format='%x01%h%n%B' 2>/dev/null |
     CLAUDE_LINK_RE="$CLAUDE_LINK_RE" awk '
       BEGIN { re=ENVIRON["CLAUDE_LINK_RE"] }
       index($0, "\001")==1 { h=substr($0,2); msg=1; next }
@@ -69,17 +74,29 @@ if [ "${1:-}" = "--stamp" ]; then
   gd="$(git rev-parse --absolute-git-dir 2>/dev/null)" || { echo "push-gate --stamp: git のリポジトリの中で実行する" >&2; exit 1; }
   tips="$(unpushed_tips .)"
   if [ -z "$tips" ]; then echo "push-gate --stamp: push していないコミットは無い（印は要らない）"; exit 0; fi
-  links="$(claude_links .)"
-  if [ -n "$links" ]; then
-    { echo "push-gate --stamp: 印を付けなかった。push していないコミットに claude.ai のリンク（セッション・artifact など）がある:"
-      printf '%s\n' "$links" | sed 's/^/  /'
-      echo "$links_fix"; } >&2
+  # 先端ごとに見る（1.9.1）。リンクのあるブランチがあっても、無関係な他のブランチには印を付ける
+  # （worktree を共有するリポジトリでは、別の作業場のブランチも手元のブランチとして並ぶ）
+  now="$(date +%Y-%m-%dT%H:%M:%S%z)"; ok=""; bad=""
+  for t in $tips; do
+    links="$(claude_links . "$t")"
+    if [ -n "$links" ]; then
+      bad="$bad
+  $(git log -1 --format='%h %s' "$t")$(git for-each-ref --points-at "$t" --format=' [%(refname:short)]' refs/heads refs/tags | tr -d '\n')
+$(printf '%s\n' "$links" | sed 's/^/    /')"
+    else
+      printf '%s\t%s\n' "$t" "$now" >>"$gd/$STAMP_NAME"
+      ok="$ok
+  $(git log -1 --format='%h %s' "$t")"
+    fi
+  done
+  [ -n "$ok" ] && echo "push-gate --stamp: レビュー済みの印を付けた:$ok"
+  if [ -n "$bad" ]; then
+    { echo "push-gate --stamp: 次の先端には印を付けなかった。push していないコミットに claude.ai のリンク（セッション・artifact など）がある:$bad"
+      echo "$links_fix"
+      echo "印を付けた先端（上の一覧）は、そのブランチだけを push すれば通る（例: git push origin <ブランチ>）。"; } >&2
     exit 1
   fi
-  now="$(date +%Y-%m-%dT%H:%M:%S%z)"
-  printf '%s\n' "$tips" | while read -r t; do printf '%s\t%s\n' "$t" "$now"; done >>"$gd/$STAMP_NAME"
-  echo "push-gate --stamp: レビュー済みの印を付けた（$(printf '%s\n' "$tips" | wc -l | tr -d ' ') 件の先端）:"
-  printf '%s\n' "$tips" | while read -r t; do echo "  $(git log -1 --format='%h %s' "$t")"; done
+  echo "印は付いた。push は別のコマンドで実行する（hook はコマンドの実行前に走るので、--stamp と同じコマンドの push は止まる）。"
   exit 0
 fi
 
@@ -168,7 +185,10 @@ esac
 
 # --- git push を探す（区切りでコマンドに分け、語に分けてから見る。deny.sh と同じ正規化） ---
 norm="${cmd//\\$'\n'/ }"
-norm="$(printf '%s\n' "$norm" | sed -e 's/^#.*$//' -e 's/[[:space:]]#.*$//' | tr -d "\"'\\\\" | tr ';&|(){}' '\n\n\n\n\n\n\n' | tr '\t\r<>' '    ')"
+# リダイレクト（2>&1、>/dev/null、< in など）は語ごと外す。残すと push の引数（refspec）に見えてしまう
+norm="$(printf '%s\n' "$norm" | sed -e 's/^#.*$//' -e 's/[[:space:]]#.*$//' \
+  -e 's/[0-9]*[<>]&[0-9-]*//g' -e 's/[0-9&]*>>\{0,1\}[[:space:]]*[^[:space:];&|()]*//g' -e 's/[0-9]*<<*[[:space:]]*[^[:space:];&|()]*//g' |
+  tr -d "\"'\\\\" | tr ';&|(){}' '\n\n\n\n\n\n\n' | tr '\t\r<>' '    ')"
 takes_value() {
   case "$1" in -c|-C|--git-dir|--work-tree|--namespace|--config-env|--super-prefix|--exec-path) return 0;; esac
   return 1
@@ -221,10 +241,37 @@ scan_git() { # $@ = git の後ろの語
   [ "$sub" = push ] || return 0
   n_push=$((n_push + 1))
   for t in "$@"; do
-    case "$t" in --dry-run|-n) n_dry=$((n_dry + 1)); break ;; --*) ;; -*n*) n_dry=$((n_dry + 1)); break ;; esac
+    case "$t" in --dry-run|-n) n_dry=$((n_dry + 1)); return 0 ;; --*) ;; -*n*) n_dry=$((n_dry + 1)); return 0 ;; esac
   done
+  # push される ref（1.9.1）。関門は push するものだけを見る（手元の無関係なブランチで止めない）。
+  # 「*」= 手元の全部（--all など・push.default=matching・remote.*.push・glob の refspec）、「-」= コミットを上げない（削除だけ）
+  local specs="" s remote_seen=0 all=0 del=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --all|--branches|--mirror|--tags) all=1 ;;
+      -d|--delete) del=1 ;;
+      -o|--push-option|--repo|--receive-pack|--exec) [ $# -ge 2 ] && shift ;;
+      --repo=*) remote_seen=1 ;;
+      -*) ;;
+      *) if [ "$remote_seen" -eq 0 ]; then remote_seen=1
+         elif [ "$1" = tag ] && [ $# -ge 2 ]; then shift; specs="$specs refs/tags/$1"
+         else
+           case "$1" in *'*'*) all=1 ;; esac
+           s="${1#+}"; s="${s%%:*}"
+           [ -n "$s" ] && specs="$specs $s"      # 「:<先>」は削除なのでコミットは上がらない
+         fi ;;
+    esac
+    shift
+  done
+  if [ "$all" -eq 1 ]; then specs="*"
+  elif [ -n "$specs" ]; then [ "$del" -eq 1 ] && specs="-"
+  elif [ "$del" -eq 1 ]; then specs="-"
+  elif [ "$(git -C "$gdir" config --get push.default 2>/dev/null)" = matching ] ||
+       [ -n "$(git -C "$gdir" config --get-regexp '^remote\..*\.push$' 2>/dev/null)" ]; then specs="*"
+  else specs="HEAD"                                # refspec 無し: 今のブランチ（push.default の既定 simple）
+  fi
   targets="$targets
-$gdir"
+${gdir}	${specs# }"
 }
 while IFS= read -r line; do
   set -f; set -- $line; set +f
@@ -252,25 +299,45 @@ EOF
 case "$cmd" in
   *'$('*|*'`'*|*'${'*) deny "agent-harness: push-gate: 展開を含むコマンドの push は、実行前に何が push されるか判定できない。展開を使わない git push に書き直す。" ;;
 esac
-[ "$n_dry" -eq "$n_push" ] && exit 0                    # すべての push が dry-run のときだけ素通り
+[ "$n_dry" -eq "$n_push" ] && exit 0                    # すべての push が dry-run のときだけ素通り（dry-run の push は targets に入れない）
 if [ "$has_commit" -eq 0 ]; then
   deny "agent-harness: push-gate: コミットを作る・取り込む操作（commit / merge / rebase / pull など）と push が同じコマンドに入っている。分けて実行する（先にコミットし、レビューして印を付けてから push する）。"
 fi
 
 # --- 関門（push 先のリポジトリごと） ---
-gate_repo() { # <リポジトリのディレクトリ>
-  local dir="$1" gd tips t missing="" stamp
+# 印があるか: 先端そのものか、印の付いた先端の祖先なら済み（`git push origin HEAD~1:main` など。
+# 祖先の範囲は、印を付けたときのレビューの範囲に含まれる）
+is_stamped() { # <リポジトリ> <印のファイル> <コミット>
+  awk -F'\t' -v t="$3" '$1==t{f=1} END{exit f?0:1}' "$2" 2>/dev/null && return 0
+  [ -f "$2" ] || return 1
+  local s
+  for s in $(tail -n 300 "$2" | cut -f1 | sort -u); do
+    git -C "$1" merge-base --is-ancestor "$3" "$s" 2>/dev/null && return 0
+  done
+  return 1
+}
+gate_repo() { # <リポジトリのディレクトリ> <push される ref（空白区切り）| * | ->
+  local dir="$1" spec="$2" gd tips="" t c missing="" stamp scope
   [ -d "$dir" ] || deny "agent-harness: push-gate: push 先のディレクトリ（${dir}）が辿れない。判定できないので止めた。"
   gd="$(git -C "$dir" rev-parse --absolute-git-dir 2>/dev/null)" || return 0   # git の外での push は git 自身が失敗する
-  tips="$(unpushed_tips "$dir")"
-  [ -n "$tips" ] || return 0
+  [ "$spec" = "-" ] && return 0                                                # 削除だけの push はコミットを上げない
+  if [ "$spec" != "*" ]; then
+    for t in $spec; do   # push される ref を解決する。解決できなければ手元の全部を見る（止める側に倒す）
+      c="$(git -C "$dir" rev-parse -q --verify "$t^{commit}" 2>/dev/null)" || { spec="*"; break; }
+      [ -n "$(git -C "$dir" rev-list -1 "$c" --not --remotes 2>/dev/null)" ] && tips="$tips $c"
+    done
+  fi
+  if [ "$spec" = "*" ]; then tips="$(unpushed_tips "$dir")"; scope="--branches --tags HEAD"
+  else scope="$(for t in $spec; do printf '%s ' "$t"; done)"; fi
+  [ -n "$(printf '%s' "$tips" | tr -d '[:space:]')" ] || return 0
   stamp="$gd/$STAMP_NAME"
   for t in $tips; do
-    awk -F'\t' -v t="$t" '$1==t{f=1} END{exit f?0:1}' "$stamp" 2>/dev/null || missing="$missing ${t:0:7}"
+    is_stamped "$dir" "$stamp" "$t" || missing="$missing ${t:0:7}"
   done
   if [ -z "$missing" ]; then
-    links="$(claude_links "$dir")"
-    [ -n "$links" ] && deny "agent-harness: push-gate: push していないコミットに claude.ai のリンク（セッション・artifact など）がある（$(printf '%s' "$links" | tr '\n' ';' | sed 's/"/ /g')）。${links_fix}"
+    # shellcheck disable=SC2086
+    links="$(claude_links "$dir" $tips)"
+    [ -n "$links" ] && deny "agent-harness: push-gate: push するコミットに claude.ai のリンク（セッション・artifact など）がある（$(printf '%s' "$links" | tr '\n' ';' | sed 's/"/ /g')）。${links_fix}"
     # フルの検査（harness check --full）が push する先端で通っていること（1.8.0。決定 0015）。普段の check が
     # 飛ばした検査を、上流に乗る前に一度は回すため。求めるのは .harness/checks.sh に on を書いた検査があるとき
     # だけ（1.9.0）。on が無ければ普段の check が毎回全部回るので、push の前にもう一度回しても遅くなるだけ。
@@ -288,14 +355,17 @@ gate_repo() { # <リポジトリのディレクトリ>
     fi
     return 0
   fi
-  deny "agent-harness: push-gate: push していない範囲がまだレビューされていない（印の無い先端:${missing}）。git log --branches --not --remotes の範囲をセキュリティの観点でレビューし、問題なければ bash .harness/scripts/push-gate.sh --stamp で印を付けてから push する。問題があれば直し、push していないコミットを書き換えてから（上流に乗ったものは書き換えない）レビューし直す。人が中身を確かめたうえなら ! git push で通せる。"
+  case "$cmd" in
+    *--stamp*) deny "agent-harness: push-gate: --stamp と push が同じコマンドに入っている。hook はコマンドの実行前に走るので、同じコマンドの中で付ける印は間に合わない（印の無い先端:${missing}）。先に bash .harness/scripts/push-gate.sh --stamp だけを実行し、そのあと push を別のコマンドで実行する。" ;;
+  esac
+  deny "agent-harness: push-gate: push する範囲がまだレビューされていない（印の無い先端:${missing}）。git log ${scope}--not --remotes の範囲をセキュリティの観点でレビューし、問題なければ bash .harness/scripts/push-gate.sh --stamp で印を付けてから、push を別のコマンドで実行する（同じコマンドの中の印は間に合わない）。問題があれば直し、push していないコミットを書き換えてから（上流に乗ったものは書き換えない）レビューし直す。人が中身を確かめたうえなら ! git push で通せる。"
 }
 seen=""
 while IFS= read -r t; do
   [ -n "$t" ] || continue
   case "$seen" in *"|$t|"*) continue ;; esac
   seen="$seen|$t|"
-  gate_repo "$t"
+  gate_repo "${t%%	*}" "${t#*	}"
 done <<EOF3
 $targets
 EOF3
