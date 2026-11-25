@@ -3,6 +3,13 @@
 各版に「プロジェクト側で必要な作業」を必ず書く。`harness update` はこの節を表示する。
 semver: managed ファイルの移動・マーカー形式変更は major、ルール/スキルの追加は minor、文言修正は patch。
 
+## [1.6.0] - 2026-11-25
+
+- 追加: **`harness check --only '<表示名の一部>'`。** 表示名が拡張正規表現に合う検査だけを回す。作業の途中で、変更に関係する検査だけを確かめるため。`--fast` と併用すると両方に合うものだけ。
+- 変更: **フルの `check` を回す場面を絞った**（決定 0015）。実装役は `--fast` と関係する検査（`--only`）だけを回し、フルは統括が判定で 1 回回す（`task-orchestrate` スキルの実装役への指示、`docs/roles/implementer.md` の雛形）。管理ブロックの「検証と報告」にも、途中は `--fast` / `--only`、フルは完了時に 1 回、と足した。検査の件数は減らない。2026-11-25 にこのリポジトリのフルの `check` が 29 分かかっていて、1 タスクでフルが数回走ると検査待ちだけで 1〜2 時間になっていた。
+- 追加: **`--fast`（pre-commit）で 5 秒を超えた fast の検査を最後に NOTE で挙げる**（落とさない）。重い検査に `fast` が付くと、コミットのたびに待たされる（このリポジトリでは 1 秒 → 約 4.6 分になっていた。シナリオテスト一式から `fast` を外し、11 秒に戻した）。閾値は環境変数 `HARNESS_FAST_WARN_SEC` で変えられる。回帰は `tests/check-runner.sh`（7 シナリオ）。
+- **プロジェクト側で必要な作業**: `bash .harness/bin/harness update`（コミットに出るのは `.harness/manifest.json` と `AGENTS.md` の管理ブロック）。コミット時に NOTE が出たら、挙がった検査の `fast` を `.harness/checks.sh` で外す（seed なので `update` では届かない。検査はフルで今までどおり走る）。`docs/roles/implementer.md` を雛形のままにしているプロジェクトは、手順 4 を雛形（`harness check --fast` と `--only`。フルは orchestrator）に合わせる（seed なので `update` では届かない。`task-orchestrate` スキルの指示は `update` で届く）。
+
 ## [1.5.0] - 2026-11-24
 
 - 追加: **push の関門（`push-gate.sh`）が、claude.ai のリンクを含むコミットを push させない。** push していない範囲のコミットメッセージと差分の追加行に、claude.ai のセッション・Artifact・チャット・共有の URL（ID の文字が続くもの）があれば、`--stamp` は印を付けず、印があっても push を止める。1.4.0 の `Claude-Session:` のルールは文章だけで、導入先では何も止めていなかった。Artifact の公開先の URL もコミットメッセージに乗ることがある（2026-11-24）。`{uuid}` のような置き場の書き方と `Co-Authored-By:` は通す。管理ブロックの「やらないこと」も、セッションの URL だけでなく claude.ai のリンク全般にした。回帰は `tests/push-gate.sh` の P34〜P40（40 シナリオ）。

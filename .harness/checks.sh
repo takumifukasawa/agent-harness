@@ -21,22 +21,22 @@ check fast "manifest source is shared value" "src=\$(sed -n 's/^  \"source\": \"
 # pre-commit フックが「実際に走る形」でコミットされているか（git は実行ビットの無いフックを黙って無視する）。
 check fast "githooks are executable"      "bash tests/githooks.sh"
 # gc の実行経路（tech-debt #8）。日付判定が環境差で無言でスキップされていないかを見る。
-check fast "gc scenarios"                 "bash tests/gc.sh"
+check      "gc scenarios"                 "bash tests/gc.sh"
 # harness task start/done の実行経路（docs/spec/task-timing.md T01）。id はタスクでもレビューでも
 # 良いこと、既存の tasks 配列を壊さないこと、state/stages.json が無い場合に黙って失敗しないことを見る。
-check fast "task timing scenarios"        "bash tests/task-timing.sh"
+check      "task timing scenarios"        "bash tests/task-timing.sh"
 # harness eta の実行経路（docs/spec/task-timing.md T02）。完了数/全体数・経過時間・残りの推定
 # （幅、単純平均にしない）・レビューの固定枠・実績不足時の「不明」・記録欠けの指摘・--json を見る。
-check fast "eta scenarios"                "bash tests/eta.sh"
+check      "eta scenarios"                "bash tests/eta.sh"
 # seed の case 衝突判定（tech-debt #13）。実 FS の case 区別はテストから切り替えられないので、
 # 判定関数 seed_case_collision() を単体で呼ぶ（衝突あり/衝突なし/case を区別する環境の 3 系統）。
-check fast "seed case collision (unit)"   "bash tests/seed-case.sh"
+check      "seed case collision (unit)"   "bash tests/seed-case.sh"
 # source のキャッシュが、履歴を作り直した source にも追従すること（0.11.2。古い版を黙って配らない）。
-check fast "source cache follows origin"  "bash tests/source-cache.sh"
+check      "source cache follows origin"  "bash tests/source-cache.sh"
 # lockfile 方式（1.0.0。決定 0013）: 配布物はコミットせず、install が manifest に固定した版を入れる。
 check      "lockfile scenarios"          "bash tests/lockfile.sh"
 # push の前にセキュリティレビューの結果を確かめる関門（1.2.0。決定 0014）
-check fast "push gate scenarios"         "bash tests/push-gate.sh"
+check     "push gate scenarios"         "bash tests/push-gate.sh"
 # 公開してはいけないもの（パス・メールアドレス・トークン・非公開リンク。固有名は一覧があれば）を stage した差分で止める。
 # 検査の中身は leak-audit（agent-skills）が唯一の正。pre-push / commit-msg は .githooks/ にある。leak-audit が無い PC では
 # 警告して通す（決定 0013 の T01〜T04 をこれで置き換えた。計画 payload-containment）。
@@ -54,3 +54,6 @@ check fast "bash 3.2: no unbraced var before non-ASCII" "bash tests/lint-bash-co
 # 生きているか（tech-debt #15 の回帰検査）。コマンドを伴わない bare exec の 2>/dev/null が
 # シェル全体へ永続適用され、以後の stderr が全部消える bash の落とし穴が再発していないかを見る。
 check fast "hash server: stderr stays live" "bash tests/hash-server-stderr.sh"
+
+# check.sh 自身（--fast で重い fast の検査を言う。決定 0015）。sleep を使うので fast にしない
+check      "check runner scenarios"      "bash tests/check-runner.sh"

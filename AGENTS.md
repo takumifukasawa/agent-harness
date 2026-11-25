@@ -1,4 +1,4 @@
-<!-- harness:begin v=1.5.0 -->
+<!-- harness:begin v=1.6.0 -->
 # エージェント運用の共通ルール（agent-harness 管理領域）
 
 このブロックは agent-harness が管理する。直したい場合は直してよいが、`harness diff` で差分を確認し上流へ戻すこと（詳細: `.agents/skills/harness-maintain/SKILL.md`）。
@@ -32,7 +32,7 @@
 
 ## 検証と報告
 
-- 実装後は `.harness/scripts/check.sh`（`harness check`）を回す。これが「完了」の客観条件。
+- 実装後は `.harness/scripts/check.sh`（`harness check`）を回す。これが「完了」の客観条件。作業の途中は `--fast` や `--only '<表示名の一部>'` で関係する検査だけを回し、フルは完了時に 1 回にする。
 - 振る舞いを変えたらテストを足す（バグ修正は再現テストから）。テスト基盤が無い・書けないときは足さずに完了報告へ理由を 1 行書く。確認は求めない。
 - 結果は出力ごと報告する。失敗はそのまま伝え、スキップした検査は明言する。
 - 検査を通すためにテストや検査そのものを弱めない。必要なら理由を `docs/decisions/` に残して人間に判断を委ねる。
