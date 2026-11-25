@@ -15,6 +15,8 @@
 #   - 印の無い先端がある push
 #   - push していない範囲のコミットメッセージ・追加行に claude.ai のリンク（セッション・artifact など）がある push
 #     （--stamp もこのときは印を付けない。1.5.0）
+#   - push する先端でフルの検査（harness check --full）が通った記録が無い push（1.8.0。git config
+#     harness.pushRequiresCheck false で外せる）
 #   - コミットを作る・取り込む操作（commit / merge / rebase / pull など）と push が同じコマンド
 #     （hook は実行前に走るので、そのコマンドで作られるコミットは印と照らせない）
 #   - 展開（$( ) ` ` ${ }）・eval・xargs・sh -c・--git-dir・GIT_DIR= を通した push、シェルを通す git の alias
@@ -268,8 +270,20 @@ gate_repo() { # <リポジトリのディレクトリ>
   done
   if [ -z "$missing" ]; then
     links="$(claude_links "$dir")"
-    [ -z "$links" ] && return 0
-    deny "agent-harness: push-gate: push していないコミットに claude.ai のリンク（セッション・artifact など）がある（$(printf '%s' "$links" | tr '\n' ';' | sed 's/"/ /g')）。${links_fix}"
+    [ -n "$links" ] && deny "agent-harness: push-gate: push していないコミットに claude.ai のリンク（セッション・artifact など）がある（$(printf '%s' "$links" | tr '\n' ';' | sed 's/"/ /g')）。${links_fix}"
+    # フルの検査（harness check --full）が push する先端で通っていること（1.8.0。決定 0015）。普段の check は差分に
+    # 関係する検査だけ回すので、飛ばした検査が上流に乗る前に一度は回るようにする。
+    # git config harness.pushRequiresCheck false で外せる（フルの検査が長すぎるプロジェクトなど）。
+    if [ -f "$dir/.harness/scripts/check.sh" ] && [ "$(git -C "$dir" config --get harness.pushRequiresCheck 2>/dev/null)" != false ]; then
+      local unchecked=""
+      local tr
+      for t in $tips; do   # 記録は検査した中身（ツリー）のハッシュ。先端のツリーと照らす
+        tr="$(git -C "$dir" rev-parse -q --verify "$t^{tree}" 2>/dev/null)"
+        awk -F'\t' -v t="$tr" 't!="" && $1==t{f=1} END{exit f?0:1}' "$gd/harness-check-passed" 2>/dev/null || unchecked="$unchecked ${t:0:7}"
+      done
+      [ -n "$unchecked" ] && deny "agent-harness: push-gate: push する先端でフルの検査が通っていない（${unchecked# }）。普段の harness check は差分に関係する検査だけなので、push の前に bash .harness/bin/harness check --full を回す（全部通れば検査した中身が記録され、その中身のコミットなら push できる）。落ちたら直してコミットし、レビューと印をやり直す。このプロジェクトで外すなら git config harness.pushRequiresCheck false。"
+    fi
+    return 0
   fi
   deny "agent-harness: push-gate: push していない範囲がまだレビューされていない（印の無い先端:${missing}）。git log --branches --not --remotes の範囲をセキュリティの観点でレビューし、問題なければ bash .harness/scripts/push-gate.sh --stamp で印を付けてから push する。問題があれば直し、push していないコミットを書き換えてから（上流に乗ったものは書き換えない）レビューし直す。人が中身を確かめたうえなら ! git push で通せる。"
 }

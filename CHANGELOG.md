@@ -3,6 +3,14 @@
 各版に「プロジェクト側で必要な作業」を必ず書く。`harness update` はこの節を表示する。
 semver: managed ファイルの移動・マーカー形式変更は major、ルール/スキルの追加は minor、文言修正は patch。
 
+## [1.8.0] - 2026-11-25
+
+- 変更: **`harness check` の既定を「差分に関係する検査だけ」にした**（決定 0015）。`.harness/checks.sh` で `check on "<パス…>" "<表示名>" "<コマンド>"` と書いた検査は、push していないコミット・コミットしていない変更・追跡していない新しいファイルがそのパスに当たるときだけ回る（末尾 `/` はその下全部、`*.md` のようなグロブも可）。**`on` の無い検査は今までどおり毎回回る**ので、`on` を書くまでは挙動は変わらない。`.harness/checks.sh` 自体が変われば全部回す。上流（remote）が無いなど差分を求められないときも全部回す。全部回すのは `harness check --full`。
+- 追加: **push の関門が、push する先端で `harness check --full` が通った記録を求める。** 普段の `check` で飛ばした検査が、上流に乗る前に必ず一度は回るようにするため。`--full`（または、結果として全部回った `check`）が全部通ると、検査した中身（追跡しているファイルのツリー）のハッシュを `.git/harness-check-passed` に記録する（git の中なのでコミットされない）。関門は push する先端のツリーと照らすので、検査の後に中身を変えずにコミットしても、コミットメッセージだけを直しても効く。中身を変えると効かなくなる。追跡していない新しいファイルがあるときは記録しない。フルの検査が長すぎるプロジェクトは `git config harness.pushRequiresCheck false` で外せる。
+- 変更: 管理ブロック・`task-orchestrate` スキル・`docs/roles/implementer.md` の雛形の検査の指示を、`harness check`（差分）と push 前の `harness check --full` に揃えた（1.6.0 の `--fast` + `--only` の指示を置き換えた。`--only` はそのまま使える）。
+- 回帰: `tests/check-runner.sh`（25 シナリオ）、`tests/push-gate.sh`（44 シナリオ）。このリポジトリの `checks.sh` には検査ごとの `on` を書いた（docs だけの変更なら CLI のシナリオは回らない）。
+- **プロジェクト側で必要な作業**: `bash .harness/bin/harness update`（コミットに出るのは `.harness/manifest.json` と `AGENTS.md` の管理ブロック）。**これ以後の push の前に `bash .harness/bin/harness check --full` が要る**（通らないと push の関門が止める）。速くしたいプロジェクトは、重い検査に `on "<関係するパス>"` を書く（seed なので `update` では届かない。迷うパスは広めに書く。狭すぎると普段の check で飛ばすが、push 前の `--full` では必ず回る）。`docs/roles/implementer.md` を雛形のままにしているなら、手順 4 を雛形に合わせる。
+
 ## [1.7.0] - 2026-11-25
 
 - 追加: **`harness check` が検査を並列に回せる**（決定 0015）。並列数は `--jobs N`（`auto` で CPU 数）、環境変数 `HARNESS_CHECK_JOBS`、`.harness/checks.sh` の先頭に書く `CHECK_JOBS=N` の順で決まる。**既定は 1（直列。今までどおり）。** 並列でも、各検査の出力はファイルに分けて受け、登録順にその見出しの下へ出すので、どれがなぜ落ちたかは直列と同じに読める。他の検査と同時に走らせられない検査（同じポートや固定のファイルを使うなど）は `check serial "<表示名>" "<コマンド>"` で登録すると、単独で走る。

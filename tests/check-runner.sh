@@ -94,6 +94,48 @@ run
 { [ "$RC" -eq 0 ] && ! printf '%s' "$OUT" | grep -q '別の harness check'; } && ok "C16: 持ち主のプロセスが無いロックは引き継ぐ" || ng "C16"
 [ ! -e "$LK" ] && ok "C17: 終わればロックを外す" || { OUT="lock remains: $LK"; ng "C17"; }
 
+# ---- C18〜C25: 既定は差分に関係する検査だけ / --full と記録（1.8.0。決定 0015）----
+g() { git -c user.email=t@t -c user.name=t "$@"; }
+git init -q --bare "$WORK/o.git"; g clone -q "$WORK/o.git" "$WORK/r" 2>/dev/null
+R="$WORK/r"; mkdir -p "$R/.harness" "$R/src" "$R/docs"
+printf '%s\n' 'check "always" "true"' 'check on "src/" "src tests" "true"' 'check on "*.md" "md lint" "true"' \
+  'check on "lib" "lib tests" "true"' >"$R/.harness/checks.sh"
+echo a >"$R/src/a.sh"; echo r >"$R/README.md"; g -C "$R" add -A && g -C "$R" commit -q -m base && g -C "$R" push -q origin HEAD 2>/dev/null
+runr() { OUT="$(cd "$R" && bash "$RUNNER" "$@" 2>&1)"; RC=$?; }
+runr
+{ [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'pass=1 fail=0 skipped=3' && printf '%s' "$OUT" | grep -q '飛ばした検査 3 件'; } \
+  && ok "C18: 差分が無ければ on の無い検査だけ回し、飛ばした件数を言う" || ng "C18"
+echo b >>"$R/src/a.sh"
+runr
+{ printf '%s' "$OUT" | grep -q '^── src tests' && ! printf '%s' "$OUT" | grep -q '^── md lint'; } \
+  && ok "C19: コミットしていない変更が on のパス（末尾 /）に当たる検査を回す" || ng "C19"
+g -C "$R" commit -q -am src && echo n >"$R/docs/new.md"
+runr
+{ printf '%s' "$OUT" | grep -q '^── src tests' && printf '%s' "$OUT" | grep -q '^── md lint'; } \
+  && ok "C20: push していないコミットと、追跡していない新しいファイル（グロブ *.md）も差分に入る" || ng "C20"
+rm "$R/docs/new.md"; mkdir -p "$R/lib/x"; echo l >"$R/lib/x/y.sh"
+runr
+printf '%s' "$OUT" | grep -q '^── lib tests' && ok "C21: 末尾 / の無いディレクトリ名も、その下のファイルに当たる" || ng "C21"
+rm -rf "$R/lib"; echo '# changed' >>"$R/.harness/checks.sh"
+runr
+{ printf '%s' "$OUT" | grep -q 'pass=4 fail=0 skipped=0' && ! printf '%s' "$OUT" | grep -q '差分に関係する'; } \
+  && ok "C22: .harness/checks.sh 自体が変われば全部回す" || ng "C22"
+GDR="$(cd "$R" && git rev-parse --absolute-git-dir)"
+grep -q . "$GDR/harness-check-passed" 2>/dev/null && ok "C22b: 差分モードでも結果として全部回って通れば、通った記録を残す" || { OUT="記録が無い"; ng "C22b"; }
+rm -f "$GDR/harness-check-passed"
+echo u >"$R/untracked.txt"
+runr --full
+{ printf '%s' "$OUT" | grep -q 'pass=4' && printf '%s' "$OUT" | grep -q '追跡していない新しいファイル.*残さない' && [ ! -s "$GDR/harness-check-passed" ]; } \
+  && ok "C23: --full でも追跡していない新しいファイルがあれば、通った記録を残さない" || ng "C23"
+rm "$R/untracked.txt"
+runr --full
+g -C "$R" commit -q -am checks
+{ printf '%s' "$OUT" | grep -q 'フルの検査が通ったことを記録した' && grep -q "^$(g -C "$R" rev-parse 'HEAD^{tree}')	" "$GDR/harness-check-passed"; } \
+  && ok "C24: コミット前に --full が全部通れば、検査した中身を記録し、そのままコミットした先端の中身と一致する" || ng "C24"
+runr --only 'md lint'
+{ printf '%s' "$OUT" | grep -q 'pass=1 fail=0 skipped=3' && ! printf '%s' "$OUT" | grep -q '差分に関係する'; } \
+  && ok "C25: --only は差分に関係なく、名前で選んだ検査を回す（記録はしない）" || ng "C25"
+
 echo
 echo "tests/check-runner.sh: pass=$passed fail=$failed"
 [ "$failed" = 0 ] || { printf '  failed: %s\n' "${failed_names[@]}"; exit 1; }

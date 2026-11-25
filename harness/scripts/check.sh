@@ -2,7 +2,12 @@
 # harness check — プロジェクトが .harness/checks.sh に登録した検査を順に実行する。
 # エージェントはこの結果を「実装完了の客観条件」として使う。LLM は使わない。
 #
-# 使い方:  bash .harness/scripts/check.sh [--fast] [--only <表示名の一部>]
+# 使い方:  bash .harness/scripts/check.sh [--full] [--fast] [--only <表示名の一部>] [--jobs N|auto]
+#   既定   : 差分に関係する検査だけ回す（1.8.0。決定 0015）。checks.sh で `on "<パス…>"` を書いた検査は、
+#            push していないコミットと作業中の変更がそのパスに当たるときだけ回る。on の無い検査は毎回回る。
+#            .harness/checks.sh 自体が変わっていれば全部回す。差分が求められなければ（git の外など）全部回す。
+#   --full : 全部回す。全部通り、コミットしていない変更が無ければ、HEAD を「フルの検査が通った」と記録する
+#            （.git/harness-check-passed。push の関門がこれを求める）。
 #   --fast : pre-commit 用。checks.sh で `fast` と印を付けた検査だけ実行する。
 #   --only <表示名の一部>: 表示名がこの拡張正規表現に合う検査だけ実行する（作業の途中で、変更に関係する
 #            検査だけを回すため。完了の判定はフルの check で行う。決定 0015）。--fast と併用すると両方に合うものだけ。
@@ -20,17 +25,18 @@
 # エージェントはエラー出力をそのまま文脈に取り込むので、そこが最も安い指示経路になる。
 set -u
 
-FAST=0; ONLY=""; CLI_JOBS=""
+FAST=0; ONLY=""; CLI_JOBS=""; FULL=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --fast) FAST=1; shift ;;
+    --full) FULL=1; shift ;;
     --only) [ $# -ge 2 ] && [ -n "$2" ] || { echo "harness check: --only の後ろに表示名（の一部。拡張正規表現）を書く。例: --only 'push gate|lint'" >&2; exit 2; }
             ONLY="$2"; shift 2 ;;
     --only=*) ONLY="${1#--only=}"; shift ;;
     -j|--jobs) [ $# -ge 2 ] || { echo "harness check: $1 の後ろに並列数（数字か auto）を書く" >&2; exit 2; }
             CLI_JOBS="$2"; shift 2 ;;
     --jobs=*) CLI_JOBS="${1#--jobs=}"; shift ;;
-    *) echo "harness check: 知らない引数（$1）。使い方: harness check [--fast] [--only '<表示名の一部>'] [--jobs N|auto]" >&2; exit 2 ;;
+    *) echo "harness check: 知らない引数（$1）。使い方: harness check [--full] [--fast] [--only '<表示名の一部>'] [--jobs N|auto]" >&2; exit 2 ;;
   esac
 done
 
@@ -99,18 +105,49 @@ resolve_jobs() {
 }
 Q_NAME=(); Q_CMD=(); Q_SERIAL=()
 
+# ---- 差分（既定。--full / --fast / --only のときは使わない）----
+# 変わったファイル = push していないコミット（HEAD から上流に無い分）+ コミットしていない変更 + 追跡していない新しいファイル。
+CHANGED_MODE=0; CHANGED=""; unaffected=0
+if [ "$FULL" = 0 ] && [ "$FAST" = 0 ] && [ -z "$ONLY" ]; then
+  if git -C "$ROOT" rev-parse -q --verify HEAD >/dev/null 2>&1 && [ -n "$(git -C "$ROOT" remote 2>/dev/null)" ]; then
+    CHANGED="$( { git -C "$ROOT" -c core.quotePath=false log --format= --name-only HEAD --not --remotes 2>/dev/null
+                  git -C "$ROOT" -c core.quotePath=false diff --name-only HEAD 2>/dev/null
+                  git -C "$ROOT" -c core.quotePath=false ls-files --others --exclude-standard 2>/dev/null
+                } | awk 'NF && !s[$0]++')"
+    CHANGED_MODE=1
+    if printf '%s\n' "$CHANGED" | grep -qxF '.harness/checks.sh'; then CHANGED_MODE=0; fi   # 検査の登録が変われば全部
+  fi
+fi
+affected() { # <パス…（空白区切り。末尾 / はその下全部、* などのグロブ可）>
+  local f p pats
+  [ -n "$CHANGED" ] || return 1
+  set -f; pats=($1); set +f      # グロブはここでは展開しない（下の case で照らす）
+  [ "${#pats[@]}" -gt 0 ] || return 1   # bash 3.2 は空の配列を "${pats[@]}" で展開すると set -u で落ちる
+  while IFS= read -r f; do
+    for p in "${pats[@]}"; do
+      case "$p" in */) case "$f" in "$p"*) return 0 ;; esac ;; esac
+      # shellcheck disable=SC2254
+      case "$f" in $p|"$p"/*) return 0 ;; esac
+    done
+  done <<EOF_CHANGED
+$CHANGED
+EOF_CHANGED
+  return 1
+}
+
 check() {
-  local speed="" serial=0 name cmd
+  local speed="" serial=0 on="" has_on=0 name cmd
   while :; do
     case "${1:-}" in
       fast) speed="fast"; shift ;;
       serial) serial=1; shift ;;
+      on) on="${2:-}"; has_on=1; shift 2 2>/dev/null || shift ;;
       *) break ;;
     esac
   done
   name="${1:-}"; cmd="${2:-}"
   if [ -z "$name" ] || [ -z "$cmd" ]; then
-    echo "harness check: checks.sh の書式エラー。check [fast] [serial] \"<表示名>\" \"<コマンド>\" の形で書く（name='$name')" >&2
+    echo "harness check: checks.sh の書式エラー。check [fast] [serial] [on \"<パス…>\"] \"<表示名>\" \"<コマンド>\" の形で書く（name='$name')" >&2
     fail=$((fail + 1)); failed_names+=("(malformed check)"); return
   fi
   if [ "$FAST" = 1 ] && [ "$speed" != "fast" ]; then
@@ -118,6 +155,9 @@ check() {
   fi
   if [ -n "$ONLY" ] && ! printf '%s\n' "$name" | grep -qE -- "$ONLY"; then
     skipped=$((skipped + 1)); return
+  fi
+  if [ "$CHANGED_MODE" = 1 ] && [ "$has_on" = 1 ] && ! affected "$on"; then
+    skipped=$((skipped + 1)); unaffected=$((unaffected + 1)); return
   fi
   case "$name" in
     "docs index exists"|"doctor: FAIL 0") ;;   # seed（checks.seed.sh）の検査。名前を変えたら tests/seed.sh が落ちる
@@ -192,6 +232,27 @@ run_queue
 
 echo
 echo "harness check: pass=$pass fail=$fail skipped=$skipped  (${SECONDS}s)"
+if [ "$CHANGED_MODE" = 1 ]; then
+  echo "  差分に関係する検査だけ回した（変わったファイル $(printf '%s' "$CHANGED" | awk 'NF' | wc -l | tr -d ' ') 件。関係しないので飛ばした検査 ${unaffected} 件）。全部回すのは harness check --full（push の前に要る）。"
+fi
+# フルの検査が全部通ったら、検査した中身（追跡しているファイルのツリー）のハッシュを記録する（push の関門が
+# push する先端のツリーと照らす。決定 0015）。ツリーで持つので、検査の後に中身を変えずにコミットしたり、
+# コミットメッセージだけを直したりしても効く。追跡していない新しいファイルがあると、検査した中身と push する
+# 中身がずれうるので記録しない。
+if [ "$fail" -eq 0 ] && [ "$FAST" = 0 ] && [ -z "$ONLY" ] && [ "$skipped" -eq 0 ]; then
+  if gd="$(git -C "$ROOT" rev-parse --absolute-git-dir 2>/dev/null)" && git -C "$ROOT" rev-parse -q --verify HEAD >/dev/null 2>&1; then
+    if [ -n "$(git -C "$ROOT" ls-files --others --exclude-standard 2>/dev/null | head -1)" ]; then
+      echo "  追跡していない新しいファイルがあるので、push 用の記録（フルの検査が通った）は残さない。コミットするか .gitignore に入れてから harness check --full を回す。"
+    else
+      snap="$(git -C "$ROOT" stash create 2>/dev/null)"   # コミットしていない変更を含む中身（作業ツリーは変えない）
+      tree="$(git -C "$ROOT" rev-parse -q --verify "${snap:-HEAD}^{tree}" 2>/dev/null)"
+      if [ -n "$tree" ]; then
+        printf '%s\t%s\n' "$tree" "$(date +%Y-%m-%dT%H:%M:%S%z)" >>"$gd/harness-check-passed"
+        echo "  フルの検査が通ったことを記録した（中身 ${tree:0:7}。この中身のコミットなら push の関門を通る）。"
+      fi
+    fi
+  fi
+fi
 
 # 遅い順の要約。どの検査を直せば効くかを、推定ではなく実測で決めるための材料
 # （`docs/spec/check-speed.md` の A3）。秒未満は 0s と出るので、合計と食い違う分は
@@ -210,7 +271,7 @@ if [ -n "$slow_fast" ]; then
   echo "    検査は減らない（harness check では今までどおり走る）。"
 fi
 # seed の検査しか無いと pass は常に空振りする（決定 0012）。pre-commit（--fast）では毎回うるさいので出さない。
-if [ "$FAST" = 0 ] && [ "$product" -eq 0 ]; then
+if [ "$FAST" = 0 ] && [ "$product" -eq 0 ] && [ "$unaffected" -eq 0 ]; then
   echo "  NOTE: プロダクトの検査が 0 件。この pass は何も保証しない。"
   echo "    テスト・lint・型検査など「緑なら完了」と言えるコマンドを .harness/checks.sh に"
   echo "    check \"<表示名>\" \"<コマンド>\" の形で登録する（例は同ファイル冒頭のコメント）。"

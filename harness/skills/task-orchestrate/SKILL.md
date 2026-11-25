@@ -69,7 +69,7 @@ title: <タイトル>
   - ...
 触ってよい範囲: src/api/**, spec/api/**
 やり方: TDD（失敗するテスト → 通す最小実装 → 整える）。各段階でコミット。コミットメッセージに task_id を入れる。
-検査: 終わったら `bash .harness/bin/harness check --fast` と、変更に関係する検査（`bash .harness/bin/harness check --only '<表示名の一部>'`）を**前面（フォアグラウンド）で**回し、出力を report に貼る。フルの `check` は統括が判定で回すので、実装役は回さない（遅い。決定 0015）。裏プロセスで走らせて自分の完了待ちにすると止まる。
+検査: 終わったら `bash .harness/bin/harness check`（差分に関係する検査だけが回る）を**前面（フォアグラウンド）で**回し、出力を report に貼る。`--full` は push の前に統括が回すので、実装役は付けない（遅い。決定 0015）。裏プロセスで走らせて自分の完了待ちにすると止まる。
 CHANGELOG: 利用者に影響する変更を入れたら `CHANGELOG.md` の `[Unreleased]` に書く（挙動変更と「プロジェクト側で必要な作業」）。不要なら report に「不要」と書く。
 返すもの（これ以外は report に書く）: status(done|blocked|failed), commit, questions[], report_path, note_for_next
 report_path: .harness/state/reports/T03.md

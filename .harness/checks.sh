@@ -1,6 +1,8 @@
 # .harness/checks.sh — agent-harness リポジトリ自身の検査（seed: このプロジェクトが編集する）
 #
-# 書式:  check [fast] "<表示名>" "<コマンド>"
+# 書式:  check [fast] [serial] [on "<パス…>"] "<表示名>" "<コマンド>"
+# on: このパスが変わったときだけ回す（既定の harness check。--full では全部）。CLI を動かすシナリオは、
+#     CLI・ペイロード・VERSION・CHANGELOG（update が表示する）・.gitattributes（git archive が見る）のどれかで回す。
 # 失敗出力には「どう直すか」を含める。
 
 # 並列数（決定 0015）。検査はどれも一時ディレクトリと使い捨ての HOME で動き、リポジトリに書き込まないので並列にできる。
@@ -14,45 +16,45 @@ check fast "skill name == dir"            "bad=0; for d in harness/skills/*/; do
 check fast "AGENTS.core.md <= 60 lines"   "n=\$(wc -l < harness/AGENTS.core.md); [ \"\$n\" -le 60 ] || { echo \"AGENTS.core.md が \$n 行。目次であって百科事典ではない（DESIGN.md §2）。docs へ逃がす。\"; exit 1; }"
 check fast "VERSION in CHANGELOG"         "v=\$(tr -d '\\r\\n' < VERSION); grep -q \"^## \\[\$v\\]\" CHANGELOG.md || { echo \"CHANGELOG.md に ## [\$v] の見出しが無い。版を上げたら CHANGELOG に節を書く（プロジェクト側で必要な作業も）。\"; exit 1; }"
 check      "installed copies in sync"     "out=\$(bash .harness/bin/harness status); echo \"\$out\" | grep -qE '^  (managed|merge|generated) +MODIFIED' && { echo \"\$out\" | grep MODIFIED; echo 'このリポジトリでは .agents/skills 等は harness/ からの導入コピー。直すのは harness/ 側で、その後 bash bin/harness update で同期する。'; exit 1; } || true"
-check      "init smoke test"              "T=\$(mktemp -d); mkdir -p \"\$T/p\" && cd \"\$T/p\" && git init -q . && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init && bash \"\$OLDPWD/bin/harness\" init --source \"\$OLDPWD\" >/dev/null 2>&1 && bash .harness/bin/harness status | grep -qE '^  (managed|merge|generated) +MODIFIED' && { echo 'init 直後に MODIFIED がある'; rm -rf \"\$T\"; exit 1; }; rm -rf \"\$T\""
-check      "seed checks are green"        "bash tests/seed.sh"
-check      "doctor scenarios (1/6)"       "DOCTOR_SHARD=1/6 bash tests/doctor.sh"
-check      "doctor scenarios (2/6)"       "DOCTOR_SHARD=2/6 bash tests/doctor.sh"
-check      "doctor scenarios (3/6)"       "DOCTOR_SHARD=3/6 bash tests/doctor.sh"
-check      "doctor scenarios (4/6)"       "DOCTOR_SHARD=4/6 bash tests/doctor.sh"
-check      "doctor scenarios (5/6)"       "DOCTOR_SHARD=5/6 bash tests/doctor.sh"
-check      "doctor scenarios (6/6)"       "DOCTOR_SHARD=6/6 bash tests/doctor.sh"
-check      "source scenarios"             "bash tests/source.sh"
-check      "update scenarios"             "bash tests/update.sh"
+check on "bin/ harness/ VERSION CHANGELOG.md .gitattributes" "init smoke test"              "T=\$(mktemp -d); mkdir -p \"\$T/p\" && cd \"\$T/p\" && git init -q . && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init && bash \"\$OLDPWD/bin/harness\" init --source \"\$OLDPWD\" >/dev/null 2>&1 && bash .harness/bin/harness status | grep -qE '^  (managed|merge|generated) +MODIFIED' && { echo 'init 直後に MODIFIED がある'; rm -rf \"\$T\"; exit 1; }; rm -rf \"\$T\""
+check on "bin/ harness/ VERSION CHANGELOG.md .gitattributes tests/seed.sh" "seed checks are green"        "bash tests/seed.sh"
+check on "bin/ harness/ VERSION CHANGELOG.md .gitattributes tests/doctor.sh" "doctor scenarios (1/6)"       "DOCTOR_SHARD=1/6 bash tests/doctor.sh"
+check on "bin/ harness/ VERSION CHANGELOG.md .gitattributes tests/doctor.sh" "doctor scenarios (2/6)"       "DOCTOR_SHARD=2/6 bash tests/doctor.sh"
+check on "bin/ harness/ VERSION CHANGELOG.md .gitattributes tests/doctor.sh" "doctor scenarios (3/6)"       "DOCTOR_SHARD=3/6 bash tests/doctor.sh"
+check on "bin/ harness/ VERSION CHANGELOG.md .gitattributes tests/doctor.sh" "doctor scenarios (4/6)"       "DOCTOR_SHARD=4/6 bash tests/doctor.sh"
+check on "bin/ harness/ VERSION CHANGELOG.md .gitattributes tests/doctor.sh" "doctor scenarios (5/6)"       "DOCTOR_SHARD=5/6 bash tests/doctor.sh"
+check on "bin/ harness/ VERSION CHANGELOG.md .gitattributes tests/doctor.sh" "doctor scenarios (6/6)"       "DOCTOR_SHARD=6/6 bash tests/doctor.sh"
+check on "bin/ harness/ VERSION CHANGELOG.md .gitattributes tests/source.sh" "source scenarios"             "bash tests/source.sh"
+check on "bin/ harness/ VERSION CHANGELOG.md .gitattributes tests/update.sh" "update scenarios"             "bash tests/update.sh"
 check      "doctor: FAIL 0"               "bash .harness/bin/harness doctor || { echo 'doctor が FAIL を報告した。上の FAIL 行の「→」に従って直す。'; exit 1; }"
 check fast "manifest source is shared value" "src=\$(sed -n 's/^  \"source\": \"\([^\"]*\)\".*/\1/p' .harness/manifest.json | head -1); case \"\$src\" in http://*|https://*|ssh://*|git://*|git@*) ;; *) echo \"manifest.json の source が機械ローカルの絶対パス（\$src）。bash .harness/bin/harness update で共有値に戻す（決定 0004。機械ローカルのパスは .harness/source.local へ）\"; exit 1 ;; esac"
 
 # pre-commit フックが「実際に走る形」でコミットされているか（git は実行ビットの無いフックを黙って無視する）。
 check fast "githooks are executable"      "bash tests/githooks.sh"
 # gc の実行経路（tech-debt #8）。日付判定が環境差で無言でスキップされていないかを見る。
-check      "gc scenarios"                 "bash tests/gc.sh"
+check on "bin/ harness/ VERSION CHANGELOG.md .gitattributes tests/gc.sh" "gc scenarios"                 "bash tests/gc.sh"
 # harness task start/done の実行経路（docs/spec/task-timing.md T01）。id はタスクでもレビューでも
 # 良いこと、既存の tasks 配列を壊さないこと、state/stages.json が無い場合に黙って失敗しないことを見る。
-check      "task timing scenarios"        "bash tests/task-timing.sh"
+check on "bin/ harness/ VERSION CHANGELOG.md .gitattributes tests/task-timing.sh" "task timing scenarios"        "bash tests/task-timing.sh"
 # harness eta の実行経路（docs/spec/task-timing.md T02）。完了数/全体数・経過時間・残りの推定
 # （幅、単純平均にしない）・レビューの固定枠・実績不足時の「不明」・記録欠けの指摘・--json を見る。
-check      "eta scenarios"                "bash tests/eta.sh"
+check on "bin/ harness/ VERSION CHANGELOG.md .gitattributes tests/eta.sh" "eta scenarios"                "bash tests/eta.sh"
 # seed の case 衝突判定（tech-debt #13）。実 FS の case 区別はテストから切り替えられないので、
 # 判定関数 seed_case_collision() を単体で呼ぶ（衝突あり/衝突なし/case を区別する環境の 3 系統）。
-check      "seed case collision (unit)"   "bash tests/seed-case.sh"
+check on "bin/harness tests/seed-case.sh" "seed case collision (unit)"   "bash tests/seed-case.sh"
 # source のキャッシュが、履歴を作り直した source にも追従すること（0.11.2。古い版を黙って配らない）。
-check      "source cache follows origin"  "bash tests/source-cache.sh"
+check on "bin/ harness/ VERSION CHANGELOG.md .gitattributes tests/source-cache.sh" "source cache follows origin"  "bash tests/source-cache.sh"
 # lockfile 方式（1.0.0。決定 0013）: 配布物はコミットせず、install が manifest に固定した版を入れる。
-check      "lockfile scenarios"          "bash tests/lockfile.sh"
+check on "bin/ harness/ VERSION CHANGELOG.md .gitattributes tests/lockfile.sh" "lockfile scenarios"          "bash tests/lockfile.sh"
 # push の前にセキュリティレビューの結果を確かめる関門（1.2.0。決定 0014）
-check     "push gate scenarios"         "bash tests/push-gate.sh"
+check on "harness/adapters/claude/push-gate.sh tests/push-gate.sh" "push gate scenarios"         "bash tests/push-gate.sh"
 # 公開してはいけないもの（パス・メールアドレス・トークン・非公開リンク。固有名は一覧があれば）を stage した差分で止める。
 # 検査の中身は leak-audit（agent-skills）が唯一の正。pre-push / commit-msg は .githooks/ にある。leak-audit が無い PC では
 # 警告して通す（決定 0013 の T01〜T04 をこれで置き換えた。計画 payload-containment）。
 check fast "leak-audit (staged)"         "sh .githooks/leak-audit.sh pre-commit"
 # curl <公開 URL>/bin/harness | bash -s -- init の経路（標準入力から実行すると BASH_SOURCE が無い）
-check      "stdin (curl | bash) install"  "bash tests/stdin.sh"
-check      "codex adapter (deny hook)"    "bash tests/codex.sh"
+check on "bin/ harness/ VERSION CHANGELOG.md .gitattributes tests/stdin.sh" "stdin (curl | bash) install"  "bash tests/stdin.sh"
+check on "bin/ harness/ VERSION CHANGELOG.md .gitattributes tests/codex.sh" "codex adapter (deny hook)"    "bash tests/codex.sh"
 
 # bash 3.2 互換（決定 0006）。macOS 既定の bash はアップデートされない前提で、この 2 つを機械的に締め出す。
 # 対象は bin/harness・harness/scripts/*.sh・harness/adapters/*/*.sh・tests/*.sh（tests/lint-bash-compat.sh 自身は自己参照になるため対象外）。
@@ -65,4 +67,4 @@ check fast "bash 3.2: no unbraced var before non-ASCII" "bash tests/lint-bash-co
 check fast "hash server: stderr stays live" "bash tests/hash-server-stderr.sh"
 
 # check.sh 自身（--fast で重い fast の検査を言う。決定 0015）。sleep を使うので fast にしない
-check      "check runner scenarios"      "bash tests/check-runner.sh"
+check on "harness/scripts/check.sh tests/check-runner.sh" "check runner scenarios"      "bash tests/check-runner.sh"

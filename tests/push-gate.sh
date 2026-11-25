@@ -165,6 +165,19 @@ stamp_out
 run_gate "git push";                       expect "P39: リンクを外して印を付ければ通す" allow
 run_gate "git push" nojq;                  expect "P40: jq が無くても通す" allow
 
+# ---- 1.8.0: ハーネスを入れたリポジトリでは、push する先端でフルの検査が通った記録を求める ----
+mkdir -p "$W/.harness/scripts" && printf '#!/usr/bin/env bash\n' >"$W/.harness/scripts/check.sh"   # 追跡しない（ハーネスの導入の印として置くだけ）
+run_gate "git push";                       expect "P41: 印があってもフルの検査の記録が無ければ止め、--full を言う" deny 'フルの検査が通っていない.*check --full'
+printf '%s\t%s\n' "$(g -C "$W" rev-parse 'HEAD^{tree}')" now >>"$W/.git/harness-check-passed"
+run_gate "git push";                       expect "P42: 先端の中身（ツリー）にフルの検査の記録があれば通す" allow
+g -C "$W" commit -q --amend -m "i: メッセージだけ直す" && stamp
+run_gate "git push";                       expect "P42b: メッセージだけ直したコミットは、中身が同じなので記録が効く" allow
+printf 'i\n' >>"$W/a.sh" && g -C "$W" commit -q -am i && stamp
+run_gate "git push";                       expect "P43: 記録の後に中身を変えたコミットを足すと、記録は効かなくなる" deny 'フルの検査が通っていない'
+g -C "$W" config harness.pushRequiresCheck false
+run_gate "git push";                       expect "P44: git config harness.pushRequiresCheck false なら求めない" allow
+g -C "$W" config --unset harness.pushRequiresCheck
+
 echo
 echo "tests/push-gate.sh: pass=$passed fail=$failed"
 [ "$failed" = 0 ] || { printf '  failed: %s\n' "${failed_names[@]}"; exit 1; }
