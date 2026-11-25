@@ -166,8 +166,10 @@ run_gate "git push";                       expect "P39: リンクを外して印
 run_gate "git push" nojq;                  expect "P40: jq が無くても通す" allow
 
 # ---- 1.8.0: ハーネスを入れたリポジトリでは、push する先端でフルの検査が通った記録を求める ----
-mkdir -p "$W/.harness/scripts" && printf '#!/usr/bin/env bash\n' >"$W/.harness/scripts/check.sh"   # 追跡しない（ハーネスの導入の印として置くだけ）
-run_gate "git push";                       expect "P41: 印があってもフルの検査の記録が無ければ止め、--full を言う" deny 'フルの検査が通っていない.*check --full'
+mkdir -p "$W/.harness" && printf '%s\n' 'check "all" "true"' >"$W/.harness/checks.sh"   # 追跡しない（検査の登録として置くだけ）
+run_gate "git push";                       expect "P45: checks.sh に on を書いた検査が無ければ、フルの検査を求めない（1.9.0）" allow
+printf '%s\n' 'check "all" "true"' 'check fast on "src/" "src" "true"' >"$W/.harness/checks.sh"
+run_gate "git push";                       expect "P41: on を書いた検査があれば、印があってもフルの検査の記録が無ければ止め、--full を言う" deny 'フルの検査が通っていない.*check --full'
 printf '%s\t%s\n' "$(g -C "$W" rev-parse 'HEAD^{tree}')" now >>"$W/.git/harness-check-passed"
 run_gate "git push";                       expect "P42: 先端の中身（ツリー）にフルの検査の記録があれば通す" allow
 g -C "$W" commit -q --amend -m "i: メッセージだけ直す" && stamp

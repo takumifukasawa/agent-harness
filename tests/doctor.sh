@@ -172,7 +172,13 @@ ensure_fixture() { # 使い捨てプロジェクトに harness init した雛形
     git init -q . &&
     git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init &&
     bash "$REPO/bin/harness" init --source "$REPO"
-  ) >/dev/null 2>&1 || { errors+=("setup: フィクスチャ構築（harness init）に失敗した"); return 1; }
+  ) >"$SHARED/fixture-init.log" 2>&1 || { errors+=("setup: フィクスチャ構築（harness init）に失敗した。出力: $(tail -20 "$SHARED/fixture-init.log")"); return 1; }
+  # init が 0 で終わっても、雛形が欠けていることがあった（2026-11-25、並列実行のときに AGENTS.md が無かった）。
+  # 欠けたフィクスチャで全シナリオが巻き添えで落ちる前に、ここで init の出力ごと報告する。
+  if [ ! -f "$FIXTURE/AGENTS.md" ]; then
+    errors+=("setup: harness init は成功を返したが AGENTS.md が無い。init の出力（末尾 40 行）: $(tail -40 "$SHARED/fixture-init.log")")
+    return 1
+  fi
   FIXTURE_DONE=1
 }
 

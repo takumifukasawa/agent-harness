@@ -15,8 +15,8 @@
 #   - 印の無い先端がある push
 #   - push していない範囲のコミットメッセージ・追加行に claude.ai のリンク（セッション・artifact など）がある push
 #     （--stamp もこのときは印を付けない。1.5.0）
-#   - push する先端でフルの検査（harness check --full）が通った記録が無い push（1.8.0。git config
-#     harness.pushRequiresCheck false で外せる）
+#   - push する先端でフルの検査（harness check --full）が通った記録が無い push（1.8.0。.harness/checks.sh に
+#     on を書いた検査があるときだけ。1.9.0。git config harness.pushRequiresCheck false で外せる）
 #   - コミットを作る・取り込む操作（commit / merge / rebase / pull など）と push が同じコマンド
 #     （hook は実行前に走るので、そのコマンドで作られるコミットは印と照らせない）
 #   - 展開（$( ) ` ` ${ }）・eval・xargs・sh -c・--git-dir・GIT_DIR= を通した push、シェルを通す git の alias
@@ -271,10 +271,13 @@ gate_repo() { # <リポジトリのディレクトリ>
   if [ -z "$missing" ]; then
     links="$(claude_links "$dir")"
     [ -n "$links" ] && deny "agent-harness: push-gate: push していないコミットに claude.ai のリンク（セッション・artifact など）がある（$(printf '%s' "$links" | tr '\n' ';' | sed 's/"/ /g')）。${links_fix}"
-    # フルの検査（harness check --full）が push する先端で通っていること（1.8.0。決定 0015）。普段の check は差分に
-    # 関係する検査だけ回すので、飛ばした検査が上流に乗る前に一度は回るようにする。
+    # フルの検査（harness check --full）が push する先端で通っていること（1.8.0。決定 0015）。普段の check が
+    # 飛ばした検査を、上流に乗る前に一度は回すため。求めるのは .harness/checks.sh に on を書いた検査があるとき
+    # だけ（1.9.0）。on が無ければ普段の check が毎回全部回るので、push の前にもう一度回しても遅くなるだけ。
     # git config harness.pushRequiresCheck false で外せる（フルの検査が長すぎるプロジェクトなど）。
-    if [ -f "$dir/.harness/scripts/check.sh" ] && [ "$(git -C "$dir" config --get harness.pushRequiresCheck 2>/dev/null)" != false ]; then
+    if [ -f "$dir/.harness/checks.sh" ] &&
+       grep -qE '^[[:space:]]*check([[:space:]]+(fast|serial))*[[:space:]]+on[[:space:]]' "$dir/.harness/checks.sh" 2>/dev/null &&
+       [ "$(git -C "$dir" config --get harness.pushRequiresCheck 2>/dev/null)" != false ]; then
       local unchecked=""
       local tr
       for t in $tips; do   # 記録は検査した中身（ツリー）のハッシュ。先端のツリーと照らす
