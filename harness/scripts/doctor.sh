@@ -181,7 +181,9 @@ fi
 
 # ---------------------------------------------------------------- B2. 任意ツール
 if have node; then
-  report OK "node（任意。$(node --version 2>/dev/null)）"
+  # 版は出さない。nodenv などの shim を通ると node --version 1 回で約 1 秒かかり（実測 2026-11-26）、
+  # doctor を何十回も呼ぶ tests/doctor.sh と、check のたびの doctor にそのまま乗る。有無だけで診断は足りる。
+  report OK "node（任意）"
 else
   report WARN "node が無い（任意）" \
     ".claude/settings.json の自動マージが手動になる。無くてもハーネスは動く。必要なら node を入れる"

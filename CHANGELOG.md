@@ -3,6 +3,11 @@
 各版に「プロジェクト側で必要な作業」を必ず書く。`harness update` はこの節を表示する。
 semver: managed ファイルの移動・マーカー形式変更は major、ルール/スキルの追加は minor、文言修正は patch。
 
+## [1.11.1] - 2026-11-26
+
+- 変更: **`doctor` が node の版を出さなくなった**（「node（任意）」とだけ言う）。nodenv などの shim を通ると `node --version` 1 回で約 1 秒かかり、`harness check` のたびの `doctor` と、`doctor` を約 55 回呼ぶこのリポジトリのシナリオテストにそのまま乗っていた。node の有無の診断は変わらない。
+- **プロジェクト側で必要な作業**: `bash .harness/bin/harness update`（コミットに出るのは `.harness/manifest.json` と `AGENTS.md` の版の行）。他に作業は無い。
+
 ## [1.11.0] - 2026-11-26
 
 タスクごとの検査を軽くする（GitHub issue #2）。アプリのリポジトリではどのタスクも `src/` を触るので `on` では絞れず、push しないまま何十タスクも進めると差分の起点（push していない範囲）が run 全体に広がり、タスクごとに unit・build・e2e が全部回っていた（導入先で 1 タスク 12〜25 分）。
