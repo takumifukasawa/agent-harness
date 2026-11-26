@@ -53,13 +53,19 @@ names="$(printf '%s\n' "$OUT" | sed -n 's/^── //p' | tr '\n' ' ')"
   && printf '%s' "$OUT" | sed -n '/^── b$/,/^── c$/p' | grep -q 'out-b' \
   && printf '%s' "$OUT" | sed -n '/^── b$/,/^── c$/p' | grep -q 'FAIL'; } \
   && ok "C8: 並列でも登録順に出し、各検査の出力はその見出しの下に出る。落ちれば終了コードも落ちる" || ng "C8"
-# 所要はランナー自身が出す秒数で見る（外から測ると、負荷の高い PC ではプロセスの起動待ちが乗って揺れる。
-# 2026-11-26 に C11 が外側 6 秒以上・ランナー 4 秒で落ちた）。直列なら 2 秒 × 3 件でランナーも 6 秒以上になる
-runner_sec() { printf '%s' "$OUT" | sed -n 's/^harness check: .*(\([0-9]*\)s)$/\1/p' | tail -1; }
-checks 'check "x" "sleep 2"' 'check "y" "sleep 2"' 'check "z" "sleep 2"'
-run --jobs 3; el="$(runner_sec)"
-{ [ "$RC" -eq 0 ] && [ -n "$el" ] && [ "$el" -lt 6 ]; } && ok "C9: 並列で回る（2 秒 × 3 件が 6 秒未満。実測 ${el}s）" || { OUT="$OUT
-elapsed=${el}s"; ng "C9"; }
+# 並列かどうかは秒数ではなく「3 件が同時に走っていたか」で見る。各検査は自分の印を置き、3 つの印が揃うまで待つ
+# （最大 30 秒）。直列なら揃わずに落ちる。秒数で見ると、負荷の高い PC ではランナーの起動待ちが乗って揺れた
+# （2026-11-26 に C11 が外側 6 秒以上、C9 がランナー自身でも 7 秒で落ちた。どちらも各検査は 2 秒で並列に走っていた）。
+barrier_checks() { # <印の置き場>
+  local b="$1" n; rm -rf "$b"; mkdir -p "$b"
+  for n in x y z; do
+    printf 'check "%s" "touch %s/%s; i=0; while [ \\$i -lt 300 ]; do [ -e %s/x ] && [ -e %s/y ] && [ -e %s/z ] && exit 0; sleep 0.1; i=\\$((i+1)); done; echo not-concurrent; exit 1"\n' \
+      "$n" "$b" "$n" "$b" "$b" "$b"
+  done
+}
+barrier_checks "$WORK/b9" >"$P/.harness/checks.sh"
+run --jobs 3
+{ [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'pass=3 fail=0'; } && ok "C9: 並列で回る（3 件が同時に走る）" || ng "C9"
 # serial: 走っている間に他の検査が走っていないことを、走っている印のファイルで確かめる
 L="$WORK/locks"; mkdir -p "$L"
 checks "check \"p1\" \"touch $L/p1; sleep 2; rm $L/p1\"" \
@@ -67,10 +73,12 @@ checks "check \"p1\" \"touch $L/p1; sleep 2; rm $L/p1\"" \
        "check \"p2\" \"sleep 0.3; [ -e $L/s ] && { echo serial-still-running; exit 1; }; true\""
 run --jobs 4
 { [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'pass=3 fail=0'; } && ok "C10: check serial は他と同時に走らない" || ng "C10"
+{ printf 'CHECK_JOBS=3\n'; barrier_checks "$WORK/b11"; } >"$P/.harness/checks.sh"
+run
+{ [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'pass=3 fail=0'; } && ok "C11: checks.sh の CHECK_JOBS で並列になる（3 件が同時に走る）" || ng "C11"
+# 直列の確認は下限（負荷で遅くなる側には揺れない）
 printf 'CHECK_JOBS=3\n' >"$P/.harness/checks.sh"
 printf '%s\n' 'check "x" "sleep 2"' 'check "y" "sleep 2"' 'check "z" "sleep 2"' >>"$P/.harness/checks.sh"
-run; el="$(runner_sec)"
-{ [ "$RC" -eq 0 ] && [ -n "$el" ] && [ "$el" -lt 6 ]; } && ok "C11: checks.sh の CHECK_JOBS で並列になる（実測 ${el}s）" || ng "C11"
 s0=$SECONDS; run --jobs 1; el=$((SECONDS - s0))
 { [ "$RC" -eq 0 ] && [ "$el" -ge 6 ]; } && ok "C12: --jobs 1 は CHECK_JOBS より優先して直列（実測 ${el}s）" || ng "C12"
 checks 'check fast "f1" "true"' 'check "n1" "true"' 'check fast "f2" "false"'
