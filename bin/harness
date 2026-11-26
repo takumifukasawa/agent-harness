@@ -262,7 +262,31 @@ effective_source() {
     v="$(read_source_local "$ROOT/$SOURCE_LOCAL_REL")"
     [ -n "$v" ] && { printf '%s\t%s' "$v" "$SOURCE_LOCAL_REL"; return 0; }
   fi
+  v="$(main_worktree_source_local)"
+  [ -n "$v" ] && { printf '%s\t%s' "$v" "main worktree の $SOURCE_LOCAL_REL"; return 0; }
   printf '%s\t%s' "$(manifest_get source)" "manifest"
+}
+
+# linked worktree（git worktree add で作った作業ツリー）では source.local が無い（gitignore 対象なので
+# checkout されない）。同じ PC の main worktree の source.local を借りる（issue #1。並列の実装役の worktree で
+# 毎回 HARNESS_SOURCE を付ける手間があった）。ただし main worktree 自身を指す source.local は借りない:
+# agent-harness 自身のように source が自分の作業ツリーだと、worktree の update が main tree の未コミット変更を
+# 取り込む（docs/learnings.md の 2026-09-18）。
+main_worktree_source_local() {
+  local common here main v vp
+  common="$(git -C "$ROOT" rev-parse --git-common-dir 2>/dev/null)" || return 0
+  [ -n "$common" ] || return 0
+  common="$(cd "$ROOT" && cd "$common" 2>/dev/null && pwd -P)" || return 0
+  [ "$(basename "$common")" = ".git" ] || return 0   # bare リポジトリの worktree などは対象外
+  main="$(dirname "$common")"
+  here="$(cd "$ROOT" && pwd -P)"
+  [ "$main" != "$here" ] || return 0                 # main worktree 自身
+  [ -f "$main/$SOURCE_LOCAL_REL" ] || return 0
+  v="$(read_source_local "$main/$SOURCE_LOCAL_REL")"
+  [ -n "$v" ] || return 0
+  vp="$(cd "$v" 2>/dev/null && pwd -P || true)"
+  [ "$vp" != "$main" ] || return 0
+  printf '%s' "$v"
 }
 
 # 機械ローカルの source を書く。gitignore 対象なのでコミットされない。
@@ -492,21 +516,36 @@ block_hash() { # file
 IGNORE_LIST=()
 ensure_gitignore() {
   local gi="$ROOT/.gitignore" line tmp p
+  # 末尾に改行が無いと、足す行が最後の行とつながる（"dist/.harness/state/" のように）
+  [ -f "$gi" ] && [ -n "$(tail -c1 "$gi")" ] && echo >>"$gi"
   for line in ".harness/state/" ".harness/backup/" ".harness/conflicts/" "$SOURCE_LOCAL_REL" "$INSTALLED_REL"; do
     grep -qxF "$line" "$gi" 2>/dev/null || echo "$line" >>"$gi"
   done
   [ "${#IGNORE_LIST[@]}" -gt 0 ] || return 0
   # 管理ブロックを丸ごと作り直す（版が変わって配らなくなったファイルの行も消える）。ブロックの外は触らない。
+  # ブロックは元の位置で差し替える。末尾へ移すと、ブロックより後ろにプロジェクトの行があるたびに .gitignore が
+  # 並び替わり、clone や worktree で install するたびに差分が出ていた（issue #1）。ブロックが無ければ末尾に足す。
   # mv で置き換えると mktemp の 0600 が .gitignore に移るので、中身だけを書き戻す（tech-debt #9 と同じ罠）。
-  tmp="$(mktemp)"
+  local blk
+  tmp="$(mktemp)"; blk="$(mktemp)"
   {
-    # 行末の CR は外して比べる（Windows の core.autocrlf で .gitignore が CRLF になると、比べ損ねてブロックがダブる）
-    [ -f "$gi" ] && awk -v b="$GI_BEGIN" -v e="$GI_END" '{l=$0; sub(/\r$/,"",l)} l==b{skip=1;next} l==e{skip=0;next} !skip' "$gi"
     echo "$GI_BEGIN"
     for p in "${IGNORE_LIST[@]}"; do echo "/$p"; done
     echo "$GI_END"
-  } >"$tmp"
-  cat "$tmp" >"$gi"; rm -f "$tmp"
+  } >"$blk"
+  # 行末の CR は外して比べる（Windows の core.autocrlf で .gitignore が CRLF になると、比べ損ねてブロックがダブる）
+  if [ -f "$gi" ] && tr -d '\r' <"$gi" | grep -qxF "$GI_BEGIN"; then
+    # ブロックが複数あれば最初の位置に 1 つだけ置く
+    awk -v b="$GI_BEGIN" -v e="$GI_END" -v blk="$blk" '
+      {l=$0; sub(/\r$/,"",l)}
+      l==b { if (!put) { while ((getline x < blk) > 0) print x; put=1 } ; skip=1; next }
+      skip && l==e { skip=0; next }
+      !skip' "$gi" >"$tmp"
+  else
+    # awk で写すのは、末尾に改行の無い .gitignore でも最後の行とブロックの先頭がつながらないように
+    { [ -f "$gi" ] && awk '1' "$gi"; cat "$blk"; } >"$tmp"
+  fi
+  cat "$tmp" >"$gi"; rm -f "$tmp" "$blk"
 }
 
 # 既にコミットされている配布物を index から外す（lockfile 方式への移行。1.0.0 より前に導入したプロジェクト）。

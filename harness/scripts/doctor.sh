@@ -626,6 +626,21 @@ else
   fi
 fi
 
+# ---------------------------------------------------------------- B14. 進行状態（.harness/state/）がコミットされていない
+# .harness/state/ は gitignore 対象（手元の進行状態・実装役のレポート）。実装役がレポートを「コミットに含める」
+# つもりで git add -f し、統括が何度も外す羽目になった（issue #1）。gitignore は add -f を止めないので、
+# index に載っていれば FAIL にする（check の doctor 検査で落ち、実装役の完了判定で止まる）。
+if git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  tracked_state="$(cd "$ROOT" && git ls-files -- .harness/state 2>/dev/null | head -5 | tr '\n' ' ')"
+  tracked_state="${tracked_state% }"
+  if [ -n "$tracked_state" ]; then
+    report FAIL ".harness/state/ のファイルが git に追跡されている（例: ${tracked_state}。進行状態とレポートはコミットしない。git add -f で入れたもの）" \
+      "git rm -r -q --cached -- .harness/state でコミットから外す（作業ツリーのファイルは残る）。レポートは .harness/state/reports/ に置くだけでよく、統括は report_path で読む"
+  else
+    report OK ".harness/state/ は git に追跡されていない"
+  fi
+fi
+
 # ---------------------------------------------------------------- B12. 配布先の case 衝突（tech-debt #13 / #14）
 # case を区別しないファイルシステム（macOS / Windows）では、harness の配布先パスと大文字小文字
 # 違いの既存ファイルが同じもの扱いになる。seed は apply_plan がそれを「既にある」として雛形を

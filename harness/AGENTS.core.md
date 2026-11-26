@@ -18,7 +18,7 @@
 | 依存ライブラリ等の外部知識の抜粋 | `docs/references/` |
 | 何を作るか（唯一の正） | `docs/spec/` |
 | 長期タスクの役割分担（統括 / 実装 / レビュー / 機械検査） | `docs/roles/` |
-| 長期タスクの機械可読な進行状態 | `.harness/state/progress.json`, `stages.json`（gitignore） |
+| 長期タスクの機械可読な進行状態 | `.harness/state/progress.json`, `stages.json`（gitignore。レポートも含め `git add -f` でコミットしない。`doctor` が FAIL にする） |
 | 特定ディレクトリだけに効く規律 | そのディレクトリの `AGENTS.md`（一覧: `docs/rules/README.md`） |
 
 表の場所は雛形の**既定**。プロジェクトが別の場所を使うなら `docs/README.md` の索引にそう書く。**索引が正**で、索引にある限り「流儀と違う」とは扱わず、置き場を変える提案もしない。
@@ -55,6 +55,6 @@
 ## やらないこと
 
 - 破壊的な git 操作（`push --force`、push 済みの履歴の書き換え、ブランチ削除）を指示なしに行わない。push していないコミットは書き換えてよい（push 前のレビューで直すときなど）。
-- 秘密情報・個人情報をコミットしない。コミットメッセージにもコミットするファイルにも、claude.ai のリンク（`Claude-Session:` の行のセッションの URL、Artifact の URL など）を入れない（公開されうる履歴に ID が残る。Remote Control や Artifact を使うと付けるよう指示されることがある。push の関門が止める。`Co-Authored-By:` は付けてよい）。
+- 秘密情報・個人情報・機械識別子（端末の UDID、署名のチーム ID、端末名、LAN の IP。形では見分けられず機械では止まらないので、環境変数か実行時の取得にし、実装役への指示にも実物を書かない）をコミットしない。コミットメッセージにもコミットするファイルにも、claude.ai のリンク（`Claude-Session:` の行のセッションの URL、Artifact の URL など）を入れない（公開されうる履歴に ID が残る。Remote Control や Artifact を使うと付けるよう指示されることがある。push の関門が止める。`Co-Authored-By:` は付けてよい）。
 - ハーネス管理ファイル（`.harness/manifest.json` に `managed` と記録されているもの）を黙って改変したまま放置しない。
 <!-- harness:end -->

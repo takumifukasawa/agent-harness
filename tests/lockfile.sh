@@ -268,6 +268,64 @@ L12() {
 }
 L12; ok_or_fail "L12: source のローカルの clone が上流より遅れていれば、update が警告する（pull はしない）"
 
+# ---------------------------------------------------------------- L13: .gitignore の管理ブロックを動かさない（issue #1）
+L13() {
+  local C="$WORK/l13"
+  cp -a "$BASE" "$C"
+  printf 'node_modules/\n' >>"$C/.gitignore"
+  g -C "$C" add .gitignore && g -C "$C" commit -q --no-verify -m "project ignore after the block"
+  OUT="$(cd "$C" && HARNESS_SOURCE="$SRC" bash .harness/bin/harness install 2>&1)" || errors+=("install が失敗した")
+  git -C "$C" diff --quiet -- .gitignore || errors+=("install が .gitignore を並び替えた: $(git -C "$C" diff -- .gitignore | grep '^[-+][^-+]' | tr '\n' ' ')")
+  OUT="$(cd "$C" && HARNESS_SOURCE="$SRC" bash .harness/bin/harness update 2>&1)" || errors+=("update が失敗した")
+  git -C "$C" diff --quiet -- .gitignore || errors+=("update が .gitignore を並び替えた")
+  # 末尾に改行の無い、ブロックの無い .gitignore には末尾に足す（最後の行とつながらない）
+  printf 'dist/' >"$C/.gitignore"
+  (cd "$C" && HARNESS_SOURCE="$SRC" bash .harness/bin/harness install) >/dev/null 2>&1
+  [ "$(head -1 "$C/.gitignore")" = "dist/" ] || errors+=("改行の無い最後の行にブロックがつながった: $(head -1 "$C/.gitignore")")
+  [ "$(grep -c '^# >>> agent-harness managed' "$C/.gitignore")" = 1 ] || errors+=("管理ブロックが 1 つになっていない")
+}
+L13; ok_or_fail "L13: install / update は .gitignore の管理ブロックを元の位置で差し替え、後ろの行を前へ動かさない"
+
+# ---------------------------------------------------------------- L14: linked worktree は main worktree の source.local を借りる
+L14() {
+  local C="$WORK/l14" W="$WORK/l14-wt"
+  cp -a "$BASE" "$C"
+  printf '%s\n' "$SRC" >"$C/.harness/source.local"
+  g -C "$C" worktree add -q "$W" -b l14 >/dev/null 2>&1 || { errors+=("worktree を作れない"); return; }
+  [ ! -f "$W/.harness/source.local" ] || errors+=("前提が崩れた: worktree に source.local がある")
+  OUT="$(cd "$W" && bash "$SRC/bin/harness" install 2>&1)" || errors+=("worktree で HARNESS_SOURCE なしの install が失敗した")
+  printf '%s\n' "$OUT" | grep -q 'main worktree の .harness/source.local' || errors+=("由来に main worktree の source.local と出ない")
+  [ -f "$W/.harness/bin/harness" ] || errors+=("worktree に CLI が入っていない")
+  [ -z "$(git -C "$W" status --porcelain)" ] || errors+=("install 後の worktree に差分がある: $(git -C "$W" status --porcelain | tr '\n' ' ')")
+  # main worktree 自身を指す source.local は借りない（agent-harness 自身の dogfood。learnings 2026-09-18）
+  printf '%s\n' "$C" >"$C/.harness/source.local"
+  OUT="$(cd "$W" && bash "$SRC/bin/harness" status 2>&1)"
+  printf '%s\n' "$OUT" | grep -q 'main worktree の' && errors+=("main worktree 自身を指す source.local を借りた")
+  # main worktree では今までどおり自分の source.local
+  printf '%s\n' "$SRC" >"$C/.harness/source.local"
+  OUT="$(cd "$C" && bash "$SRC/bin/harness" status 2>&1)"
+  printf '%s\n' "$OUT" | grep -q 'main worktree の' && errors+=("main worktree で main worktree の由来と出た")
+  return 0
+}
+L14; ok_or_fail "L14: linked worktree の install は main worktree の source.local を借りる（main 自身を指すものは借りない）"
+
+# ---------------------------------------------------------------- L15: .harness/state/ がコミットされていれば doctor が FAIL（issue #1）
+L15() {
+  local C="$WORK/l15"
+  cp -a "$BASE" "$C"
+  mkdir -p "$C/.harness/state/reports" && echo report >"$C/.harness/state/reports/T01.md"
+  g -C "$C" add -f .harness/state/reports/T01.md
+  OUT="$(cd "$C" && HARNESS_SOURCE="$SRC" bash .harness/bin/harness doctor 2>&1)"
+  printf '%s\n' "$OUT" | grep -q '^FAIL.*\.harness/state/ のファイルが git に追跡されている' || errors+=("add -f した .harness/state で FAIL にならない")
+  printf '%s\n' "$OUT" | grep -q 'git rm -r -q --cached -- .harness/state' || errors+=("直し方が出ない")
+  g -C "$C" rm -r -q --cached -- .harness/state
+  OUT="$(cd "$C" && HARNESS_SOURCE="$SRC" bash .harness/bin/harness doctor 2>&1)"
+  printf '%s\n' "$OUT" | grep -q '\.harness/state/ のファイルが git に追跡されている' && errors+=("外した後も FAIL が出る")
+  [ -f "$C/.harness/state/reports/T01.md" ] || errors+=("作業ツリーのレポートが消えた")
+  return 0
+}
+L15; ok_or_fail "L15: .harness/state/ のファイルが index にあれば doctor が FAIL にし、外し方を案内する"
+
 echo
 echo "tests/lockfile.sh: pass=$passed fail=$failed"
 [ "$failed" = 0 ] || { printf '  failed: %s\n' "${failed_names[@]}"; exit 1; }

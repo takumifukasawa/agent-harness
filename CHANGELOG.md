@@ -3,6 +3,19 @@
 各版に「プロジェクト側で必要な作業」を必ず書く。`harness update` はこの節を表示する。
 semver: managed ファイルの移動・マーカー形式変更は major、ルール/スキルの追加は minor、文言修正は patch。
 
+## [1.10.0] - 2026-11-26
+
+導入先の task-orchestrate の実行（worktree で実装役を並列に回した）で見つかった穴を塞ぐ（GitHub issue #1）。
+
+- 修正: **`install` / `update` が `.gitignore` の管理ブロックを末尾へ移さなくなった。** 元の位置で差し替える。今までは、ブロックより後ろにプロジェクトの行があると、clone や worktree で `install` するたびに `.gitignore` が並び替わって差分が出ていた（実装役が毎回手で戻していた）。ブロックが無ければ今までどおり末尾に足す。末尾に改行の無い `.gitignore` に足すと最後の行とつながっていた（`dist/.harness/state/`）のも直した。
+- 追加: **linked worktree（`git worktree add` で作ったもの）では、main worktree の `.harness/source.local` を source に使う**（解決順: `HARNESS_SOURCE` > 自分の `source.local` > main worktree の `source.local` > manifest）。新しい worktree で `HARNESS_SOURCE` を付けずに `install` できる。main worktree 自身を指す `source.local`（source が自分の作業ツリーのとき）は借りない。
+- 追加: **`doctor` が、`.harness/state/` のファイルが git に追跡されていれば FAIL にする**（B14）。実装役がレポートを `git add -f` でコミットに入れ、統括が何度も外していた。直し方（`git rm -r -q --cached -- .harness/state`）を出す。seed の `doctor: FAIL 0` の検査で `harness check` が落ちる。
+- 追加（共通ルール・スキル・役割文）: 機械識別子（端末の UDID / CoreDevice の ID、署名のチーム ID、端末名、LAN の IP）をコードの既定値・コミット・実装役への指示に書かない（環境変数か実行時の取得にする）。`.harness/state/` を `git add -f` しない。形では見分けられないので機械では止めない（決定 0013 の追補）。
+- 追加（スキル）: `task-orchestrate` §0 に「自分も実装役も作っていない変更が作業ツリーにあれば、動かす前にユーザーに聞く。退けるなら説明付きの `git stash push -m` で、すぐ伝える」。§2.1c に worktree で並列に回すときの手順（最初に main worktree の CLI で `install`、install 後に差分が無いこと、分岐点の確認、検査の一時パス）。
+- 変更（seed）: `checks.sh` の説明に「一時ファイルは固定のパスに書かず、`mktemp` か作業ツリーの下に置く」を足した。
+- 回帰: `tests/lockfile.sh` の L13〜L15。
+- **プロジェクト側で必要な作業**: `bash .harness/bin/harness update`（コミットに出るのは `.harness/manifest.json` と `AGENTS.md` の管理ブロック）。`.harness/state/` の下をコミットしてしまっているプロジェクトでは、`doctor` の FAIL の案内どおり `git rm -r -q --cached -- .harness/state` で外してコミットする。`checks.sh` の説明は seed なので `update` では届かない。git worktree で並列に作業するプロジェクトは、一度だけ `.harness/checks.sh` の検査が固定の一時パス（`/tmp/...`）に書いていないかを見て、書いていれば `mktemp` に直す（エージェントが行ってよい）。
+
 ## [1.9.1] - 2026-11-25
 
 - 修正: **push の関門（`push-gate.sh`）が、push するものだけを見るようにした。** 今までは手元の全部のブランチの、push していないコミットを見ていた。そのため、push するブランチに問題が無くても、無関係なブランチに印が無い・claude.ai のリンクがあると止まっていた。worktree を共有するリポジトリでは、別の作業場のブランチも手元のブランチとして並ぶので、エージェントからは push できず、人が `! git push` で通すしかなかった（2026-11-25 に導入先で実際に起きた）。push される ref は push の引数から決める（refspec が無ければ今のブランチ、`src:dst` の src、`tag <名前>`）。`--all` / `--mirror` / `--tags`、`push.default=matching`、`remote.*.push`、glob や解決できない refspec のときは今までどおり手元の全部を見る。印の付いた先端の祖先を push する（`HEAD~1:main` など）のも通す。

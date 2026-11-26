@@ -32,6 +32,7 @@ CLI は `bash .harness/bin/harness <cmd>`（以下 `harness` と略す。PATH �
 4. **実態との突合**: `git log --oneline <base_commit>..HEAD` と `git status --porcelain` を見る。
    - `status: in_progress` のタスクがあり、その task_id のコミットが既にある → 前のセッションが途中で死んだ。§2.3 の判定からやり直す（実装役は起こさない）。
    - state に無いコミットがある、または state にあるコミットが無い → 食い違いをユーザーに報告してから直す。
+   - **自分も実装役も作っていない変更が作業ツリーにある** → 自分の実装役のはみ出しと決めつけない。中断中にユーザーが別のエージェントや手で作業していることがある（実例: 上限で止まっている間に、ユーザーが同じ checkout で別のエージェントを使って進めていた変更を、統括が stash した）。**動かす前にユーザーに聞く。** merge を進めるためにどうしても退ける必要があるなら、`git stash push -m "<何の変更か・退けた理由>"` で退け、すぐにユーザーに伝える（`checkout` / `reset` / `clean` で消さない）。
 
 ## 1. 準備フェーズ（ユーザーとの合意が必須）
 
@@ -72,9 +73,12 @@ title: <タイトル>
 検査: 終わったら `bash .harness/bin/harness check`（差分に関係する検査だけが回る）を**前面（フォアグラウンド）で**回し、出力を report に貼る。`--full` は push の前に統括が回すので、実装役は付けない（遅い。決定 0015）。裏プロセスで走らせて自分の完了待ちにすると止まる。
 CHANGELOG: 利用者に影響する変更を入れたら `CHANGELOG.md` の `[Unreleased]` に書く（挙動変更と「プロジェクト側で必要な作業」）。不要なら report に「不要」と書く。
 返すもの（これ以外は report に書く）: status(done|blocked|failed), commit, questions[], report_path, note_for_next
-report_path: .harness/state/reports/T03.md
+report_path: .harness/state/reports/T03.md（コミットしない。.harness/state/ は gitignore 対象で、git add -f で入れない）
+機械識別子: 端末の ID・チーム ID・端末名・LAN の IP はコードの既定値やコミットに書かず、環境変数か実行時の取得にする。
 質問はしない: 疑問は questions に書いて返す。
 ```
+
+**指示に機械識別子の実物を書かない。** 端末の UDID / CoreDevice の ID、署名のチーム ID、端末名、LAN の IP は、指示に書くと実装役がスクリプトの既定値に写し、コミットに残る（実例: 100 コミット後の最終レビューまで気付かれず、push 前の履歴の作り直しになった）。形では見分けられないので機械では止まらない。渡すのは「どの環境変数から読むか」「どのコマンドで取得するか」だけにする。
 
 規律を**貼る**のは、Codex ではサブディレクトリの `AGENTS.md` が cwd 基準でしか読み込まれないため。パスだけ渡すと載らない。
 
@@ -92,6 +96,16 @@ report_path: .harness/state/reports/T03.md
 - **待てるなら、実装役が戻るまでコミットしない**
 - **待てないなら、`git add -A` を使わず触ったファイルを明示指定する**
 - コミット前に `git status --porcelain` を見て、**自分が触っていないファイルが出ていないか**確認する
+
+### 2.1c 実装役を worktree で並列に回すとき
+
+`files_scope` が重ならないタスクを `git worktree` で並列に回すなら、払い出した worktree ごとに実装役へ次をやらせる（指示に書く）。
+
+1. **`bash <main worktree>/.harness/bin/harness install` を最初に回す。** 配布物（CLI・スキル・hook）は gitignore 対象なので、新しい worktree には無い。`.harness/bin` だけ写しても `doctor` は FAIL のまま。source は main worktree の `.harness/source.local` を借りる。`core.hooksPath` は worktree 間で共有なので、install する前のコミットは pre-commit が無いまま黙って通る。
+2. install の後に `git status --porcelain` が空であること（`.gitignore` などに差分が出たら、戻さずに統括へ報告させる）。
+3. 統括のブランチに追いついているか（`git merge-base --is-ancestor <統括のブランチ> HEAD`）。古い分岐点で払い出されることがある。
+
+検査が固定の一時パス（`/tmp/build.log` など）を使うと、worktree 同士で同時に `harness check` を回したときに壊し合う。並列にする前に `.harness/checks.sh` を見て、一時ファイルは `mktemp` か作業ツリーの下に置く形に直す（直せなければそのタスクは並列にしない）。
 
 ### 2.2 戻り値を受け取る
 
