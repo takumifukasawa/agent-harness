@@ -53,9 +53,12 @@ names="$(printf '%s\n' "$OUT" | sed -n 's/^── //p' | tr '\n' ' ')"
   && printf '%s' "$OUT" | sed -n '/^── b$/,/^── c$/p' | grep -q 'out-b' \
   && printf '%s' "$OUT" | sed -n '/^── b$/,/^── c$/p' | grep -q 'FAIL'; } \
   && ok "C8: 並列でも登録順に出し、各検査の出力はその見出しの下に出る。落ちれば終了コードも落ちる" || ng "C8"
+# 所要はランナー自身が出す秒数で見る（外から測ると、負荷の高い PC ではプロセスの起動待ちが乗って揺れる。
+# 2026-11-26 に C11 が外側 6 秒以上・ランナー 4 秒で落ちた）。直列なら 2 秒 × 3 件でランナーも 6 秒以上になる
+runner_sec() { printf '%s' "$OUT" | sed -n 's/^harness check: .*(\([0-9]*\)s)$/\1/p' | tail -1; }
 checks 'check "x" "sleep 2"' 'check "y" "sleep 2"' 'check "z" "sleep 2"'
-s0=$SECONDS; run --jobs 3; el=$((SECONDS - s0))
-{ [ "$RC" -eq 0 ] && [ "$el" -lt 6 ]; } && ok "C9: 並列で回る（2 秒 × 3 件が 6 秒未満。実測 ${el}s）" || { OUT="$OUT
+run --jobs 3; el="$(runner_sec)"
+{ [ "$RC" -eq 0 ] && [ -n "$el" ] && [ "$el" -lt 6 ]; } && ok "C9: 並列で回る（2 秒 × 3 件が 6 秒未満。実測 ${el}s）" || { OUT="$OUT
 elapsed=${el}s"; ng "C9"; }
 # serial: 走っている間に他の検査が走っていないことを、走っている印のファイルで確かめる
 L="$WORK/locks"; mkdir -p "$L"
@@ -66,8 +69,8 @@ run --jobs 4
 { [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'pass=3 fail=0'; } && ok "C10: check serial は他と同時に走らない" || ng "C10"
 printf 'CHECK_JOBS=3\n' >"$P/.harness/checks.sh"
 printf '%s\n' 'check "x" "sleep 2"' 'check "y" "sleep 2"' 'check "z" "sleep 2"' >>"$P/.harness/checks.sh"
-s0=$SECONDS; run; el=$((SECONDS - s0))
-{ [ "$RC" -eq 0 ] && [ "$el" -lt 6 ]; } && ok "C11: checks.sh の CHECK_JOBS で並列になる（実測 ${el}s）" || ng "C11"
+run; el="$(runner_sec)"
+{ [ "$RC" -eq 0 ] && [ -n "$el" ] && [ "$el" -lt 6 ]; } && ok "C11: checks.sh の CHECK_JOBS で並列になる（実測 ${el}s）" || ng "C11"
 s0=$SECONDS; run --jobs 1; el=$((SECONDS - s0))
 { [ "$RC" -eq 0 ] && [ "$el" -ge 6 ]; } && ok "C12: --jobs 1 は CHECK_JOBS より優先して直列（実測 ${el}s）" || ng "C12"
 checks 'check fast "f1" "true"' 'check "n1" "true"' 'check fast "f2" "false"'
@@ -135,6 +138,45 @@ g -C "$R" commit -q -am checks
 runr --only 'md lint'
 { printf '%s' "$OUT" | grep -q 'pass=1 fail=0 skipped=3' && ! printf '%s' "$OUT" | grep -q '差分に関係する'; } \
   && ok "C25: --only は差分に関係なく、名前で選んだ検査を回す（記録はしない）" || ng "C25"
+
+# ---- C26〜C33: --since（タスク単位の軽い検査）と related（1.11.0。決定 0015 の追補）----
+S="$WORK/s"; mkdir -p "$S/.harness" "$S/src" "$S/docs" && git init -q "$S"
+printf '%s\n' 'check "always" "true"' \
+  'check on "src/" related "bash rel.sh" "unit" "bash full.sh"' \
+  'check on "docs/" "docs lint" "true"' >"$S/.harness/checks.sh"
+printf '%s\n' 'printf "%s\n" "$@" >rel.out' >"$S/rel.sh"
+printf '%s\n' 'echo full >full.out' >"$S/full.sh"
+printf '%s\n' 'rel.out' 'full.out' >"$S/.gitignore"
+echo a >"$S/src/a.ts"; echo b >"$S/src/b.ts"; echo x >"$S/docs/x.md"
+g -C "$S" add -A && g -C "$S" commit -q -m base
+START="$(g -C "$S" rev-parse HEAD)"
+runs() { rm -f "$S/rel.out" "$S/full.out"; OUT="$(cd "$S" && bash "$RUNNER" "$@" 2>&1)"; RC=$?; }
+runs --since "$START"
+{ [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'pass=1 fail=0 skipped=2' && printf '%s' "$OUT" | grep -q "${START} からの差分"; } \
+  && ok "C26: --since で差分が無ければ on の検査は飛ばす（remote が無くても使える）" || ng "C26"
+echo a2 >>"$S/src/a.ts"; g -C "$S" commit -q -am a; echo n >"$S/src/n m.ts"
+runs --since "$START"
+{ [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q '^── unit (related: 2 files)' && [ ! -f "$S/full.out" ] \
+  && [ "$(sort "$S/rel.out" | tr '\n' '|')" = "src/a.ts|src/n m.ts|" ] && ! printf '%s' "$OUT" | grep -q '^── docs lint'; } \
+  && ok "C27: related の検査は、起点からのコミット・未追跡を含む変わったファイルだけを渡して回す（空白入りの名前も 1 引数）" || ng "C27"
+GDS="$(cd "$S" && git rev-parse --absolute-git-dir)"
+[ ! -s "$GDS/harness-check-passed" ] && ok "C28: --since はフルの検査の記録を残さない" || { OUT="記録が残った"; ng "C28"; }
+rm "$S/src/n m.ts"; g -C "$S" rm -q src/b.ts
+runs --since "$START"
+{ [ "$RC" -eq 0 ] && [ -f "$S/full.out" ] && [ ! -f "$S/rel.out" ] && printf '%s' "$OUT" | grep -q '消したファイルがある'; } \
+  && ok "C29: 消したファイルがあれば related ではなく本来のコマンドを回す" || ng "C29"
+g -C "$S" commit -q -m rm-b
+runs --since no-such-ref
+[ "$RC" -eq 2 ] && printf '%s' "$OUT" | grep -q 'コミットとして解決できない' && ok "C30: 解決できない ref は exit 2 で止まる" || ng "C30"
+runs --since "$START" --full
+[ "$RC" -eq 2 ] && ok "C31: --since と --full は一緒に使えない" || ng "C31"
+runs --full
+{ [ "$RC" -eq 0 ] && [ -f "$S/full.out" ] && [ ! -f "$S/rel.out" ] && printf '%s' "$OUT" | grep -q '^── unit$'; } \
+  && ok "C32: --since の無いときは related を使わず本来のコマンドを回す" || ng "C32"
+NOW="$(g -C "$S" rev-parse HEAD)"; echo y >"$S/docs/y.md"
+runs --since "$NOW"
+{ printf '%s' "$OUT" | grep -q '^── docs lint' && ! printf '%s' "$OUT" | grep -q '^── unit'; } \
+  && ok "C33: 起点より前の変更は差分に入らない（run 全体ではなくタスクの分だけを見る）" || ng "C33"
 
 echo
 echo "tests/check-runner.sh: pass=$passed fail=$failed"

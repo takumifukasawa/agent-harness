@@ -1,9 +1,14 @@
 # .harness/checks.sh — このプロジェクトの検査一覧（seed: プロジェクトが編集する。harness update は触らない）
 #
-# 書式:  check [fast] "<表示名>" "<コマンド>"
+# 書式:  check [fast] [serial] [on "<パス…>"] [related "<コマンド>"] "<表示名>" "<コマンド>"
 #   fast を付けた検査は pre-commit（harness check --fast）でも走る。数秒で終わるものだけに付ける。
 #   on "<パス…>" を付けた検査は、そのパスが変わったときだけ普段の harness check で回る（時間のかかる検査に付ける。
 #   パスは広めに取る）。harness check --full では全部回る。on を付けた検査があると、push の前に --full が求められる。
+#   related "<コマンド>" を付けた検査は、harness check --since <ref>（実装役がタスクごとに回す軽い検査）のとき、
+#   本来のコマンドの代わりに「<コマンド> <変わったファイル…>」を回す。関係するテストだけを選べるツールに使う
+#   （例: related "npx vitest related --run --passWithNoTests"、related "npx jest --findRelatedTests --passWithNoTests"）。
+#   import をたどらない影響（文言・CSS・設定ファイル）は選べないので、それらのパスでも本来のコマンドが要るなら
+#   --full（最終レビューの前と push の前）に任せる。消したファイルがあるときは本来のコマンドを回す。
 #   並列に回すなら、このファイルの先頭（最初の check より前）に CHECK_JOBS=auto（または数）を書く。
 #   他の検査と同時に走らせられない検査（同じポート・固定の一時ファイル・同じ DB を使う）は
 #   check serial "<表示名>" "<コマンド>" で登録する。既定は直列。
@@ -19,6 +24,7 @@
 # --- 例（SmartHR の 12 項目から。プロジェクトに合わせて書き換える） ---
 # check fast "lint"                 "npm run lint"
 # check fast "typecheck"            "npm run typecheck"
+# check on "src/ test/" related "npx vitest related --run --passWithNoTests" "unit" "npx vitest run"
 # check      "tests green (>0)"     "out=\$(npm test -- --json 2>&1); n=\$(echo \"\$out\" | jq .numTotalTests); [ \"\$n\" -gt 0 ] || { echo 'テストが 0 件。0 件で green は不合格。受け入れ条件をテストに落とす。'; exit 1; }"
 # check      "flag OFF = baseline"  "bash scripts/check-flag-off-behavior.sh"        # フラグ ON 設定の追加も検知
 # check      "changed files in scope" "bash scripts/check-allowed-paths.sh .harness/allowed-paths.txt"  # 許可パスの定義は 1 ファイルだけ

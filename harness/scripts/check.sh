@@ -2,13 +2,18 @@
 # harness check — プロジェクトが .harness/checks.sh に登録した検査を順に実行する。
 # エージェントはこの結果を「実装完了の客観条件」として使う。LLM は使わない。
 #
-# 使い方:  bash .harness/scripts/check.sh [--full] [--fast] [--only <表示名の一部>] [--jobs N|auto]
+# 使い方:  bash .harness/scripts/check.sh [--full] [--fast] [--since <ref>] [--only <表示名の一部>] [--jobs N|auto]
 #   既定   : 差分に関係する検査だけ回す（1.8.0。決定 0015）。checks.sh で `on "<パス…>"` を書いた検査は、
 #            push していないコミットと作業中の変更がそのパスに当たるときだけ回る。on の無い検査は毎回回る。
 #            .harness/checks.sh 自体が変わっていれば全部回す。差分が求められなければ（git の外など）全部回す。
 #   --full : 全部回す。全部通り、コミットしていない変更が無ければ、HEAD を「フルの検査が通った」と記録する
 #            （.git/harness-check-passed。push の関門がこれを求める）。
 #   --fast : pre-commit 用。checks.sh で `fast` と印を付けた検査だけ実行する。
+#   --since <ref>: タスク単位の軽い検査（1.11.0。決定 0015 の追補）。差分の起点を「push していない範囲」ではなく
+#            <ref>（タスクを始めたコミット）にする。さらに `related "<コマンド>"` を書いた検査は、本来のコマンドの
+#            代わりに「<コマンド> <変わったファイル…>」を回す（vitest related / jest --findRelatedTests など、関係する
+#            テストだけを選ぶコマンド）。消したファイルがあるときは選び損ねうるので本来のコマンドを回す。
+#            フルの検査の記録は残さない（完了の判定の最後と push の前は --full）。
 #   --only <表示名の一部>: 表示名がこの拡張正規表現に合う検査だけ実行する（作業の途中で、変更に関係する
 #            検査だけを回すため。完了の判定はフルの check で行う。決定 0015）。--fast と併用すると両方に合うものだけ。
 #
@@ -25,20 +30,26 @@
 # エージェントはエラー出力をそのまま文脈に取り込むので、そこが最も安い指示経路になる。
 set -u
 
-FAST=0; ONLY=""; CLI_JOBS=""; FULL=0
+FAST=0; ONLY=""; CLI_JOBS=""; FULL=0; SINCE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --fast) FAST=1; shift ;;
     --full) FULL=1; shift ;;
+    --since) [ $# -ge 2 ] && [ -n "$2" ] || { echo "harness check: --since の後ろにタスクを始めたコミット（ref）を書く。例: --since \$(git rev-parse HEAD) を始めに控えておく" >&2; exit 2; }
+            SINCE="$2"; shift 2 ;;
+    --since=*) SINCE="${1#--since=}"; shift ;;
     --only) [ $# -ge 2 ] && [ -n "$2" ] || { echo "harness check: --only の後ろに表示名（の一部。拡張正規表現）を書く。例: --only 'push gate|lint'" >&2; exit 2; }
             ONLY="$2"; shift 2 ;;
     --only=*) ONLY="${1#--only=}"; shift ;;
     -j|--jobs) [ $# -ge 2 ] || { echo "harness check: $1 の後ろに並列数（数字か auto）を書く" >&2; exit 2; }
             CLI_JOBS="$2"; shift 2 ;;
     --jobs=*) CLI_JOBS="${1#--jobs=}"; shift ;;
-    *) echo "harness check: 知らない引数（$1）。使い方: harness check [--full] [--fast] [--only '<表示名の一部>'] [--jobs N|auto]" >&2; exit 2 ;;
+    *) echo "harness check: 知らない引数（$1）。使い方: harness check [--full] [--fast] [--since <ref>] [--only '<表示名の一部>'] [--jobs N|auto]" >&2; exit 2 ;;
   esac
 done
+if [ -n "$SINCE" ] && { [ "$FULL" = 1 ] || [ "$FAST" = 1 ]; }; then
+  echo "harness check: --since は --full / --fast と一緒に使えない（--since はタスク単位の軽い検査、--full は全部、--fast は pre-commit 用）" >&2; exit 2
+fi
 
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 CHECKS="$ROOT/.harness/checks.sh"
@@ -107,8 +118,19 @@ Q_NAME=(); Q_CMD=(); Q_SERIAL=()
 
 # ---- 差分（既定。--full / --fast / --only のときは使わない）----
 # 変わったファイル = push していないコミット（HEAD から上流に無い分）+ コミットしていない変更 + 追跡していない新しいファイル。
-CHANGED_MODE=0; CHANGED=""; unaffected=0
-if [ "$FULL" = 0 ] && [ "$FAST" = 0 ] && [ -z "$ONLY" ]; then
+CHANGED_MODE=0; CHANGED=""; unaffected=0; DELETED=0; related_n=0
+if [ -n "$SINCE" ]; then
+  # --since: <ref> から作業ツリーまで（その間のコミット + コミットしていない変更）+ 追跡していない新しいファイル。
+  # remote が無くても使える。ref が解決できなければ止める（黙って全部や何も無しにしない）。
+  git -C "$ROOT" rev-parse -q --verify "${SINCE}^{commit}" >/dev/null 2>&1 ||
+    { echo "harness check: --since の ref（${SINCE}）がコミットとして解決できない。タスクを始めたときの git rev-parse HEAD を渡す" >&2; exit 2; }
+  CHANGED="$( { git -C "$ROOT" -c core.quotePath=false diff --no-renames --name-only "$SINCE" -- 2>/dev/null
+                git -C "$ROOT" -c core.quotePath=false ls-files --others --exclude-standard 2>/dev/null
+              } | awk 'NF && !s[$0]++')"
+  [ -n "$(git -C "$ROOT" diff --no-renames --name-only --diff-filter=D "$SINCE" -- 2>/dev/null | head -1)" ] && DELETED=1
+  CHANGED_MODE=1
+  if printf '%s\n' "$CHANGED" | grep -qxF '.harness/checks.sh'; then CHANGED_MODE=0; fi   # 検査の登録が変われば全部
+elif [ "$FULL" = 0 ] && [ "$FAST" = 0 ] && [ -z "$ONLY" ]; then
   if git -C "$ROOT" rev-parse -q --verify HEAD >/dev/null 2>&1 && [ -n "$(git -C "$ROOT" remote 2>/dev/null)" ]; then
     CHANGED="$( { git -C "$ROOT" -c core.quotePath=false log --format= --name-only HEAD --not --remotes 2>/dev/null
                   git -C "$ROOT" -c core.quotePath=false diff --name-only HEAD 2>/dev/null
@@ -136,18 +158,19 @@ EOF_CHANGED
 }
 
 check() {
-  local speed="" serial=0 on="" has_on=0 name cmd
+  local speed="" serial=0 on="" has_on=0 name cmd related=""
   while :; do
     case "${1:-}" in
       fast) speed="fast"; shift ;;
       serial) serial=1; shift ;;
       on) on="${2:-}"; has_on=1; shift 2 2>/dev/null || shift ;;
+      related) related="${2:-}"; shift 2 2>/dev/null || shift ;;
       *) break ;;
     esac
   done
   name="${1:-}"; cmd="${2:-}"
   if [ -z "$name" ] || [ -z "$cmd" ]; then
-    echo "harness check: checks.sh の書式エラー。check [fast] [serial] [on \"<パス…>\"] \"<表示名>\" \"<コマンド>\" の形で書く（name='$name')" >&2
+    echo "harness check: checks.sh の書式エラー。check [fast] [serial] [on \"<パス…>\"] [related \"<コマンド>\"] \"<表示名>\" \"<コマンド>\" の形で書く（name='$name')" >&2
     fail=$((fail + 1)); failed_names+=("(malformed check)"); return
   fi
   if [ "$FAST" = 1 ] && [ "$speed" != "fast" ]; then
@@ -158,6 +181,21 @@ check() {
   fi
   if [ "$CHANGED_MODE" = 1 ] && [ "$has_on" = 1 ] && ! affected "$on"; then
     skipped=$((skipped + 1)); unaffected=$((unaffected + 1)); return
+  fi
+  # --since で related があれば、変わったファイル（今あるもの）だけを渡して関係するテストを選ばせる。
+  # 消したファイルがあると、それを import していたテストを選べないので本来のコマンドを回す。
+  if [ -n "$SINCE" ] && [ "$CHANGED_MODE" = 1 ] && [ -n "$related" ] && [ "$DELETED" = 0 ]; then
+    local f args="" nf=0
+    while IFS= read -r f; do
+      [ -n "$f" ] && [ -e "$ROOT/$f" ] || continue
+      args="$args $(printf '%q' "$f")"; nf=$((nf + 1))
+    done <<EOF_REL
+$CHANGED
+EOF_REL
+    if [ "$nf" -eq 0 ]; then
+      skipped=$((skipped + 1)); unaffected=$((unaffected + 1)); return
+    fi
+    cmd="${related}${args}"; name="$name (related: ${nf} files)"; related_n=$((related_n + 1))
   fi
   case "$name" in
     "docs index exists"|"doctor: FAIL 0") ;;   # seed（checks.seed.sh）の検査。名前を変えたら tests/seed.sh が落ちる
@@ -232,14 +270,18 @@ run_queue
 
 echo
 echo "harness check: pass=$pass fail=$fail skipped=$skipped  (${SECONDS}s)"
-if [ "$CHANGED_MODE" = 1 ]; then
+if [ "$CHANGED_MODE" = 1 ] && [ -n "$SINCE" ]; then
+  echo "  ${SINCE} からの差分に関係する検査だけ回した（変わったファイル $(printf '%s' "$CHANGED" | awk 'NF' | wc -l | tr -d ' ') 件。飛ばした検査 ${unaffected} 件。関係するテストだけ選んだ検査 ${related_n} 件）。"
+  [ "$DELETED" = 1 ] && echo "  消したファイルがあるので、related を書いた検査も本来のコマンドで回した。"
+  echo "  タスク単位の軽い検査。import をたどらない影響（文言・CSS・設定）は拾えないので、最終レビューの前と push の前に harness check --full を回す。"
+elif [ "$CHANGED_MODE" = 1 ]; then
   echo "  差分に関係する検査だけ回した（変わったファイル $(printf '%s' "$CHANGED" | awk 'NF' | wc -l | tr -d ' ') 件。関係しないので飛ばした検査 ${unaffected} 件）。全部回すのは harness check --full（push の前に要る）。"
 fi
 # フルの検査が全部通ったら、検査した中身（追跡しているファイルのツリー）のハッシュを記録する（push の関門が
 # push する先端のツリーと照らす。決定 0015）。ツリーで持つので、検査の後に中身を変えずにコミットしたり、
 # コミットメッセージだけを直したりしても効く。追跡していない新しいファイルがあると、検査した中身と push する
 # 中身がずれうるので記録しない。
-if [ "$fail" -eq 0 ] && [ "$FAST" = 0 ] && [ -z "$ONLY" ] && [ "$skipped" -eq 0 ]; then
+if [ "$fail" -eq 0 ] && [ "$FAST" = 0 ] && [ -z "$ONLY" ] && [ -z "$SINCE" ] && [ "$skipped" -eq 0 ]; then
   if gd="$(git -C "$ROOT" rev-parse --absolute-git-dir 2>/dev/null)" && git -C "$ROOT" rev-parse -q --verify HEAD >/dev/null 2>&1; then
     if [ -n "$(git -C "$ROOT" ls-files --others --exclude-standard 2>/dev/null | head -1)" ]; then
       echo "  追跡していない新しいファイルがあるので、push 用の記録（フルの検査が通った）は残さない。コミットするか .gitignore に入れてから harness check --full を回す。"

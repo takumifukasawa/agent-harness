@@ -3,6 +3,16 @@
 各版に「プロジェクト側で必要な作業」を必ず書く。`harness update` はこの節を表示する。
 semver: managed ファイルの移動・マーカー形式変更は major、ルール/スキルの追加は minor、文言修正は patch。
 
+## [1.11.0] - 2026-11-26
+
+タスクごとの検査を軽くする（GitHub issue #2）。アプリのリポジトリではどのタスクも `src/` を触るので `on` では絞れず、push しないまま何十タスクも進めると差分の起点（push していない範囲）が run 全体に広がり、タスクごとに unit・build・e2e が全部回っていた（導入先で 1 タスク 12〜25 分）。
+
+- 追加: **`harness check --since <ref>`。** 差分の起点を `<ref>`（タスクを始めたコミット）にする。remote が無くても使える。フルの検査の記録は残さない。`--full` / `--fast` とは併用できない。
+- 追加: **`checks.sh` の `related "<コマンド>"`。** `--since` のとき、本来のコマンドの代わりに `<コマンド> <変わったファイル…>` を回す（`vitest related --run --passWithNoTests`、`jest --findRelatedTests` など、関係するテストだけを選ぶコマンド）。今あるファイルだけを渡す。消した（名前を変えた）ファイルがあるときは選び損ねうるので本来のコマンドを回す。`--since` の無いとき（既定・`--full`）は使わない。
+- 変更（スキル・役割文）: `task-orchestrate` は、タスクを始めたときの `git rev-parse HEAD` を `stages.json` の `start_commit` に書き（再試行では変えない）、実装役と統括のタスクごとの判定を `harness check --since <start_commit>` にした。**§3 の最終レビューの前に `harness check --full` を 1 回回し、落ちた検査を修正タスクにする。** push の前の `--full`（関門）と §2.5 の区切りの確認は変えない。
+- 回帰: `tests/check-runner.sh` の C26〜C33。並列の C9 / C11 は、所要をランナー自身が出す秒数で見るようにした（外から測ると負荷の高い PC で揺れて落ちた。判定の閾値は同じ）。
+- **プロジェクト側で必要な作業**: `bash .harness/bin/harness update`（コミットに出るのは `.harness/manifest.json` と `AGENTS.md` の管理ブロック）。`docs/roles/implementer.md` と `checks.sh` は seed なので `update` では届かない。task-orchestrate を使うプロジェクトは一度だけ、(1) `docs/roles/implementer.md` の手順 4 を「`harness check --since <start_commit>` を回す」に直す（ハーネスの `harness/docs-template/roles/implementer.md` と同じ文）、(2) テストのコマンドが関係するテストだけを選べるなら（vitest / jest など）、`.harness/checks.sh` のその検査に `related "<コマンド>"` を付ける（例: `check on "src/" related "npx vitest related --run --passWithNoTests" "unit" "npx vitest run"`）。どちらもエージェントが行ってよい。人の確認は要らない。`related` を付けたら、`harness check --since HEAD~1` を一度回して、その検査が `(related: N files)` と出て通ることを確かめる。
+
 ## [1.10.0] - 2026-11-26
 
 導入先の task-orchestrate の実行（worktree で実装役を並列に回した）で見つかった穴を塞ぐ（GitHub issue #1）。
