@@ -649,7 +649,11 @@ apply_plan() { # agents mode(init|update)
       # （それが tech-debt #13 の原因）ので、その判定より前に seed_case_collision で別に見る。
       local seed_existing=""
       if [ "$seed_ci" = 1 ]; then
-        seed_existing="$(seed_case_collision "$ROOT" "$dest" "$seed_ci" 2>/dev/null)" || true
+        if declare -F case_collision_lookup >/dev/null; then
+          case_collision_lookup "$ROOT" "$dest" "$seed_ci" && seed_existing="$CASE_COLLISION_HIT"
+        else
+          seed_existing="$(seed_case_collision "$ROOT" "$dest" "$seed_ci" 2>/dev/null)" || true
+        fi
       fi
       if [ -f "$abs" ]; then n_keep=$((n_keep + 1)); else
         mkdir -p "$(dirname "$abs")"; cp "$tmp" "$abs"; n_seed=$((n_seed + 1)); info "  seed  $dest"

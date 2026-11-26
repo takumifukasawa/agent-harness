@@ -186,6 +186,35 @@ runs --since "$NOW"
 { printf '%s' "$OUT" | grep -q '^── docs lint' && ! printf '%s' "$OUT" | grep -q '^── unit'; } \
   && ok "C33: 起点より前の変更は差分に入らない（run 全体ではなくタスクの分だけを見る）" || ng "C33"
 
+# ---- C34〜C37: --fast（pre-commit）と related（1.12.0。GitHub issue #3）----
+F="$WORK/f"; mkdir -p "$F/.harness" "$F/src" && git init -q "$F"
+printf '%s\n' 'check fast related "bash rel.sh" "fmt" "bash full.sh"' \
+  'check fast "quick" "true"' \
+  'check "slow" "true"' >"$F/.harness/checks.sh"
+printf '%s\n' 'printf "%s\n" "$@" >rel.out' >"$F/rel.sh"
+printf '%s\n' 'echo full >full.out' >"$F/full.sh"
+printf '%s\n' 'rel.out' 'full.out' >"$F/.gitignore"
+echo a >"$F/src/a.ts"; echo b >"$F/src/b.ts"
+g -C "$F" add -A && g -C "$F" commit -q -m base
+runf() { rm -f "$F/rel.out" "$F/full.out"; OUT="$(cd "$F" && bash "$RUNNER" "$@" 2>&1)"; RC=$?; }
+echo a2 >>"$F/src/a.ts"; echo n >"$F/src/n m.ts"; g -C "$F" add src/a.ts "src/n m.ts"; echo b2 >>"$F/src/b.ts"
+runf --fast
+{ [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q '^── fmt (related: 2 files)' && [ ! -f "$F/full.out" ] \
+  && [ "$(sort "$F/rel.out" | tr '\n' '|')" = "src/a.ts|src/n m.ts|" ] && ! printf '%s' "$OUT" | grep -q '^── slow'; } \
+  && ok "C34: --fast の related の検査には、ステージしたファイルだけを渡す（ステージしていない変更は渡さない）" || ng "C34"
+g -C "$F" commit -q -m a
+runf --fast
+{ [ "$RC" -eq 0 ] && [ ! -f "$F/full.out" ] && [ ! -f "$F/rel.out" ] && printf '%s' "$OUT" | grep -q '^── quick'; } \
+  && ok "C35: ステージしたファイルが無ければ、--fast の related の検査は飛ばす（ほかの fast の検査は回す）" || ng "C35"
+g -C "$F" rm -q -f src/b.ts
+runf --fast
+{ [ "$RC" -eq 0 ] && [ -f "$F/full.out" ] && [ ! -f "$F/rel.out" ] && printf '%s' "$OUT" | grep -q 'ステージした削除がある'; } \
+  && ok "C36: ステージした削除があれば、--fast でも related ではなく本来のコマンドを回す" || ng "C36"
+g -C "$F" commit -q -m rm-b >/dev/null
+runf
+{ [ "$RC" -eq 0 ] && [ -f "$F/full.out" ] && [ ! -f "$F/rel.out" ] && printf '%s' "$OUT" | grep -q '^── fmt$'; } \
+  && ok "C37: --fast でも --since でもなければ、related を書いた fast の検査は本来のコマンドを回す" || ng "C37"
+
 echo
 echo "tests/check-runner.sh: pass=$passed fail=$failed"
 [ "$failed" = 0 ] || { printf '  failed: %s\n' "${failed_names[@]}"; exit 1; }

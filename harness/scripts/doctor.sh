@@ -692,8 +692,9 @@ if [ "$manifest_ok" = 1 ]; then
           seed | managed | generated) ;;
           *) continue ;;
         esac
-        case_existing="$(seed_case_collision "$ROOT" "$f_path" "$seed_ci" 2>/dev/null || true)"
-        [ -n "$case_existing" ] || continue
+        # $(...) にしない（サブシェルの起動を manifest の件数ぶん重ねない。GitHub issue #3）
+        case_collision_lookup "$ROOT" "$f_path" "$seed_ci" || continue
+        case_existing="$CASE_COLLISION_HIT"
         if [ "$f_own" = "seed" ]; then
           seed_conflicts=$((seed_conflicts + 1))
           report WARN "seed の配布先 $f_path が既存の $case_existing と case 違いで衝突している（$(case_collision_reason "$f_path" "$case_existing" seed)）" \

@@ -3,6 +3,17 @@
 各版に「プロジェクト側で必要な作業」を必ず書く。`harness update` はこの節を表示する。
 semver: managed ファイルの移動・マーカー形式変更は major、ルール/スキルの追加は minor、文言修正は patch。
 
+## [1.12.0] - 2026-11-26
+
+導入先で `harness check` と pre-commit が遅い件（GitHub issue #3）。
+
+- 変更: **`doctor` と `install` / `update` の、大文字小文字違いの衝突の判定がプロセスを起動しなくなった**（GitHub issue #3）。manifest の各エントリについてパスの段ごとに `find -name` / `find -iname` と `head` / `sort` を起動し、呼び出しごとに `$(...)` のサブシェルも作っていた。manifest 45 件で数百回の起動になり、プロセスの起動が不定期に 1 秒近く止まる PC（エンドポイントセキュリティ製品）では `doctor` 1 回が 44〜54 秒かかっていた。ディレクトリの中身を bash の glob で読み、名前も bash で比べる形にした（このリポジトリで 45 件の走査が 31.8 秒 → 0.6 秒）。判定の結果は変わらない。case を区別する FS（Linux）ではもともとこの判定は走らない。
+- 追加: **`fast` と `related` を両方書いた検査は、pre-commit（`--fast`）ではステージしたファイルだけを渡して回す。** 例: `check fast related "npx prettier --check --ignore-unknown" "format" "npx prettier --check ."`。ステージしたファイル（追加・変更。名前の変更は追加として）が無ければ飛ばし、ステージした削除があれば本来のコマンドを回す（`--since` と同じ規則）。既定と `--full` では今までどおり本来のコマンドを回す。導入先では `prettier --check .` が負荷の高い PC でコミットごとに 70 秒かかっていた。
+- 変更（seed）: `checks.sh` の説明に上の書き方と、`doctor: FAIL 0` に `on` を付ける選択肢と副作用（push の前に `--full` が要るようになる。作業ツリーの外の問題に気付くのが遅れる）を書いた。seed の検査そのものは変えない。
+- 見送り: `doctor` の結果を前回から変わっていなければ使い回す案。`doctor` は git の設定やフックの実行ビットなど作業ツリーの外も見るので印が古くなりうるうえ、上の修正の後では得るものが小さい。
+- 回帰: `tests/seed-case.sh` に、`PATH` を空にしても同じ結果になること、呼び出し側の `nocasematch` を変えないことを足した。`tests/check-runner.sh` の C34〜C37。
+- **プロジェクト側で必要な作業**: `bash .harness/bin/harness update`（コミットに出るのは `.harness/manifest.json` と `AGENTS.md` の版の行）。`checks.sh` は seed なので `update` では届かない。pre-commit でリポジトリ全体を見る `fast` の検査（`prettier --check .`、`eslint .` など）があれば、ファイルを受け取れる形を `related "<コマンド>"` として付ける（エージェントが行ってよい。人の確認は要らない）。付けたら、ファイルを 1 つステージして `harness check --fast` を回し、その検査が `(related: 1 files)` と出て通ることを確かめる。
+
 ## [1.11.1] - 2026-11-26
 
 - 変更: **`doctor` が node の版を出さなくなった**（「node（任意）」とだけ言う）。nodenv などの shim を通ると `node --version` 1 回で約 1 秒かかり、`harness check` のたびの `doctor` と、`doctor` を約 55 回呼ぶこのリポジトリのシナリオテストにそのまま乗っていた。node の有無の診断は変わらない。

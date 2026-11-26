@@ -34,7 +34,7 @@
 #   2. seed_case_collision() … 衝突の有無を決める純粋ロジック。「case を区別しないか」は
 #      呼び出し側が 1. の結果を引数 ci で渡す。テストは ci を固定するので、実ホストの FS が
 #      どちらであっても「衝突あり / 衝突なし / case を区別する環境」の 3 系統を再現できる。
-#      ファイル名の一致は `find -name` / `-iname`（readdir が返す生のファイル名どうしの文字列比較。
+#      ファイル名の一致は、glob で読んだ生のファイル名どうしの文字列比較（元は `find -name` / `-iname`。
 #      パス解決時に OS が行う case フォールディングは経由しない）で見るので、この判定自体は
 #      ホストの実 FS が case を区別するかどうかに左右されない
 #      （実機確認 2026-09-21, macOS 15 / APFS 既定ボリューム: `FOO.txt` のみが存在する状態で
@@ -81,40 +81,76 @@ fs_case_insensitive() { # root
 # 途中で何も見つからない、または dest_rel のすべての段が完全一致で存在する（= seed が
 # 既に配布済みというだけ）場合は、何も出力せず 1 を返す。
 seed_case_collision() {
+  case_collision_lookup "$@" || return 1
+  printf '%s\n' "$CASE_COLLISION_HIT"
+}
+
+# seed_case_collision と同じ判定で、結果を標準出力ではなく変数 CASE_COLLISION_HIT に入れる
+# （衝突があれば 0、無ければ 1 を返し、CASE_COLLISION_HIT は空）。
+# 呼び出し側（doctor の manifest 全件の走査、apply_plan）はこちらを使う。
+# プロセスを 1 つも起動しない: ディレクトリの中身は bash の glob で読み、名前の比較も bash で
+# する。元は段ごとに find -name / find -iname と head / sort を起動し、呼び出しごとに $(...) の
+# サブシェルも作っていた。manifest 45 件で数百回の起動になり、プロセスの起動が不定期に
+# 1 秒近く止まる PC（エンドポイントセキュリティ製品）では doctor 1 回が 44〜54 秒かかった
+# （GitHub issue #3、2026-11-26）。
+# 名前の比較は readdir が返す生の名前どうし（glob の結果）でするので、元の find と同じく
+# ホストの FS が case を区別するかには左右されない。case を無視した比較は nocasematch、
+# 候補が複数あるときの選び方は LC_ALL=C の並び順の先頭（元の LC_ALL=C sort | head -1 と同じ。X2）。
+case_collision_lookup() { # root dest_rel ci
+  CASE_COLLISION_HIT=""
   local root="$1" dest_rel="$2" ci="$3"
   [ "$ci" = "1" ] || return 1
   [ -d "$root" ] || return 1
 
-  local segs seg cur exact ci_match mismatch=0 i n
+  local LC_ALL=C
+  local had_nocase=1
+  shopt -q nocasematch && had_nocase=0
+
+  local segs seg cur exact ci_match mismatch=0 i n e name
   IFS='/' read -r -a segs <<<"$dest_rel"
   n="${#segs[@]}"
   cur="$root"
   for ((i = 0; i < n; i++)); do
     seg="${segs[$i]}"
     [ -n "$seg" ] || continue
-    [ -d "$cur" ] || return 1
-    exact="$(find "$cur" -maxdepth 1 -name "$seg" 2>/dev/null | head -1)"
+    # 途中の段がディレクトリでない（同名のファイルなど）: 元の実装と同じく衝突とは言わない
+    if [ ! -d "$cur" ]; then
+      [ "$had_nocase" = 0 ] && shopt -s nocasematch
+      return 1
+    fi
+    exact=""
+    ci_match=""
+    for e in "$cur"/* "$cur"/.*; do
+      name="${e##*/}"
+      { [ "$name" = "." ] || [ "$name" = ".." ]; } && continue
+      # 一致しない glob はパターンのまま残る（nullglob は呼び出し側の設定を変えないため使わない）
+      [ -e "$e" ] || [ -L "$e" ] || continue
+      if [ "$name" = "$seg" ]; then
+        exact="$e"
+        break
+      fi
+      shopt -s nocasematch
+      if [[ "$name" == "$seg" ]]; then
+        shopt -u nocasematch
+        # 3 つ以上あっても報告する対象を glob の並びに依存させない（C の並び順で最小。X2）
+        if [ -z "$ci_match" ] || [[ "$name" < "${ci_match##*/}" ]]; then ci_match="$e"; fi
+      else
+        shopt -u nocasematch
+      fi
+    done
     if [ -n "$exact" ]; then
       cur="$exact"
       continue
     fi
-    # 完全一致が無い。大文字小文字違いのエントリがあれば、そこが衝突。3 つ以上あっても
-    # 報告する対象を find の実装に依存させない（ソートして先頭を取る。X2）。
-    ci_match="$(find "$cur" -maxdepth 1 -iname "$seg" 2>/dev/null | LC_ALL=C sort | head -1)"
-    if [ -z "$ci_match" ]; then
-      # ここより深いパスは何も無い。それまでに mismatch を見つけていればそこまでを報告する。
-      if [ "$mismatch" = 1 ]; then
-        printf '%s\n' "${cur#"$root"/}"
-        return 0
-      fi
-      return 1
-    fi
+    # 完全一致が無く、大文字小文字違いも無い: ここより深いパスは何も無い。
+    [ -n "$ci_match" ] || break
     mismatch=1
     cur="$ci_match"
   done
+  [ "$had_nocase" = 0 ] && shopt -s nocasematch
 
   if [ "$mismatch" = 1 ]; then
-    printf '%s\n' "${cur#"$root"/}"
+    CASE_COLLISION_HIT="${cur#"$root"/}"
     return 0
   fi
   return 1

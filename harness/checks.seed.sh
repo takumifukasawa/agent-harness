@@ -9,6 +9,9 @@
 #   （例: related "npx vitest related --run --passWithNoTests"、related "npx jest --findRelatedTests --passWithNoTests"）。
 #   import をたどらない影響（文言・CSS・設定ファイル）は選べないので、それらのパスでも本来のコマンドが要るなら
 #   --full（最終レビューの前と push の前）に任せる。消したファイルがあるときは本来のコマンドを回す。
+#   fast と related を両方書いた検査は、pre-commit（--fast）ではステージしたファイルだけを渡して回す
+#   （例: check fast related "npx prettier --check --ignore-unknown" "format" "npx prettier --check ."。
+#   ステージしたファイルが無ければ飛ばす）。リポジトリ全体を見る整形・lint を、コミットのたびに全体へかけない。
 #   並列に回すなら、このファイルの先頭（最初の check より前）に CHECK_JOBS=auto（または数）を書く。
 #   他の検査と同時に走らせられない検査（同じポート・固定の一時ファイル・同じ DB を使う）は
 #   check serial "<表示名>" "<コマンド>" で登録する。既定は直列。
@@ -33,4 +36,8 @@
 # check      "NEEDS HUMAN: shared tables" "git diff --name-only origin/main | grep -q '^db/schema' && { echo '要確認: 共有テーブルの変更あり。人間がレビュー。'; exit 1; } || true"
 
 check fast "docs index exists" "test -f docs/README.md || { echo 'docs/README.md が無い。docs の索引。agent-harness の docs-template/README.md から作る。'; exit 1; }"
+# doctor は普段の check のたびに回る。プロセスの起動が遅い PC で重ければ、on ".harness/ .githooks/ .claude/ .agents/
+# .codex/ AGENTS.md CLAUDE.md docs/roles/" を付けて、それらが変わったときだけ回すこともできる（--full では必ず回る）。
+# ただし on を 1 つでも書くと push の前に --full が要るようになり、git の設定（hooksPath）など作業ツリーの外の
+# 問題に気付くのが --full まで遅れる。
 check      "doctor: FAIL 0"    "bash .harness/bin/harness doctor || { echo 'doctor が FAIL を報告した。上の FAIL 行の「→」に従って直す。'; exit 1; }"

@@ -8,7 +8,10 @@
 #            .harness/checks.sh 自体が変わっていれば全部回す。差分が求められなければ（git の外など）全部回す。
 #   --full : 全部回す。全部通り、コミットしていない変更が無ければ、HEAD を「フルの検査が通った」と記録する
 #            （.git/harness-check-passed。push の関門がこれを求める）。
-#   --fast : pre-commit 用。checks.sh で `fast` と印を付けた検査だけ実行する。
+#   --fast : pre-commit 用。checks.sh で `fast` と印を付けた検査だけ実行する。`related "<コマンド>"` も書いた
+#            検査は、本来のコマンドの代わりに「<コマンド> <ステージしたファイル…>」を回す（1.12.0。prettier --check
+#            など、リポジトリ全体を見ると遅い検査のため。GitHub issue #3）。ステージしたファイルが無ければ飛ばし、
+#            ステージした削除があれば本来のコマンドを回す（--since と同じ規則）。
 #   --since <ref>: タスク単位の軽い検査（1.11.0。決定 0015 の追補）。差分の起点を「push していない範囲」ではなく
 #            <ref>（タスクを始めたコミット）にする。さらに `related "<コマンド>"` を書いた検査は、本来のコマンドの
 #            代わりに「<コマンド> <変わったファイル…>」を回す（vitest related / jest --findRelatedTests など、関係する
@@ -119,6 +122,14 @@ Q_NAME=(); Q_CMD=(); Q_SERIAL=()
 # ---- 差分（既定。--full / --fast / --only のときは使わない）----
 # 変わったファイル = push していないコミット（HEAD から上流に無い分）+ コミットしていない変更 + 追跡していない新しいファイル。
 CHANGED_MODE=0; CHANGED=""; unaffected=0; DELETED=0; related_n=0
+# --fast で related に渡すファイル = ステージした追加・変更（名前の変更は追加 + 削除として見る）。
+# git の外なら STAGED_OK=0 で、related を使わず本来のコマンドを回す。
+STAGED=""; STAGED_OK=0; STAGED_DELETED=0
+if [ "$FAST" = 1 ] && git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  STAGED="$(git -C "$ROOT" -c core.quotePath=false diff --cached --no-renames --name-only --diff-filter=ACM -- 2>/dev/null | awk 'NF')"
+  [ -n "$(git -C "$ROOT" diff --cached --no-renames --name-only --diff-filter=D -- 2>/dev/null | head -1)" ] && STAGED_DELETED=1
+  STAGED_OK=1
+fi
 if [ -n "$SINCE" ]; then
   # --since: <ref> から作業ツリーまで（その間のコミット + コミットしていない変更）+ 追跡していない新しいファイル。
   # remote が無くても使える。ref が解決できなければ止める（黙って全部や何も無しにしない）。
@@ -183,14 +194,23 @@ check() {
     skipped=$((skipped + 1)); unaffected=$((unaffected + 1)); return
   fi
   # --since で related があれば、変わったファイル（今あるもの）だけを渡して関係するテストを選ばせる。
+  # --fast なら、ステージしたファイルだけを渡す（pre-commit で整形・lint をリポジトリ全体にかけない）。
   # 消したファイルがあると、それを import していたテストを選べないので本来のコマンドを回す。
-  if [ -n "$SINCE" ] && [ "$CHANGED_MODE" = 1 ] && [ -n "$related" ] && [ "$DELETED" = 0 ]; then
+  local rel_files="" use_rel=0
+  if [ -n "$related" ]; then
+    if [ -n "$SINCE" ] && [ "$CHANGED_MODE" = 1 ] && [ "$DELETED" = 0 ]; then
+      rel_files="$CHANGED"; use_rel=1
+    elif [ "$FAST" = 1 ] && [ "$STAGED_OK" = 1 ] && [ "$STAGED_DELETED" = 0 ]; then
+      rel_files="$STAGED"; use_rel=1
+    fi
+  fi
+  if [ "$use_rel" = 1 ]; then
     local f args="" nf=0
     while IFS= read -r f; do
       [ -n "$f" ] && [ -e "$ROOT/$f" ] || continue
       args="$args $(printf '%q' "$f")"; nf=$((nf + 1))
     done <<EOF_REL
-$CHANGED
+$rel_files
 EOF_REL
     if [ "$nf" -eq 0 ]; then
       skipped=$((skipped + 1)); unaffected=$((unaffected + 1)); return
@@ -274,6 +294,10 @@ if [ "$CHANGED_MODE" = 1 ] && [ -n "$SINCE" ]; then
   echo "  ${SINCE} からの差分に関係する検査だけ回した（変わったファイル $(printf '%s' "$CHANGED" | awk 'NF' | wc -l | tr -d ' ') 件。飛ばした検査 ${unaffected} 件。関係するテストだけ選んだ検査 ${related_n} 件）。"
   [ "$DELETED" = 1 ] && echo "  消したファイルがあるので、related を書いた検査も本来のコマンドで回した。"
   echo "  タスク単位の軽い検査。import をたどらない影響（文言・CSS・設定）は拾えないので、最終レビューの前と push の前に harness check --full を回す。"
+elif [ "$FAST" = 1 ] && { [ "$related_n" -gt 0 ] || [ "$unaffected" -gt 0 ]; }; then
+  echo "  related を書いた fast の検査には、ステージしたファイルだけを渡した（渡した検査 ${related_n} 件。ステージしたファイルが無いので飛ばした検査 ${unaffected} 件）。"
+elif [ "$FAST" = 1 ] && [ "$STAGED_DELETED" = 1 ]; then
+  echo "  ステージした削除があるので、related を書いた fast の検査も本来のコマンドで回した。"
 elif [ "$CHANGED_MODE" = 1 ]; then
   echo "  差分に関係する検査だけ回した（変わったファイル $(printf '%s' "$CHANGED" | awk 'NF' | wc -l | tr -d ' ') 件。関係しないので飛ばした検査 ${unaffected} 件）。全部回すのは harness check --full（push の前に要る）。"
 fi

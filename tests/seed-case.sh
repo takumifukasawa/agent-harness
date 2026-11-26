@@ -98,9 +98,10 @@ mkdir -p "$WORK/nested-no-collision/docs/plans"
 : >"$WORK/nested-no-collision/docs/plans/README.md"
 assert_collision "$WORK/nested-no-collision" "docs/plans/README.md" 1 ""
 
-# --- X2. 大文字小文字違いが 3 つ以上あるとき、報告が find の返す順序に依存しない ---
-# find をラップし、実装が -iname で探した結果を意図的にソート済みでない順で返す。
-# 実装が明示的にソートしていれば、find がどんな順で返しても報告は常にソート済み先頭になる。
+# --- X2. 大文字小文字違いが 3 つ以上あるとき、報告が列挙の順序に依存しない ---
+# 元の実装は find -iname の結果を sort していた。find をラップして意図的にソート済みでない順で
+# 返しても、報告は常に C の並び順の先頭になる（今の実装は find を使わず glob で読み、明示的に
+# 最小を選ぶ。case を区別しない FS では 3 つを作れないので、実質は case を区別する FS での確認）。
 mkdir -p "$WORK/x2-multi/docs"
 : >"$WORK/x2-multi/docs/FOO.txt"
 : >"$WORK/x2-multi/docs/foo.TXT"
@@ -125,6 +126,36 @@ want_x2="docs/FOO.txt"
 if [ "$got_x2" != "$want_x2" ]; then
   errors+=("seed_case_collision: 大文字小文字違いが複数あるとき find の返す順に依存している（期待 [$want_x2] / 実際 [$got_x2]）")
 fi
+
+# --- P3. 途中の段が case 違いのファイル（ディレクトリでない）なら衝突とは言わない（find 版と同じ結果） ---
+mkdir -p "$WORK/file-in-path/docs"
+: >"$WORK/file-in-path/docs/Plans"
+assert_collision "$WORK/file-in-path" "docs/plans/README.md" 1 ""
+
+# --- P1. 判定はプロセスを起動しない（GitHub issue #3） ---
+# プロセスの起動が高い PC では、段ごとの find / head / sort と $(...) のサブシェルで doctor 1 回が
+# 50 秒近くかかった。PATH を空にしても同じ結果になれば、外部コマンドに頼っていない。
+got_p1="$( PATH=/nonexistent-harness-path; case_collision_lookup "$WORK/nested-collision" "docs/plans/README.md" 1 && printf '%s' "$CASE_COLLISION_HIT" )"
+if [ "$got_p1" != "docs/Plans/README.md" ]; then
+  errors+=("case_collision_lookup: PATH が空だと結果が変わる（期待 [docs/Plans/README.md] / 実際 [$got_p1]）。外部コマンドを使わずに判定する（issue #3）")
+fi
+got_p1b="$( PATH=/nonexistent-harness-path; case_collision_lookup "$WORK/nested-no-collision" "docs/plans/README.md" 1; echo "rc=$? hit=[$CASE_COLLISION_HIT]" )"
+if [ "$got_p1b" != "rc=1 hit=[]" ]; then
+  errors+=("case_collision_lookup: 衝突が無いのに [$got_p1b] を返した（期待 rc=1 hit=[]）")
+fi
+
+# --- P2. 呼び出し側の nocasematch の設定を変えない（判定の中だけで切り替える） ---
+shopt -u nocasematch
+case_collision_lookup "$WORK/collision" "docs/handoff.md" 1 >/dev/null || true
+if shopt -q nocasematch; then
+  errors+=("case_collision_lookup: 呼び出し前に off だった nocasematch を on のまま残した")
+fi
+shopt -s nocasematch
+case_collision_lookup "$WORK/collision" "docs/handoff.md" 1 >/dev/null || true
+if ! shopt -q nocasematch; then
+  errors+=("case_collision_lookup: 呼び出し前に on だった nocasematch を off にした")
+fi
+shopt -u nocasematch
 
 # --- X1. fs_case_insensitive() が引数で渡したディレクトリの配下でプローブすること ---
 # 実際の判定結果（case を区別するか）はホスト依存で当てにできない。ここで確かめるのは
@@ -163,4 +194,4 @@ if [ "${#errors[@]}" -gt 0 ]; then
   for e in "${errors[@]}"; do echo "  - $e"; done
   exit 1
 fi
-echo "tests/seed-case.sh: pass（seed_case_collision: 衝突あり 2 / 衝突なし 4 / case を区別する環境 1 / find の順序非依存 1、fs_case_insensitive: プローブ先 3 の計 11 シナリオ）"
+echo "tests/seed-case.sh: pass（seed_case_collision: 衝突あり 2 / 衝突なし 4 / case を区別する環境 1 / find の順序非依存 1・プロセスを起動しない 2・nocasematch を戻す 2・途中の段がファイル 1、fs_case_insensitive: プローブ先 3 の計 16 シナリオ）"
